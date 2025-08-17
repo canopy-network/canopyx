@@ -1,0 +1,22 @@
+# Go
+**/bin/
+**/dist/
+**/*.test
+/build/
+coverage*.out
+
+# Node/Next
+web/admin/node_modules
+web/admin/.next
+web/admin/.turbo
+web/admin/out
+
+# VCS / IDE
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Misc
+*.log

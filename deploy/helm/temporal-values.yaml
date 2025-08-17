@@ -1,0 +1,22 @@
+server:
+  replicaCount: 1
+  config:
+    namespaces:
+      create: true
+      namespace:
+        - name: canopyx
+          retention: 1d
+
+prometheus:
+  enabled: false
+
+grafana:
+  enabled: false
+
+elasticsearch:
+  replicas: 1
+  imageTag: "7.17.28"
+
+cassandra:
+  config:
+    cluster_size: 1

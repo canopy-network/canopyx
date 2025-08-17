@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-indexer
+  namespace: canopyx
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: worker-indexer } }
+  template:
+    metadata: { labels: { app: worker-indexer } }
+    spec:
+      containers:
+        - name: worker-indexer
+          image: canopyx/worker-indexer
+          env:
+            - { name: CLICKHOUSE_ADDR, value: clickhouse-clickhouse:9000 }
+            - { name: META_DB, value: canopyx_meta }
+            - { name: TEMPORAL_HOSTPORT, value: temporal-frontend.default.svc.cluster.local:7233 }
+            - { name: TEMPORAL_NAMESPACE, value: default }
+            - { name: INSERT_BATCH_TX, value: "1000" }

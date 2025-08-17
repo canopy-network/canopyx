@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query
+  namespace: canopyx
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: query } }
+  template:
+    metadata: { labels: { app: query } }
+    spec:
+      containers:
+        - name: query
+          image: canopyx/query
+          env:
+            - { name: CLICKHOUSE_ADDR, value: clickhouse-clickhouse:9000 }
+            - { name: META_DB, value: canopyx_meta }
+          ports: [ { containerPort: 8081 } ]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: query
+  namespace: canopyx
+spec:
+  selector: { app: query }
+  ports: [ { name: http, port: 8081, targetPort: 8081 } ]
