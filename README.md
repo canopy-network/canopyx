@@ -172,7 +172,7 @@ make docker-all    # builds admin/indexer/controller/query/reporter images (no p
 
 - `POST /api/chains` — register/update a chain (idempotent); header `Authorization: Bearer $ADMIN_TOKEN`  
   ```json
-  {"chain_id":"canopy-mainnet","chain_name":"Canopy Mainnet","rpc_endpoints":["https://rpc.node1.canopy.us.nodefleet.net"]}
+  {"chain_id":"canopy-mainnet","chain_name":"Canopy Mainnet","rpc_endpoints":["https://node1.canoliq.org/rpc"]}
   ```
 
 - `GET /api/chains` — list chains (uses `FINAL` internally; shows `paused/deleted` flags).

@@ -191,10 +191,29 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, payload an
 		}
 
 		if out != nil {
-			if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			// decode into raw first
+			var raw json.RawMessage
+			if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 				_ = utils.DrainAndClose(resp.Body)
 				lastErr = err
 				continue
+			}
+
+			// raw can be a primitive (like `12345`) or an object
+			// re-unmarshal accordingly into your out
+			if len(raw) > 0 && raw[0] != '{' && raw[0] != '[' {
+				// likely a bare number/string → wrap into object if your `out` expects struct
+				// e.g. {"height": <raw>}
+				wrapped := []byte(`{"height":` + string(raw) + `}`)
+				if err := json.Unmarshal(wrapped, out); err != nil {
+					lastErr = err
+					continue
+				}
+			} else {
+				if err := json.Unmarshal(raw, out); err != nil {
+					lastErr = err
+					continue
+				}
 			}
 		}
 

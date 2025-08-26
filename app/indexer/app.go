@@ -76,11 +76,15 @@ func Initialize(ctx context.Context) *App {
 		ActivityContext: activityContext,
 	}
 
-	// Turn on the temporal worker to listen on chain id task queue (chain specific workflow/activity)
+	// Turn on the temporal worker to listen on chain id task queue (chain-specific workflow/activity)
 	wkr := worker.New(
 		temporalClient.TClient,
 		temporalClient.GetIndexerQueue(chainID),
-		worker.Options{},
+		worker.Options{
+			MaxConcurrentWorkflowTaskPollers: 10,
+			MaxConcurrentActivityTaskPollers: 10,
+			WorkerStopTimeout:                1 * time.Minute,
+		},
 	)
 
 	// Register the workflow

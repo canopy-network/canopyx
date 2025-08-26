@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/canopy-network/canopyx/pkg/utils"
+	"go.uber.org/zap"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -24,6 +27,7 @@ import (
 
 // K8sProvider represents a Kubernetes provider responsible for deploying and managing resources in a Kubernetes cluster.
 type K8sProvider struct {
+	Logger    *zap.Logger
 	client    kubernetes.Interface
 	ns        string
 	image     string
@@ -41,27 +45,39 @@ type K8sProvider struct {
 var _ Provider = (*K8sProvider)(nil)
 
 // NewK8sProviderFromEnv creates a new K8sProvider instance using the current Kubernetes context.
-func NewK8sProviderFromEnv() (*K8sProvider, error) {
-	cfg, err := rest.InClusterConfig()
-	if err != nil {
+func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
+	log := logger.With(zap.String("component", "k8s_provider"))
+
+	var (
+		cfg *rest.Config
+		err error
+		src string
+	)
+
+	if cfg, err = rest.InClusterConfig(); err == nil {
+		src = "in_cluster"
+	} else {
 		kubeconfig := os.Getenv("KUBECONFIG")
 		if kubeconfig == "" {
 			kubeconfig = clientcmd.RecommendedHomeFile
 		}
 		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
+			log.Error("kube config build failed", zap.Error(err))
 			return nil, fmt.Errorf("build kube config: %w", err)
 		}
+		src = "kubeconfig"
 	}
 
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
+		log.Error("k8s client init failed", zap.Error(err))
 		return nil, fmt.Errorf("k8s client: %w", err)
 	}
 
 	ns := mustEnv("K8S_NAMESPACE")
 	image := mustEnv("INDEXER_IMAGE")
-	tag := mustEnv("INDEXER_TAG")
+	tag := utils.Env("INDEXER_TAG", "")
 
 	replicas := int32FromEnv("INDEXER_REPLICAS", 1)
 	enableHPA := boolFromEnv("INDEXER_ENABLE_HPA", false)
@@ -75,23 +91,22 @@ func NewK8sProviderFromEnv() (*K8sProvider, error) {
 		{Name: "CHAIN_ID", Value: ""}, // set per chain
 		{Name: "TASK_QUEUE", Value: ""},
 
-		{Name: "TEMPORAL_ADDRESS", Value: mustEnv("TEMPORAL_ADDRESS")},
+		{Name: "TEMPORAL_HOSTPORT", Value: mustEnv("TEMPORAL_HOSTPORT")},
 		{Name: "TEMPORAL_NAMESPACE", Value: mustEnv("TEMPORAL_NAMESPACE")},
-		{Name: "TEMPORAL_TLS", Value: getEnv("TEMPORAL_TLS", "false")},
 
 		{Name: "CLICKHOUSE_ADDR", Value: mustEnv("CLICKHOUSE_ADDR")},
 	}
-	if v := os.Getenv("CLICKHOUSE_USER"); v != "" {
-		env = append(env, corev1.EnvVar{Name: "CLICKHOUSE_USER", Value: v})
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "LOG_LEVEL", Value: v})
 	}
-	if v := os.Getenv("CLICKHOUSE_PASSWORD"); v != "" {
-		env = append(env, corev1.EnvVar{Name: "CLICKHOUSE_PASSWORD", Value: v})
+	if v := os.Getenv("CHDEBUG"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "CHDEBUG", Value: v})
 	}
-	if v := os.Getenv("CLICKHOUSE_INDEX_DB"); v != "" {
-		env = append(env, corev1.EnvVar{Name: "CLICKHOUSE_INDEX_DB", Value: v})
+	if v := os.Getenv("INDEXER_DB"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "INDEXER_DB", Value: v})
 	}
-	if v := os.Getenv("CLICKHOUSE_REPORTS_DB"); v != "" {
-		env = append(env, corev1.EnvVar{Name: "CLICKHOUSE_REPORTS_DB", Value: v})
+	if v := os.Getenv("REPORTS_DB"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "REPORTS_DB", Value: v})
 	}
 
 	// Optional CPU/Memory
@@ -114,7 +129,8 @@ func NewK8sProviderFromEnv() (*K8sProvider, error) {
 		res = &req
 	}
 
-	return &K8sProvider{
+	p := &K8sProvider{
+		Logger:    log,
 		client:    cs,
 		ns:        ns,
 		image:     image,
@@ -127,11 +143,28 @@ func NewK8sProviderFromEnv() (*K8sProvider, error) {
 		hpaMax:    hpaMax,
 		hpaCPU:    hpaCPU,
 		tqPrefix:  tqPrefix,
-	}, nil
+	}
+
+	log.Info("provider initialized",
+		zap.String("config_source", src),
+		zap.String("namespace", ns),
+		zap.String("image", image),
+		zap.String("tag", tag),
+		zap.Int32("replicas_default", replicas),
+		zap.Bool("hpa_enabled", enableHPA),
+		zap.Int32("hpa_min", hpaMin),
+		zap.Int32("hpa_max", hpaMax),
+		zap.Int32("hpa_cpu_target", hpaCPU),
+		zap.String("tq_prefix", tqPrefix),
+		zap.Bool("resources_configured", res != nil),
+	)
+
+	return p, nil
 }
 
 // EnsureChain ensures a Kubernetes Deployment exists for the specified chain, updating or creating it as necessary.
 func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
+	start := time.Now()
 	name := deploymentName(c.ID)
 	labels := map[string]string{
 		"app":        "indexer",
@@ -158,6 +191,12 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		replicas = p.replicas
 	}
 
+	image := p.image
+
+	if p.tag != "" {
+		image = fmt.Sprintf("%s:%s", p.image, p.tag)
+	}
+
 	desired := &appsv1.Deployment{
 		ObjectMeta: meta.ObjectMeta{
 			Name:      name,
@@ -180,7 +219,7 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:  "indexer",
-						Image: fmt.Sprintf("%s:%s", p.image, p.tag),
+						Image: image,
 						Env:   env,
 						Resources: func() corev1.ResourceRequirements {
 							if p.resReq != nil {
@@ -194,12 +233,24 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		},
 	}
 
+	p.Logger.Info("ensure chain begin",
+		zap.String("chain_id", c.ID),
+		zap.Bool("paused", c.Paused),
+		zap.Bool("deleted", c.Deleted),
+		zap.String("deployment", name),
+		zap.String("image", desired.Spec.Template.Spec.Containers[0].Image),
+		zap.Int32("replicas_desired", replicas),
+	)
+
 	curr, err := p.client.AppsV1().Deployments(p.ns).Get(ctx, name, meta.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		if _, err := p.client.AppsV1().Deployments(p.ns).Create(ctx, desired, meta.CreateOptions{}); err != nil {
+			p.Logger.Error("deployment create failed", zap.String("deployment", name), zap.Error(err))
 			return fmt.Errorf("create deployment: %w", err)
 		}
+		p.Logger.Info("deployment created", zap.String("deployment", name))
 	} else if err != nil {
+		p.Logger.Error("deployment get failed", zap.String("deployment", name), zap.Error(err))
 		return fmt.Errorf("get deployment: %w", err)
 	} else {
 		if needsUpdate(curr, desired) {
@@ -210,38 +261,60 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 			}
 			curr.Annotations["canopyx/env-checksum"] = ck
 			if _, err := p.client.AppsV1().Deployments(p.ns).Update(ctx, curr, meta.UpdateOptions{}); err != nil {
+				p.Logger.Error("deployment update failed", zap.String("deployment", name), zap.Error(err))
 				return fmt.Errorf("update deployment: %w", err)
 			}
+			p.Logger.Info("deployment updated", zap.String("deployment", name))
+		} else {
+			p.Logger.Debug("deployment up-to-date", zap.String("deployment", name))
 		}
 	}
 
 	// HPA
 	if p.enableHPA {
 		if err := p.ensureHPA(ctx, name, replicas, labels); err != nil {
+			p.Logger.Error("hpa ensure failed", zap.String("deployment", name), zap.Error(err))
 			return err
 		}
 	} else {
-		_ = p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Delete(ctx, name, meta.DeleteOptions{})
+		if err := p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Delete(ctx, name, meta.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			p.Logger.Warn("hpa delete failed", zap.String("deployment", name), zap.Error(err))
+		} else {
+			p.Logger.Debug("hpa deleted or not present", zap.String("deployment", name))
+		}
 	}
 
+	p.Logger.Info("ensure chain finished",
+		zap.String("chain_id", c.ID),
+		zap.String("deployment", name),
+		zap.Duration("elapsed", time.Since(start)),
+	)
 	return nil
 }
 
 // PauseChain scales down the Kubernetes deployment associated with the given chainID to zero replicas, effectively pausing it.
 func (p *K8sProvider) PauseChain(ctx context.Context, chainID string) error {
 	name := deploymentName(chainID)
+	p.Logger.Info("pause requested", zap.String("chain_id", chainID), zap.String("deployment", name))
+
 	deploy, err := p.client.AppsV1().Deployments(p.ns).Get(ctx, name, meta.GetOptions{})
 	if apierrors.IsNotFound(err) {
+		p.Logger.Debug("deployment not found on pause (noop)", zap.String("deployment", name))
 		return nil
 	}
 	if err != nil {
+		p.Logger.Error("deployment get failed on pause", zap.String("deployment", name), zap.Error(err))
 		return fmt.Errorf("get deployment: %w", err)
 	}
 	if deploy.Spec.Replicas == nil || *deploy.Spec.Replicas != 0 {
 		deploy.Spec.Replicas = int32Ptr(0)
 		if _, err := p.client.AppsV1().Deployments(p.ns).Update(ctx, deploy, meta.UpdateOptions{}); err != nil {
+			p.Logger.Error("scale to zero failed", zap.String("deployment", name), zap.Error(err))
 			return fmt.Errorf("scale to zero: %w", err)
 		}
+		p.Logger.Info("deployment scaled to zero", zap.String("deployment", name))
+	} else {
+		p.Logger.Debug("deployment already at zero", zap.String("deployment", name))
 	}
 	return nil
 }
@@ -250,19 +323,29 @@ func (p *K8sProvider) PauseChain(ctx context.Context, chainID string) error {
 // It deletes the deployment and its corresponding horizontal pod autoscaler, if present.
 func (p *K8sProvider) DeleteChain(ctx context.Context, chainID string) error {
 	name := deploymentName(chainID)
-	propagation := meta.DeletePropagationForeground
+	p.Logger.Info("delete requested", zap.String("chain_id", chainID), zap.String("deployment", name))
+
 	_ = p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Delete(ctx, name, meta.DeleteOptions{})
+
+	propagation := meta.DeletePropagationForeground
 	if err := p.client.AppsV1().Deployments(p.ns).Delete(ctx, name, meta.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
+		p.Logger.Error("deployment delete failed", zap.String("deployment", name), zap.Error(err))
 		return fmt.Errorf("delete deployment: %w", err)
 	}
+	p.Logger.Info("deployment delete issued", zap.String("deployment", name))
 	return nil
 }
 
 // Close releases resources or performs cleanup tasks associated with the K8sProvider instance.
-func (p *K8sProvider) Close() error { return nil }
+func (p *K8sProvider) Close() error {
+	p.Logger.Info("provider closed")
+	return nil
+}
 
 // ensureHPA ensures that the given HPA exists and is configured as expected.
 func (p *K8sProvider) ensureHPA(ctx context.Context, name string, replicas int32, labels map[string]string) error {
+	start := time.Now()
+
 	hpaMin := p.hpaMin
 	hpaMax := p.hpaMax
 	if replicas == 0 {
@@ -299,10 +382,21 @@ func (p *K8sProvider) ensureHPA(ctx context.Context, name string, replicas int32
 
 	curr, err := p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Get(ctx, name, meta.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err := p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Create(ctx, hpaDesired, meta.CreateOptions{})
-		return err
+		if _, err := p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Create(ctx, hpaDesired, meta.CreateOptions{}); err != nil {
+			p.Logger.Error("hpa create failed", zap.String("deployment", name), zap.Error(err))
+			return err
+		}
+		p.Logger.Info("hpa created",
+			zap.String("deployment", name),
+			zap.Int32("min", hpaMin),
+			zap.Int32("max", hpaMax),
+			zap.Int32("cpu_target", targetCPU),
+			zap.Duration("elapsed", time.Since(start)),
+		)
+		return nil
 	}
 	if err != nil {
+		p.Logger.Error("hpa get failed", zap.String("deployment", name), zap.Error(err))
 		return fmt.Errorf("get hpa: %w", err)
 	}
 
@@ -329,9 +423,27 @@ func (p *K8sProvider) ensureHPA(ctx context.Context, name string, replicas int32
 	}
 
 	if changed {
-		_, err := p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Update(ctx, curr, meta.UpdateOptions{})
-		return err
+		if _, err := p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Update(ctx, curr, meta.UpdateOptions{}); err != nil {
+			p.Logger.Error("hpa update failed", zap.String("deployment", name), zap.Error(err))
+			return err
+		}
+		p.Logger.Info("hpa updated",
+			zap.String("deployment", name),
+			zap.Int32("min", hpaMin),
+			zap.Int32("max", hpaMax),
+			zap.Int32("cpu_target", targetCPU),
+			zap.Duration("elapsed", time.Since(start)),
+		)
+		return nil
 	}
+
+	p.Logger.Debug("hpa up-to-date",
+		zap.String("deployment", name),
+		zap.Int32("min", hpaMin),
+		zap.Int32("max", hpaMax),
+		zap.Int32("cpu_target", targetCPU),
+		zap.Duration("elapsed", time.Since(start)),
+	)
 	return nil
 }
 
@@ -388,7 +500,7 @@ func deploymentName(chainID string) string {
 	if len(s) == 0 {
 		s = "chain"
 	}
-	if !strings.HasPrefix(s, "indexer-") {
+	if !strings.HasPrefix(s, "canopyx-indexer-") {
 		s = "indexer-" + s
 	}
 	if len(s) > 63 {

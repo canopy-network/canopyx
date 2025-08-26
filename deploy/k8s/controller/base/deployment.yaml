@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopyx-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: canopyx-controller
+  template:
+    metadata:
+      labels:
+        app: canopyx-controller
+    spec:
+      serviceAccountName: canopyx-controller
+      # InitContainer in the future maybe run migrations once needed.
+      containers:
+        - name: controller
+          image: localhost:5001/canopyx-controller
+          env:
+            # Logging
+            - { name: LOG_LEVEL, value: "debug" }
+            # ADMIN server
+            - { name: ADDR, value: ":3002" }
+            - { name: K8S_NAMESPACE, value: "default" }
+            - { name: INDEXER_IMAGE, value: "localhost:5001/canopyx-indexer" }
+            - { name: INDEXER_TAG, value: "dev" }
+            - { name: INDEXER_REPLICAS, value: "1" }
+            - { name: INDEXER_ENABLE_HPA, value: "true" }
+            - { name: INDEXER_HPA_MIN, value: "1" }
+            - { name: INDEXER_HPA_MAX, value: "3" }
+            - { name: INDEXER_HPA_CPU_TARGET, value: "80" }
+            - { name: INDEXER_CPU, value: "1000m" }
+            - { name: INDEXER_MEM, value: "256Mi" }
+            - { name: TEMPORAL_TASK_QUEUE_PREFIX, value: "index:" }
+            - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.default.svc.cluster.local:7233" }
+            - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://clickhouse-hdx-oss-v2-clickhouse.default.svc.cluster.local:9000?sslmode=disable" }
+            # CHDEBUG=1 logs failed queries
+            # CHDEBUG=2 logs all queries
+            - { name: CHDEBUG, value: "1" }
+            # Databases
+            - { name: INDEXER_DB, value: "canopyx_indexer" }
+            - { name: REPORTS_DB, value: "canopyx_reports" }
+            # Kind of Provider:
+            # Switch this to fake if you want to locally run the indexer or run it manually controller act
+            - { name: PROVIDER, value: "k8s" }
+            # - { name: PROVIDER, value: "fake" } # default one
+          ports:
+            - name: http
+              containerPort: 3002

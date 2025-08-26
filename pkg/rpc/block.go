@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -88,10 +89,11 @@ func (bbh *BlockByHeight) ToBlockModel() *indexer.Block {
 // ChainHead returns the height of the chain head.
 func (c *HTTPClient) ChainHead(ctx context.Context) (uint64, error) {
 	var resp HeadBlock
-	if err := c.doJSON(ctx, http.MethodPost, headPath, map[string]any{}, &resp); err == nil && resp.Height > 0 {
+	err := c.doJSON(ctx, http.MethodPost, headPath, map[string]any{}, &resp)
+	if err == nil && resp.Height > 0 {
 		return resp.Height, nil
 	}
-	return uint64(0), errors.New("cannot probe head")
+	return uint64(0), fmt.Errorf("cannot probe head %v", err)
 }
 
 // BlockByHeight returns the block at the given height.

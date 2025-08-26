@@ -1,0 +1,12 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: no-op
+spec:
+  template:
+    spec:
+      containers:
+        - name: no-op
+          image: localhost:5001/canopyx-indexer
+          command: ["/bin/sh", "-c", "exit 0"]
+      restartPolicy: Never

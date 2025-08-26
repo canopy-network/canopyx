@@ -1,0 +1,46 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: canopyx-controller
+  labels:
+    app: canopyx-controller
+---
+# Namespaced Role: manage Deployments + HPAs in THIS namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: canopyx-controller
+  labels:
+    app: canopyx-controller
+rules:
+  # Deployments (apps/v1)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # HorizontalPodAutoscalers (autoscaling/v2)
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Optional: allow emitting Events (useful for debugging)
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+# Bind SA -> Role (in the same namespace)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: canopyx-controller
+  labels:
+    app: canopyx-controller
+subjects:
+  - kind: ServiceAccount
+    name: canopyx-controller
+    # namespace is the one you apply this file into
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: canopyx-controller

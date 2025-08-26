@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopyx-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: canopyx-admin
+  template:
+    metadata:
+      labels:
+        app: canopyx-admin
+    spec:
+      # InitContainer in the future maybe run migrations once needed.
+      containers:
+        - name: admin
+          image: localhost:5001/canopyx-admin
+          env:
+            # Logging
+            - { name: LOG_LEVEL, value: "debug" }
+            # ADMIN server
+            - { name: ADDR, value: ":3000" }
+            - { name: ADMIN_TOKEN, value: "devtoken" }
+            - { name: ADMIN_USER, value: "admin" }
+            - { name: ADMIN_PASSWORD, value: "admin" }
+            - { name: ADMIN_USERS, value: "" }
+            - { name: SESSION_SECRET, value: "change-me-please" }
+            # ClickHouse connection
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://clickhouse-hdx-oss-v2-clickhouse.default.svc.cluster.local:9000?sslmode=disable" }
+            # CHDEBUG=1 logs failed queries
+            # CHDEBUG=2 logs all queries
+            - { name: CHDEBUG, value: "1" }
+            # Databases
+            - { name: INDEXER_DB, value: "canopyx_indexer" }
+            - { name: REPORTS_DB, value: "canopyx_reports" }
+            # Temporal Connection
+            - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.default.svc.cluster.local:7233" }
+            - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
+          ports:
+            - name: http
+              containerPort: 3000

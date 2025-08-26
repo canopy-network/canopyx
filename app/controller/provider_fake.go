@@ -2,14 +2,17 @@ package controller
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"log"
 )
 
 // FakeProvider is a fake provider.
-type FakeProvider struct{}
+type FakeProvider struct {
+	Logger *zap.Logger
+}
 
 // NewFakeProvider creates a new fake provider.
-func NewFakeProvider() *FakeProvider { return &FakeProvider{} }
+func NewFakeProvider(logger *zap.Logger) *FakeProvider { return &FakeProvider{Logger: logger} }
 
 // EnsureChain is a no-op.
 func (p *FakeProvider) EnsureChain(_ context.Context, c *Chain) error {

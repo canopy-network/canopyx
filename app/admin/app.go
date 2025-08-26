@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"time"
 
 	"github.com/canopy-network/canopyx/app/admin/activity"
 	"github.com/canopy-network/canopyx/app/admin/types"
@@ -49,7 +50,9 @@ func Initialize(ctx context.Context) *types.App {
 
 	// This will listen to workflows/activities for the ManagerQueue (head, gap, etc.)
 	managerTemporalWorker := worker.New(temporalClient.TClient, temporalClient.ManagerQueue, worker.Options{
-		// TODO: make all the options configurable
+		MaxConcurrentWorkflowTaskPollers: 10,
+		MaxConcurrentActivityTaskPollers: 10,
+		WorkerStopTimeout:                1 * time.Minute,
 	})
 
 	adminActivityContext := &activity.Context{
