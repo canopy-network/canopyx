@@ -2,8 +2,9 @@ package controller
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"log"
+
+	"go.uber.org/zap"
 )
 
 // FakeProvider is a fake provider.

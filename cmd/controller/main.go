@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"os/signal"
+	"syscall"
+
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.uber.org/zap"
-	"os/signal"
-	"syscall"
 
 	"github.com/canopy-network/canopyx/app/controller"
 )

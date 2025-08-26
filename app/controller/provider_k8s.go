@@ -5,14 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/canopy-network/canopyx/pkg/utils"
-	"go.uber.org/zap"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/utils"
+	"go.uber.org/zap"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
