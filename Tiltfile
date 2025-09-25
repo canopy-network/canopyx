@@ -106,7 +106,7 @@ docker_build_with_restart(
 k8s_yaml(kustomize("./deploy/k8s/admin/overlays/local"))
 
 k8s_resource(
-    "admin",
+    "canopyx-admin",
     port_forwards=["3000:3000"],
     labels=['apps'],
     resource_deps=["clickhouse-server", "temporal-frontend"],
@@ -128,10 +128,10 @@ docker_build_with_restart(
 k8s_yaml(kustomize("./deploy/k8s/controller/overlays/local"))
 
 k8s_resource(
-    "controller",
+    "canopyx-controller",
     labels=['apps'],
     objects=["canopyx-controller:serviceaccount", "canopyx-controller:role", "canopyx-controller:rolebinding"],
-    resource_deps=["clickhouse-server", "temporal-frontend", "admin"],
+    resource_deps=["clickhouse-server", "temporal-frontend", "canopyx-admin"],
 )
 
 # ------------------------------------------
@@ -168,20 +168,20 @@ local_resource(
 # Run curl AFTER the "admin" resource is deployed and marked healthy
 local_resource(
     name="add-canopy-mainnet",
-    cmd="curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{\"chain_id\":\"canopy_mainnet\",\"chain_name\":\"Canopy MainNet\",\"rpc_endpoints\":[\"https://node1.canoliq.org/rpc\"]}' || exit 1",
+    cmd="curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{\"chain_id\":\"canopy_mainnet\",\"chain_name\":\"Canopy MainNet\",\"rpc_endpoints\":[\"https://node1.canopy.us.nodefleet.net/rpc\"]}' || exit 1",
     deps=[],
     labels=['no-op'],
-    resource_deps=["admin"],  # 👈 waits for admin resource to be healthy
+    resource_deps=["canopyx-admin"],  # 👈 waits for admin resource to be healthy
     allow_parallel=False,     # run sequentially, after admin
     auto_init=True,           # runs on startup
 )
 
 local_resource(
     name="add-canopy-canary",
-    cmd="curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{\"chain_id\":\"canopy_canary\",\"chain_name\":\"Canopy CanaryNet\",\"rpc_endpoints\":[\"https://node2.canoliq.org/rpc\"]}' || exit 1",
+    cmd="curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{\"chain_id\":\"canopy_canary\",\"chain_name\":\"Canopy CanaryNet\",\"rpc_endpoints\":[\"https://node2.canopy.us.nodefleet.net/rpc\"]}' || exit 1",
     deps=[],
     labels=['no-op'],
-    resource_deps=["admin"],  # 👈 waits for admin resource to be healthy
+    resource_deps=["canopyx-admin"],  # 👈 waits for admin resource to be healthy
     allow_parallel=False,     # run sequentially, after admin
     auto_init=True,           # runs on startup
 )
@@ -194,14 +194,14 @@ local_resource(
 k8s_attach(
     name="indexer-mainnet",
     obj="deployment/canopyx-indexer-canopy-mainnet",
-    resource_deps=["controller", "add-canopy-mainnet"],
+    resource_deps=["canopyx-controller", "add-canopy-mainnet"],
     labels=['indexers'],
 )
 
 k8s_attach(
     name="indexer-canary",
     obj="deployment/canopyx-indexer-canopy-canary",
-    resource_deps=["controller", "add-canopy-canary"],
+    resource_deps=["canopyx-controller", "add-canopy-canary"],
     labels=['indexers'],
 )
 
@@ -214,4 +214,4 @@ k8s_custom_deploy(
 )
 
 # ensure deletion happens after the controller is torn down
-k8s_resource('cleanup-controller-spawns', resource_deps=['controller'], labels=['no-op'])
+k8s_resource('cleanup-controller-spawns', resource_deps=['canopyx-controller'], labels=['no-op'])

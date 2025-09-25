@@ -502,7 +502,7 @@ func deploymentName(chainID string) string {
 		s = "chain"
 	}
 	if !strings.HasPrefix(s, "canopyx-indexer-") {
-		s = "indexer-" + s
+		s = "canopyx-indexer-" + s
 	}
 	if len(s) > 63 {
 		s = s[:63]
