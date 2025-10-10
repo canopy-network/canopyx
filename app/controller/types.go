@@ -20,6 +20,7 @@ type QueueStats struct {
 	PendingWorkflowTasks int64
 	PendingActivityTasks int64
 	PollerCount          int
+	BacklogAgeSeconds    float64
 }
 
 type ScaleState struct {

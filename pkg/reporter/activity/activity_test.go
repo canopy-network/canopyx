@@ -85,6 +85,18 @@ func (f *reporterFakeChainStore) InsertTransactions(context.Context, []*indexerm
 	return nil
 }
 
+func (f *reporterFakeChainStore) HasBlock(context.Context, uint64) (bool, error) {
+	return false, nil
+}
+
+func (f *reporterFakeChainStore) DeleteBlock(context.Context, uint64) error {
+	return nil
+}
+
+func (f *reporterFakeChainStore) DeleteTransactions(context.Context, uint64) error {
+	return nil
+}
+
 func (f *reporterFakeChainStore) Exec(_ context.Context, query string, _ ...any) error {
 	f.execQueries = append(f.execQueries, query)
 	return nil

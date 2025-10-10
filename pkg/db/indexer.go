@@ -47,6 +47,11 @@ func (db *AdminDB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
+	db.Logger.Debug("Initialize reindex request model", zap.String("name", db.Name))
+	if err := admin.InitReindexRequests(ctx, db.Db); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -228,4 +233,40 @@ func (db *AdminDB) PatchChains(ctx context.Context, patches []admin.Chain) error
 		}
 	}
 	return nil
+}
+
+// RecordReindexRequests logs a set of reindex requests for auditing purposes.
+func (db *AdminDB) RecordReindexRequests(ctx context.Context, chainID, requestedBy string, heights []uint64) error {
+	if len(heights) == 0 {
+		return nil
+	}
+	rows := make([]*admin.ReindexRequest, 0, len(heights))
+	for _, h := range heights {
+		rows = append(rows, &admin.ReindexRequest{
+			ChainID:     chainID,
+			Height:      h,
+			RequestedBy: requestedBy,
+			Status:      "queued",
+		})
+	}
+	_, err := db.Db.NewInsert().Model(&rows).Exec(ctx)
+	return err
+}
+
+// ListReindexRequests returns the most recent reindex requests for a chain.
+func (db *AdminDB) ListReindexRequests(ctx context.Context, chainID string, limit int) ([]admin.ReindexRequest, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var rows []admin.ReindexRequest
+	err := db.Db.NewSelect().
+		Model(&rows).
+		Where("chain_id = ?", chainID).
+		OrderExpr("requested_at DESC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	return rows, nil
 }

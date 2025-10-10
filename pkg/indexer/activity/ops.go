@@ -22,6 +22,35 @@ type HeadResult struct {
 	Latest uint64
 }
 
+// PrepareIndexBlock determines whether a block needs reindexing and performs cleanup if required.
+// Returns true when the caller should skip further indexing work.
+func (c *Context) PrepareIndexBlock(ctx context.Context, in types.IndexBlockInput) (bool, error) {
+	chainDb, err := c.NewChainDb(ctx, in.ChainID)
+	if err != nil {
+		return false, sdktemporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
+	}
+
+	exists, err := chainDb.HasBlock(ctx, in.Height)
+	if err != nil {
+		return false, sdktemporal.NewApplicationErrorWithCause("block_lookup_failed", "chain_db_error", err)
+	}
+
+	if !in.Reindex && exists {
+		return true, nil
+	}
+
+	if in.Reindex {
+		if err := chainDb.DeleteTransactions(ctx, in.Height); err != nil {
+			return false, sdktemporal.NewApplicationErrorWithCause("delete_transactions_failed", "chain_db_error", err)
+		}
+		if err := chainDb.DeleteBlock(ctx, in.Height); err != nil {
+			return false, sdktemporal.NewApplicationErrorWithCause("delete_block_failed", "chain_db_error", err)
+		}
+	}
+
+	return false, nil
+}
+
 // GetLastIndexed returns the last indexed block height for the given chain.
 func (c *Context) GetLastIndexed(ctx context.Context, in *types.ChainIdInput) (uint64, error) {
 	return c.IndexerDB.LastIndexed(ctx, in.ChainID)

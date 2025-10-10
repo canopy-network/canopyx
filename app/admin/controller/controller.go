@@ -86,6 +86,9 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.Handle("/api/chains/{id}/progress", c.RequireAuth(http.HandlerFunc(c.HandleProgress))).Methods(http.MethodGet)
 	r.Handle("/api/chains/{id}/gaps", c.RequireAuth(http.HandlerFunc(c.HandleGaps))).Methods(http.MethodGet)
 	r.Handle("/api/chains/{id}", c.RequireAuth(http.HandlerFunc(c.HandleChainPatch))).Methods(http.MethodPatch)
+	r.Handle("/api/chains/{id}/headscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerHeadScan))).Methods(http.MethodPost)
+	r.Handle("/api/chains/{id}/gapscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerGapScan))).Methods(http.MethodPost)
+	r.Handle("/api/chains/{id}/reindex", c.RequireAuth(http.HandlerFunc(c.HandleReindex))).Methods(http.MethodPost)
 
 	if err := c.LoadAdminUI(r); err != nil {
 		return nil, err

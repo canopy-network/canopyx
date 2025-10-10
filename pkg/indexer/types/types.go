@@ -14,4 +14,5 @@ type IndexBlockInput struct {
 	Height         uint64          `json:"height"`
 	BlockSummaries *BlockSummaries `json:"blockSummaries"`
 	PriorityKey    int             `json:"priorityKey"`
+	Reindex        bool            `json:"reindex"`
 }

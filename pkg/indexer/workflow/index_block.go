@@ -28,6 +28,14 @@ func (c *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockIn
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 
+	var skip bool
+	if err := workflow.ExecuteActivity(ctx, (*activity.Context).PrepareIndexBlock, in).Get(ctx, &skip); err != nil {
+		return err
+	}
+	if skip {
+		return nil
+	}
+
 	var indexedTxs uint32
 	if err := workflow.ExecuteActivity(ctx, (*activity.Context).IndexTransactions, in).Get(ctx, &indexedTxs); err != nil {
 		return err

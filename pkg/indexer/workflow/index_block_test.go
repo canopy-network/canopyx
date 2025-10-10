@@ -58,6 +58,7 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 	}
 
 	env.RegisterWorkflow(wfCtx.IndexBlockWorkflow)
+	env.RegisterActivity(activityCtx.PrepareIndexBlock)
 	env.RegisterActivity(activityCtx.IndexTransactions)
 	env.RegisterActivity(activityCtx.IndexBlock)
 	env.RegisterActivity(activityCtx.RecordIndexed)
@@ -119,6 +120,9 @@ type wfFakeChainStore struct {
 	insertBlockCalls       int
 	insertTransactionCalls int
 	lastBlock              *indexermodels.Block
+	hasBlock               bool
+	deletedBlocks          []uint64
+	deletedTransactions    []uint64
 }
 
 func (f *wfFakeChainStore) DatabaseName() string { return f.databaseName }
@@ -132,6 +136,21 @@ func (f *wfFakeChainStore) InsertBlock(_ context.Context, block *indexermodels.B
 
 func (f *wfFakeChainStore) InsertTransactions(_ context.Context, _ []*indexermodels.Transaction, _ []*indexermodels.TransactionRaw) error {
 	f.insertTransactionCalls++
+	return nil
+}
+
+func (f *wfFakeChainStore) HasBlock(_ context.Context, _ uint64) (bool, error) {
+	return f.hasBlock, nil
+}
+
+func (f *wfFakeChainStore) DeleteBlock(_ context.Context, height uint64) error {
+	f.deletedBlocks = append(f.deletedBlocks, height)
+	f.hasBlock = false
+	return nil
+}
+
+func (f *wfFakeChainStore) DeleteTransactions(_ context.Context, height uint64) error {
+	f.deletedTransactions = append(f.deletedTransactions, height)
 	return nil
 }
 

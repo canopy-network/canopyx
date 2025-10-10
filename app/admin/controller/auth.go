@@ -103,3 +103,20 @@ func (c *Controller) IssueSession(w http.ResponseWriter, username string) {
 		MaxAge: int(ttl.Seconds()),
 	})
 }
+
+// currentUser returns the username associated with the request when available.
+func (c *Controller) currentUser(r *http.Request) string {
+	if cookie, err := r.Cookie("cx_session"); err == nil {
+		if tok, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (any, error) { return c.JWTSecret, nil }); err == nil && tok.Valid {
+			if claims, ok := tok.Claims.(jwt.MapClaims); ok {
+				if sub, _ := claims["sub"].(string); sub != "" {
+					return sub
+				}
+			}
+		}
+	}
+	if c.ValidateToken(r) {
+		return "token"
+	}
+	return "unknown"
+}

@@ -27,6 +27,8 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.HandleFunc("/chains/{id}/stats/hour", c.StatsHour).Methods("GET")
 	r.HandleFunc("/chains/{id}/stats/day", c.StatsDay).Methods("GET")
 	r.HandleFunc("/chains/{id}/stats/24h", c.Stats24h).Methods("GET")
+	r.HandleFunc("/chains/{id}/blocks", c.HandleBlocks).Methods("GET")
+	r.HandleFunc("/chains/{id}/transactions", c.HandleTransactions).Methods("GET")
 
 	return r, nil
 }

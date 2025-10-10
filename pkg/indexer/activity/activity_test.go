@@ -147,6 +147,60 @@ func TestIndexBlockFailsOnMissingBlockSummaries(t *testing.T) {
 	require.Equal(t, "block_summaries_not_found", appErr.Type())
 }
 
+func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	adminStore := &fakeAdminStore{chain: &admin.Chain{ChainID: "chain-A", RPCEndpoints: []string{"http://localhost"}}}
+	chainStore := &fakeChainStore{chainID: "chain-A", databaseName: "chain_a", hasBlock: true}
+	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap.Store("chain-A", chainStore)
+
+	activityCtx := &Context{
+		Logger:     logger,
+		IndexerDB:  adminStore,
+		ChainsDB:   chainsMap,
+		RPCFactory: &fakeRPCFactory{client: &fakeRPCClient{}},
+	}
+
+	suite := testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+	env.RegisterActivity(activityCtx.PrepareIndexBlock)
+
+	var skip bool
+	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: "chain-A", Height: 10})
+	require.NoError(t, err)
+	require.NoError(t, future.Get(&skip))
+	require.True(t, skip)
+	require.Empty(t, chainStore.deletedBlocks)
+	require.Empty(t, chainStore.deletedTransactions)
+}
+
+func TestPrepareIndexBlockDeletesOnReindex(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	adminStore := &fakeAdminStore{chain: &admin.Chain{ChainID: "chain-A", RPCEndpoints: []string{"http://localhost"}}}
+	chainStore := &fakeChainStore{chainID: "chain-A", databaseName: "chain_a", hasBlock: true}
+	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap.Store("chain-A", chainStore)
+
+	activityCtx := &Context{
+		Logger:     logger,
+		IndexerDB:  adminStore,
+		ChainsDB:   chainsMap,
+		RPCFactory: &fakeRPCFactory{client: &fakeRPCClient{}},
+	}
+
+	suite := testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+	env.RegisterActivity(activityCtx.PrepareIndexBlock)
+
+	var skip bool
+	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: "chain-A", Height: 42, Reindex: true})
+	require.NoError(t, err)
+	require.NoError(t, future.Get(&skip))
+	require.False(t, skip)
+	require.Contains(t, chainStore.deletedBlocks, uint64(42))
+	require.Contains(t, chainStore.deletedTransactions, uint64(42))
+}
+
 type fakeAdminStore struct {
 	chain           *admin.Chain
 	recordedChainID string
@@ -187,6 +241,9 @@ type fakeChainStore struct {
 	lastTxs                []*indexermodels.Transaction
 	lastRaws               []*indexermodels.TransactionRaw
 	execCalls              []string
+	hasBlock               bool
+	deletedBlocks          []uint64
+	deletedTransactions    []uint64
 }
 
 func (f *fakeChainStore) DatabaseName() string { return f.databaseName }
@@ -202,6 +259,21 @@ func (f *fakeChainStore) InsertTransactions(_ context.Context, txs []*indexermod
 	f.insertTransactionCalls++
 	f.lastTxs = txs
 	f.lastRaws = raws
+	return nil
+}
+
+func (f *fakeChainStore) HasBlock(_ context.Context, _ uint64) (bool, error) {
+	return f.hasBlock, nil
+}
+
+func (f *fakeChainStore) DeleteBlock(_ context.Context, height uint64) error {
+	f.deletedBlocks = append(f.deletedBlocks, height)
+	f.hasBlock = false
+	return nil
+}
+
+func (f *fakeChainStore) DeleteTransactions(_ context.Context, height uint64) error {
+	f.deletedTransactions = append(f.deletedTransactions, height)
 	return nil
 }
 

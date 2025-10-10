@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/canopy-network/canopyx/app/admin/types"
+	admintypes "github.com/canopy-network/canopyx/app/admin/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
+	indexertypes "github.com/canopy-network/canopyx/pkg/indexer/types"
+	indexerworkflow "github.com/canopy-network/canopyx/pkg/indexer/workflow"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/canopy-network/canopyx/pkg/utils"
 	"github.com/go-jose/go-jose/v4/json"
@@ -20,8 +22,12 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
 	workflowservicepb "go.temporal.io/api/workflowservice/v1"
+	"go.temporal.io/sdk/client"
+	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
+
+const queueDescribeTimeout = 2 * time.Second
 
 // HandleChainsList returns all registered chains
 func (c *Controller) HandleChainsList(w http.ResponseWriter, r *http.Request) {
@@ -132,9 +138,9 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make(map[string]types.ChainStatus, len(chains))
+	out := make(map[string]admintypes.ChainStatus, len(chains))
 	for _, chn := range chains {
-		out[chn.ChainID] = types.ChainStatus{
+		out[chn.ChainID] = admintypes.ChainStatus{
 			ChainID:     chn.ChainID,
 			ChainName:   chn.ChainName,
 			Image:       chn.Image,
@@ -172,7 +178,7 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 				}
 				cs, ok := out[id]
 				if !ok {
-					cs = types.ChainStatus{ChainID: id}
+					cs = admintypes.ChainStatus{ChainID: id}
 				}
 				cs.LastIndexed = last
 				out[id] = cs
@@ -206,7 +212,7 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 				}
 				cs, ok := out[id]
 				if !ok {
-					cs = types.ChainStatus{ChainID: id}
+					cs = admintypes.ChainStatus{ChainID: id}
 				}
 				if cs.LastIndexed == 0 {
 					cs.LastIndexed = last
@@ -237,7 +243,7 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 			}
 			cs, ok := out[chn.ChainID]
 			if !ok {
-				cs = types.ChainStatus{ChainID: chn.ChainID}
+				cs = admintypes.ChainStatus{ChainID: chn.ChainID}
 			}
 			cs.Head = head
 			out[chn.ChainID] = cs
@@ -257,11 +263,186 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for _, chn := range chains {
+		history, err := c.App.AdminDB.ListReindexRequests(ctx, chn.ChainID, 10)
+		if err != nil {
+			c.App.Logger.Warn("list reindex history failed", zap.String("chain_id", chn.ChainID), zap.Error(err))
+			continue
+		}
+		records := make([]admintypes.ReindexEntry, 0, len(history))
+		for _, h := range history {
+			records = append(records, admintypes.ReindexEntry{
+				Height:      h.Height,
+				Status:      h.Status,
+				RequestedBy: h.RequestedBy,
+				RequestedAt: h.RequestedAt,
+			})
+		}
+		cs := out[chn.ChainID]
+		cs.ReindexHistory = records
+		out[chn.ChainID] = cs
+	}
+
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-func (c *Controller) describeQueue(ctx context.Context, chainID string) (types.QueueStatus, error) {
-	stats := types.QueueStatus{}
+func (c *Controller) HandleTriggerHeadScan(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+		return
+	}
+	user := c.currentUser(r)
+	if err := c.startOpsWorkflow(r.Context(), id, indexerworkflow.HeadScanWorkflowName); err != nil {
+		c.App.Logger.Error("headscan trigger failed", zap.String("chain_id", id), zap.String("user", user), zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	c.App.Logger.Info("headscan triggered", zap.String("chain_id", id), zap.String("user", user))
+	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+}
+
+func (c *Controller) HandleTriggerGapScan(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+		return
+	}
+	user := c.currentUser(r)
+	if err := c.startOpsWorkflow(r.Context(), id, indexerworkflow.GapScanWorkflowName); err != nil {
+		c.App.Logger.Error("gapscan trigger failed", zap.String("chain_id", id), zap.String("user", user), zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	c.App.Logger.Info("gapscan triggered", zap.String("chain_id", id), zap.String("user", user))
+	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+}
+
+type reindexRequest struct {
+	Heights []uint64 `json:"heights"`
+	From    *uint64  `json:"from"`
+	To      *uint64  `json:"to"`
+}
+
+func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+		return
+	}
+
+	var req reindexRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json"})
+		return
+	}
+
+	heights := make([]uint64, 0)
+	seen := make(map[uint64]struct{})
+	addHeight := func(h uint64) {
+		if _, ok := seen[h]; !ok {
+			seen[h] = struct{}{}
+			heights = append(heights, h)
+		}
+	}
+
+	for _, h := range req.Heights {
+		addHeight(h)
+	}
+
+	if req.From != nil && req.To != nil {
+		from := *req.From
+		to := *req.To
+		if to < from {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid range"})
+			return
+		}
+		if to-from > 500 {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "range too large"})
+			return
+		}
+		for h := from; h <= to; h++ {
+			addHeight(h)
+		}
+	}
+
+	if len(heights) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "no heights specified"})
+		return
+	}
+
+	if len(heights) > 500 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many heights"})
+		return
+	}
+
+	user := c.currentUser(r)
+	if err := c.App.AdminDB.RecordReindexRequests(r.Context(), id, user, heights); err != nil {
+		c.App.Logger.Warn("failed to record reindex history", zap.String("chain_id", id), zap.Error(err))
+	}
+	for _, h := range heights {
+		if err := c.enqueueIndexBlock(r.Context(), id, h, true); err != nil {
+			c.App.Logger.Error("reindex enqueue failed", zap.String("chain_id", id), zap.Uint64("height", h), zap.String("user", user), zap.Error(err))
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	c.App.Logger.Info("reindex queued", zap.String("chain_id", id), zap.String("user", user), zap.Int("count", len(heights)), zap.Any("heights", heights))
+	_ = json.NewEncoder(w).Encode(map[string]any{"queued": len(heights)})
+}
+
+func (c *Controller) startOpsWorkflow(ctx context.Context, chainID, workflowName string) error {
+	tc := c.App.TemporalClient
+	if tc == nil {
+		return fmt.Errorf("temporal client unavailable")
+	}
+
+	input := indexertypes.ChainIdInput{ChainID: chainID}
+	options := client.StartWorkflowOptions{
+		ID:        fmt.Sprintf("%s:%s:%d", chainID, strings.ToLower(workflowName), time.Now().UnixNano()),
+		TaskQueue: tc.GetIndexerOpsQueue(chainID),
+	}
+
+	_, err := tc.TClient.ExecuteWorkflow(ctx, options, workflowName, input)
+	return err
+}
+
+func (c *Controller) enqueueIndexBlock(ctx context.Context, chainID string, height uint64, reindex bool) error {
+	tc := c.App.TemporalClient
+	if tc == nil {
+		return fmt.Errorf("temporal client unavailable")
+	}
+
+	input := indexertypes.IndexBlockInput{ChainID: chainID, Height: height, Reindex: reindex, PriorityKey: 1}
+	options := client.StartWorkflowOptions{
+		ID:        fmt.Sprintf("%s:index:%d:%d", chainID, height, time.Now().UnixNano()),
+		TaskQueue: tc.GetIndexerQueue(chainID),
+		RetryPolicy: &sdktemporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 1.2,
+			MaximumInterval:    5 * time.Second,
+			MaximumAttempts:    0,
+		},
+	}
+
+	_, err := tc.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", input)
+	return err
+}
+
+func (c *Controller) describeQueue(ctx context.Context, chainID string) (admintypes.QueueStatus, error) {
+	stats := admintypes.QueueStatus{}
 	client := c.App.TemporalClient
 	if client == nil {
 		return stats, fmt.Errorf("temporal client not initialized")
