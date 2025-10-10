@@ -17,7 +17,7 @@ func NewFakeProvider(logger *zap.Logger) *FakeProvider { return &FakeProvider{Lo
 
 // EnsureChain is a no-op.
 func (p *FakeProvider) EnsureChain(_ context.Context, c *Chain) error {
-	log.Printf("[controller/Provider=fake] ensure chain=%s paused=%v deleted=%v", c.ID, c.Paused, c.Deleted)
+	log.Printf("[controller/Provider=fake] ensure chain=%s paused=%v deleted=%v replicas=%d", c.ID, c.Paused, c.Deleted, c.Replicas)
 	return nil
 }
 

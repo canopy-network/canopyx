@@ -15,6 +15,10 @@ type Chain struct {
 	RPCEndpoints []string  `json:"rpc_endpoints" ch:"rpc_endpoints"` // []string -> Array(String)
 	Paused       uint8     `json:"paused" ch:"paused,default:0"`     // defaults are applied by CreateTable
 	Deleted      uint8     `json:"deleted" ch:"deleted,default:0"`
+	Image        string    `json:"image" ch:"image,default:''"`
+	MinReplicas  uint16    `json:"min_replicas" ch:"min_replicas,default:1"`
+	MaxReplicas  uint16    `json:"max_replicas" ch:"max_replicas,default:1"`
+	Notes        string    `json:"notes,omitempty" ch:"notes,default:''"`
 	CreatedAt    time.Time `json:"created_at" ch:"created_at,default:now()"`
 	UpdatedAt    time.Time `json:"updated_at" ch:"updated_at,default:now()"`
 }

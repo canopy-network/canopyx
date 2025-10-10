@@ -8,15 +8,19 @@
 export const API_BASE =
     (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_BASE) || ''
 
-export function apiFetch(path: string, init: RequestInit = {}) {
-    if (!init.headers) init.headers = {}
+export async function apiFetch(path: string, init: RequestInit = {}) {
+    const headers = new Headers(init.headers || {})
+    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
 
-    init.headers['Content-Type'] = 'application/json'
-    init.headers['X-Session'] = '1'
-
-    const url = `${API_BASE}${path}`
-    return fetch(url, {
+    const res = await fetch(`${API_BASE}${path}`, {
         credentials: 'include',
         ...init,
+        headers,
     })
+
+    if (res.status === 401 && typeof window !== 'undefined' && !path.startsWith('/auth/')) {
+        window.location.href = '/'
+    }
+
+    return res
 }

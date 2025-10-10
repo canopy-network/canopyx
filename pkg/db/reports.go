@@ -13,6 +13,16 @@ type ReportsDB struct {
 	Name string
 }
 
+// DatabaseName returns the reports database name.
+func (db *ReportsDB) DatabaseName() string {
+	return db.Name
+}
+
+// Close terminates the underlying ClickHouse connection.
+func (db *ReportsDB) Close() error {
+	return db.Db.Close()
+}
+
 // InitializeDB TODO: implement this
 func (db *ReportsDB) InitializeDB(ctx context.Context) error {
 	// 1) chain_tx_hourly

@@ -180,7 +180,11 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		case "CHAIN_ID":
 			env = append(env, corev1.EnvVar{Name: "CHAIN_ID", Value: c.ID})
 		case "TASK_QUEUE":
-			env = append(env, corev1.EnvVar{Name: "TASK_QUEUE", Value: p.tqPrefix + c.ID})
+			queueName := c.TaskQueue
+			if queueName == "" {
+				queueName = p.tqPrefix + c.ID
+			}
+			env = append(env, corev1.EnvVar{Name: "TASK_QUEUE", Value: queueName})
 		default:
 			env = append(env, e)
 		}
@@ -189,13 +193,19 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 
 	replicas := int32(0)
 	if !c.Paused && !c.Deleted {
-		replicas = p.replicas
+		if c.Replicas > 0 {
+			replicas = c.Replicas
+		} else {
+			replicas = p.replicas
+		}
 	}
 
-	image := p.image
-
-	if p.tag != "" {
-		image = fmt.Sprintf("%s:%s", p.image, p.tag)
+	image := strings.TrimSpace(c.Image)
+	if image == "" {
+		image = p.image
+		if p.tag != "" {
+			image = fmt.Sprintf("%s:%s", p.image, p.tag)
+		}
 	}
 
 	desired := &appsv1.Deployment{
@@ -273,7 +283,7 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 
 	// HPA
 	if p.enableHPA {
-		if err := p.ensureHPA(ctx, name, replicas, labels); err != nil {
+		if err := p.ensureHPA(ctx, name, labels, c); err != nil {
 			p.Logger.Error("hpa ensure failed", zap.String("deployment", name), zap.Error(err))
 			return err
 		}
@@ -344,11 +354,19 @@ func (p *K8sProvider) Close() error {
 }
 
 // ensureHPA ensures that the given HPA exists and is configured as expected.
-func (p *K8sProvider) ensureHPA(ctx context.Context, name string, replicas int32, labels map[string]string) error {
+func (p *K8sProvider) ensureHPA(ctx context.Context, name string, labels map[string]string, c *Chain) error {
 	start := time.Now()
 
-	hpaMin := p.hpaMin
-	hpaMax := p.hpaMax
+	replicas := c.Replicas
+
+	hpaMin := c.MinReplicas
+	if hpaMin < 0 {
+		hpaMin = 0
+	}
+	hpaMax := c.MaxReplicas
+	if hpaMax < hpaMin {
+		hpaMax = hpaMin
+	}
 	if replicas == 0 {
 		hpaMin = 0 // allow paused Deployments without HPA fighting scale-to-zero
 	}

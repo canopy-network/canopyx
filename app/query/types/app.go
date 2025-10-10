@@ -13,7 +13,7 @@ import (
 type App struct {
 	IndexerDB *db.AdminDB
 	ReportDB  *db.ReportsDB
-	ChainsDB  *xsync.Map[string, *db.ChainDB]
+	ChainsDB  *xsync.Map[string, db.ChainStore]
 	// Zap Logger
 	Logger *zap.Logger
 	// Server represents the HTTP server instance used to handle incoming client requests and manage HTTP routes.
@@ -28,12 +28,12 @@ func (a *App) Start(ctx context.Context) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	err := a.ReportDB.Db.Close()
+	err := a.ReportDB.Close()
 	if err != nil {
 		a.Logger.Error("Failed to close database connection", zap.Error(err))
 	}
 
-	err = a.IndexerDB.Db.Close()
+	err = a.IndexerDB.Close()
 	if err != nil {
 		a.Logger.Error("Failed to close database connection", zap.Error(err))
 	}

@@ -21,9 +21,10 @@ type Client struct {
 	Namespace string
 
 	// Task Queues
-	ManagerQueue string // manager - this is the queue for head-schedule and gap-scan or any other manager tasks in the future.
-	ReportsQueue string // reports - this is the queue for reports, global or by chain (to be defined)
-	IndexerQueue string // index:<chainID> - per chain queue for indexing blocks preventing a new out of data chain blocks an already up to date with a lot of missing heights.
+	ManagerQueue    string // manager - this is the queue for head-schedule and gap-scan or any other manager tasks in the future.
+	ReportsQueue    string // reports - this is the queue for reports, global or by chain (to be defined)
+	IndexerQueue    string // index:<chainID> - per chain queue for indexing blocks preventing a new out of data chain blocks an already up to date with a lot of missing heights.
+	IndexerOpsQueue string // admin:<chainID> - per chain operations queue (headscan, gapscan, maintenance).
 
 	// Schedule IDs
 	HeadScheduleID          string
@@ -60,9 +61,10 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		TSClient:  tClient.ScheduleClient(),
 		Namespace: ns,
 		// for now this is just hardcoded, could be configurable if we need it
-		ManagerQueue: "manager",
-		ReportsQueue: "reports",
-		IndexerQueue: "index:%s",
+		ManagerQueue:    "manager",
+		ReportsQueue:    "reports",
+		IndexerQueue:    "index:%s",
+		IndexerOpsQueue: "admin:%s",
 		// schedule IDs
 		HeadScheduleID:          "headscan:%s",
 		GapScanScheduleID:       "gapscan:%s",
@@ -93,6 +95,11 @@ func (c *Client) GetGlobalReportsQueue() string { return c.ReportsQueue }
 // GetIndexerQueue returns the indexer queue for the given chain.
 func (c *Client) GetIndexerQueue(chainID string) string {
 	return fmt.Sprintf(c.IndexerQueue, chainID)
+}
+
+// GetIndexerOpsQueue returns the operations queue for the given chain.
+func (c *Client) GetIndexerOpsQueue(chainID string) string {
+	return fmt.Sprintf(c.IndexerOpsQueue, chainID)
 }
 
 // GetHeadScheduleID returns the schedule ID for the head scan for the given chain.

@@ -13,4 +13,5 @@ type IndexBlockInput struct {
 	ChainID        string          `json:"chainId"`
 	Height         uint64          `json:"height"`
 	BlockSummaries *BlockSummaries `json:"blockSummaries"`
+	PriorityKey    int             `json:"priorityKey"`
 }

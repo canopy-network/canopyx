@@ -4,9 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/canopy-network/canopyx/app/admin/activity"
 	"github.com/canopy-network/canopyx/app/admin/types"
-	"github.com/canopy-network/canopyx/app/admin/workflow"
 	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	reporteractivity "github.com/canopy-network/canopyx/pkg/reporter/activity"
@@ -55,26 +53,6 @@ func Initialize(ctx context.Context) *types.App {
 		WorkerStopTimeout:                1 * time.Minute,
 	})
 
-	adminActivityContext := &activity.Context{
-		IndexerDB:      indexerDb,
-		ReportsDB:      reportsDb,
-		ChainsDB:       chainsDb,
-		TemporalClient: temporalClient,
-	}
-	adminWorkflowContext := &workflow.Context{
-		ActivityContext: adminActivityContext,
-		TemporalClient:  temporalClient,
-	}
-
-	// All the manager workflows
-	managerTemporalWorker.RegisterWorkflow(adminWorkflowContext.HeadScan)
-	managerTemporalWorker.RegisterWorkflow(adminWorkflowContext.GapScanWorkflow)
-	// All the manager activities
-	managerTemporalWorker.RegisterActivity(adminActivityContext.GetLastIndexed)
-	managerTemporalWorker.RegisterActivity(adminActivityContext.GetLatestHead)
-	managerTemporalWorker.RegisterActivity(adminActivityContext.StartIndexWorkflow)
-	managerTemporalWorker.RegisterActivity(adminActivityContext.FindGaps)
-
 	app := &types.App{
 		// Database initialization
 		AdminDB:  indexerDb,
@@ -88,7 +66,6 @@ func Initialize(ctx context.Context) *types.App {
 		Logger: logger,
 
 		// Context initialization
-		AdminWorkflowContext: adminWorkflowContext,
 		ReporterWorkflowContext: &reporterworkflow.Context{
 			ActivityContext: &reporteractivity.Context{
 				IndexerDB:      indexerDb,

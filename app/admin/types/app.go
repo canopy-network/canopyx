@@ -8,8 +8,8 @@ import (
 
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
 
-	"github.com/canopy-network/canopyx/app/admin/workflow"
 	"github.com/canopy-network/canopyx/pkg/db"
+	indexerworkflow "github.com/canopy-network/canopyx/pkg/indexer/workflow"
 	reporterworkflows "github.com/canopy-network/canopyx/pkg/reporter/workflow"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/puzpuzpuz/xsync/v4"
@@ -23,7 +23,7 @@ type App struct {
 	// Database Client wrappers
 	AdminDB  *db.AdminDB
 	ReportDB *db.ReportsDB
-	ChainsDB *xsync.Map[string, *db.ChainDB]
+	ChainsDB *xsync.Map[string, db.ChainStore]
 
 	// Temporal Client wrapper
 	TemporalClient *temporal.Client
@@ -35,7 +35,6 @@ type App struct {
 	Logger *zap.Logger
 
 	// Contexts
-	AdminWorkflowContext    *workflow.Context
 	ReporterWorkflowContext *reporterworkflows.Context
 
 	// HTTP Server
@@ -48,21 +47,21 @@ func (a *App) Start(ctx context.Context) {
 	<-ctx.Done()
 
 	a.Logger.Info("closing admin database connection")
-	err := a.AdminDB.Db.Close()
+	err := a.AdminDB.Close()
 	if err != nil {
 		a.Logger.Error("Failed to close database connection", zap.Error(err))
 	}
 
 	a.Logger.Info("closing reports database connection")
-	err = a.ReportDB.Db.Close()
+	err = a.ReportDB.Close()
 	if err != nil {
 		a.Logger.Error("Failed to close database connection", zap.Error(err))
 	}
 
 	// Close all chain database connections
-	a.ChainsDB.Range(func(key string, db *db.ChainDB) bool {
-		a.Logger.Info("closing chain database connection", zap.String("chainID", db.ChainID))
-		err = db.Db.Close()
+	a.ChainsDB.Range(func(key string, chainStore db.ChainStore) bool {
+		a.Logger.Info("closing chain database connection", zap.String("chainID", chainStore.ChainKey()))
+		err = chainStore.Close()
 		if err != nil {
 			a.Logger.Error("Failed to close database connection", zap.Error(err))
 		}
@@ -84,7 +83,7 @@ func (a *App) Start(ctx context.Context) {
 // NewChainDb initializes or retrieves an instance of ChainDB for a given blockchain identified by chainID.
 // It ensures the database and required tables are created if not already present.
 // Returns the ChainDB instance or an error in case of failure.
-func (a *App) NewChainDb(ctx context.Context, chainID string) (*db.ChainDB, error) {
+func (a *App) NewChainDb(ctx context.Context, chainID string) (db.ChainStore, error) {
 	if chainDb, ok := a.ChainsDB.Load(chainID); ok {
 		// chainDb is already loaded
 		return chainDb, nil
@@ -165,9 +164,9 @@ func (a *App) EnsureHeadSchedule(ctx context.Context, chainID string) error {
 				ID:   id,
 				Spec: a.TemporalClient.TenSecondSpec(),
 				Action: &client.ScheduleWorkflowAction{
-					Workflow:  a.AdminWorkflowContext.HeadScan,
+					Workflow:  indexerworkflow.HeadScanWorkflowName,
 					Args:      []interface{}{types.ChainIdInput{ChainID: chainID}},
-					TaskQueue: a.TemporalClient.ManagerQueue,
+					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainID),
 				},
 			},
 		)
@@ -195,9 +194,9 @@ func (a *App) EnsureGapScanSchedule(ctx context.Context, chainID string) error {
 				ID:   id,
 				Spec: a.TemporalClient.OneHourSpec(),
 				Action: &client.ScheduleWorkflowAction{
-					Workflow:  a.AdminWorkflowContext.GapScanWorkflow,
+					Workflow:  indexerworkflow.GapScanWorkflowName,
 					Args:      []interface{}{types.ChainIdInput{ChainID: chainID}},
-					TaskQueue: a.TemporalClient.ManagerQueue,
+					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainID),
 				},
 			},
 		)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
@@ -18,6 +19,11 @@ import (
 type AdminDB struct {
 	Client
 	Name string
+}
+
+// Close terminates the underlying ClickHouse connection.
+func (db *AdminDB) Close() error {
+	return db.Db.Close()
 }
 
 // Gap represents a missing height range (gap) in the indexing progress for a specific blockchain.
@@ -115,8 +121,8 @@ func (db *AdminDB) FindGaps(ctx context.Context, chainID string) ([]Gap, error) 
 }
 
 // EnsureChainsDbs ensures the required database and tables for indexing are created if they do not already exist.
-func (db *AdminDB) EnsureChainsDbs(ctx context.Context) (*xsync.Map[string, *ChainDB], error) {
-	chainDbMap := xsync.NewMap[string, *ChainDB]()
+func (db *AdminDB) EnsureChainsDbs(ctx context.Context) (*xsync.Map[string, ChainStore], error) {
+	chainDbMap := xsync.NewMap[string, ChainStore]()
 
 	chains, err := db.ListChain(ctx)
 	if err != nil {
@@ -126,7 +132,7 @@ func (db *AdminDB) EnsureChainsDbs(ctx context.Context) (*xsync.Map[string, *Cha
 	for _, c := range chains {
 		chainDb, chainDbErr := NewChainDb(ctx, db.Logger, c.ChainID)
 		if chainDbErr != nil {
-			return nil, err
+			return nil, chainDbErr
 		}
 		chainDbMap.Store(c.ChainID, chainDb)
 	}
@@ -146,6 +152,17 @@ func (db *AdminDB) UpsertChain(ctx context.Context, c *admin.Chain) error {
 
 	// Dedup endpoints
 	c.RPCEndpoints = utils.Dedup(c.RPCEndpoints)
+
+	if c.MinReplicas == 0 {
+		c.MinReplicas = 1
+	}
+	if c.MaxReplicas == 0 {
+		c.MaxReplicas = c.MinReplicas
+	}
+	if c.MaxReplicas < c.MinReplicas {
+		return fmt.Errorf("max_replicas (%d) must be >= min_replicas (%d)", c.MaxReplicas, c.MinReplicas)
+	}
+	c.Image = strings.TrimSpace(c.Image)
 
 	// Insert (ReplacingMergeTree will treat the same (chain_id) as an upsert by latest UpdatedAt)
 	_, err := db.Db.NewInsert().Model(c).Exec(ctx)

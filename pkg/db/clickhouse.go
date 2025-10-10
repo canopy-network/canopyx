@@ -92,8 +92,9 @@ func NewChainDb(ctx context.Context, logger *zap.Logger, chainId string) (*Chain
 	}
 
 	chainDbWrapper := &ChainDB{
-		Client: chainDb,
-		Name:   dbName,
+		Client:  chainDb,
+		Name:    dbName,
+		ChainID: chainId,
 	}
 
 	chainDbInitErr := chainDbWrapper.InitializeDB(ctx)

@@ -12,14 +12,14 @@ import (
 
 type Context struct {
 	Logger         *zap.Logger
-	IndexerDB      *db.AdminDB
-	ReportsDB      *db.ReportsDB
-	ChainsDB       *xsync.Map[string, *db.ChainDB]
+	IndexerDB      db.AdminStore
+	ReportsDB      db.ReportsStore
+	ChainsDB       *xsync.Map[string, db.ChainStore]
 	TemporalClient *temporal.Client
 }
 
-// NewChainDb returns a new ChainDB instance for the provided chain ID.
-func (c *Context) NewChainDb(ctx context.Context, chainID string) (*db.ChainDB, error) {
+// NewChainDb returns a chain store for the provided chain ID.
+func (c *Context) NewChainDb(ctx context.Context, chainID string) (db.ChainStore, error) {
 	if chainDb, ok := c.ChainsDB.Load(chainID); ok {
 		// chainDb is already loaded
 		return chainDb, nil

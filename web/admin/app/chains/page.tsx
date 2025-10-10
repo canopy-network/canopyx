@@ -1,349 +1,465 @@
-// noinspection ExceptionCaughtLocallyJS
-
 'use client'
 
-import {useEffect, useMemo, useState} from 'react'
-import Link from 'next/link'
+import {useCallback, useEffect, useMemo, useState} from 'react'
+import * as Tabs from '@radix-ui/react-tabs'
+import * as Dialog from '@radix-ui/react-dialog'
+import * as Tooltip from '@radix-ui/react-tooltip'
+import {InfoCircledIcon, ReloadIcon, Pencil1Icon, PauseIcon, PlayIcon} from '@radix-ui/react-icons'
+import clsx from 'clsx'
+
+import Nav from '../components/Nav'
 import {apiFetch} from '../lib/api'
-import Nav from "../components/Nav";
 
-type Chain = {
-    chain_id: string
-    chain_name: string
-    rpc_endpoints: string[]
-    paused: number
-    deleted?: number
+type ChainRow = {
+  chain_id: string
+  chain_name: string
+  rpc_endpoints: string[]
+  paused: number
+  deleted?: number
+  image: string
+  min_replicas: number
+  max_replicas: number
+  notes?: string
 }
 
-type BulkStatusRow = {
-    last_indexed?: number
-    head?: number
+type QueueStatus = {
+  pending_workflow: number
+  pending_activity: number
+  backlog_age_secs: number
+  pollers: number
 }
 
-type ProgressResp = { last: number } // from /chains/{id}/progress
+type ChainStatus = {
+  chain_id: string
+  chain_name: string
+  image: string
+  notes?: string
+  paused: boolean
+  deleted: boolean
+  min_replicas: number
+  max_replicas: number
+  last_indexed: number
+  head: number
+  queue: QueueStatus
+}
 
-export default function Chains() {
-    const [chains, setChains] = useState<Chain[]>([])
-    const [err, setErr] = useState('')
-    const [loading, setLoading] = useState(true)
-    const [updating, setUpdating] = useState<string | null>(null)
-    const [bulkUpdating, setBulkUpdating] = useState(false)
-    const [sel, setSel] = useState<Record<string, boolean>>({})
-    const [indexed, setIndexed] = useState<Record<string, number>>({})
-    const [head, setHead] = useState<Record<string, number>>({})
+type ChainStatusMap = Record<string, ChainStatus>
 
-    const selectedIds = useMemo(
-        () => Object.entries(sel).filter(([, v]) => v).map(([k]) => k),
-        [sel]
-    )
+function formatNumber(n: number | undefined) {
+  if (!n) return '0'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return n.toLocaleString()
+}
 
-    // helpers
-    const setMany = <T extends string | number>(
-        setter: React.Dispatch<React.SetStateAction<Record<string, T>>>,
-        rows: Array<{ id: string; value: T }>
-    ) => {
-        setter((m) => {
-            const next = {...m}
-            for (const r of rows) next[r.id] = r.value
-            return next
-        })
-    }
+function secondsToFriendly(sec: number) {
+  if (!sec || sec <= 0) return '—'
+  if (sec < 60) return `${Math.round(sec)}s`
+  if (sec < 3600) return `${Math.round(sec / 60)}m`
+  return `${Math.round(sec / 3600)}h`
+}
 
-    // 1) load chains
-    useEffect(() => {
-        let cancelled = false
-        setLoading(true)
-        apiFetch('/api/chains')
-            .then((r) => (r.ok ? r.json() : Promise.reject(new Error('auth'))))
-            .then((list: Chain[]) => {
-                if (cancelled) return
-                setChains(list)
-                // seed selection map (all unchecked)
-                const base: Record<string, boolean> = {}
-                list.forEach((c) => (base[c.chain_id] = false))
-                setSel(base)
-            })
-            .catch(() => setErr('Not authorized. Please login again.'))
-            .finally(() => !cancelled && setLoading(false))
-        return () => {
-            cancelled = true
-        }
-    }, [])
-
-    // 2) poll heights (bulk → fallback) every 10s, pause when tab hidden
-    useEffect(() => {
-        if (!chains.length) return
-        const POLL_MS = 10_000
-        let controller: AbortController | null = null
-
-        const loadOnce = async () => {
-            controller?.abort()
-            controller = new AbortController()
-
-            const ids = chains.map((c) => c.chain_id)
-            const qs = encodeURIComponent(ids.join(','))
-            try {
-                const r = await apiFetch(`/api/chains/status?ids=${qs}`, {
-                    headers: {'Content-Type': 'application/json'},
-                    signal: controller.signal,
-                })
-                if (!r.ok) throw new Error('no-bulk')
-                const data: Record<string, BulkStatusRow> = await r.json()
-                const idxRows = Object.entries(data)
-                    .filter(([, v]) => typeof v.last_indexed === 'number')
-                    .map(([id, v]) => ({id, value: v.last_indexed as number}))
-                const headRows = Object.entries(data)
-                    .filter(([, v]) => typeof v.head === 'number')
-                    .map(([id, v]) => ({id, value: v.head as number}))
-                if (idxRows.length) setMany(setIndexed, idxRows)
-                if (headRows.length) setMany(setHead, headRows)
-            } catch {
-                // fallback: per-chain progress endpoint for "indexed"
-                const rows = await Promise.all(
-                    chains.map((c) =>
-                        apiFetch(`/api/chains/${encodeURIComponent(c.chain_id)}/progress`, {
-                            headers: {'Content-Type': 'application/json'},
-                            signal: controller!.signal,
-                        })
-                            .then((r) => (r.ok ? r.json() : {last: 0}))
-                            .then((p: ProgressResp) => ({id: c.chain_id, value: p.last || 0}))
-                            .catch(() => ({id: c.chain_id, value: 0}))
-                    )
-                )
-                setMany(setIndexed, rows)
-            }
-        }
-
-        loadOnce()
-
-        const tick = () => {
-            if (document.hidden) return
-            loadOnce()
-        }
-        const iv = setInterval(tick, POLL_MS)
-        const onVis = () => {
-            if (!document.hidden) loadOnce()
-        }
-        document.addEventListener('visibilitychange', onVis)
-
-        return () => {
-            clearInterval(iv)
-            document.removeEventListener('visibilitychange', onVis)
-            controller?.abort()
-        }
-    }, [chains])
-
-    // actions
-    const togglePause = async (c: Chain) => {
-        setUpdating(c.chain_id)
-        try {
-            const body = [{chain_id: c.chain_id, paused: (!c.paused) ? 1 : 0}]
-            const r = await apiFetch('/api/chains/status', {
-                method: 'PATCH',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body),
-            })
-            if (!r.ok) throw new Error(await r.text())
-            setChains((list) =>
-                list.map((x) => (x.chain_id === c.chain_id ? {...x, paused: x.paused == 0 ? 1 : 0} : x))
-            )
-        } catch (e) {
-            console.error(e)
-            alert('Failed to update pause state')
-        } finally {
-            setUpdating(null)
-        }
-    }
-
-    const deleteChain = async (c: Chain) => {
-        if (!confirm(`Delete chain ${c.chain_id}?`)) return
-        setUpdating(c.chain_id)
-        try {
-            const body = [{chain_id: c.chain_id, deleted: 1}]
-            const r = await apiFetch('/api/chains/status', {
-                method: 'PATCH',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body),
-            })
-            if (!r.ok) throw new Error(await r.text())
-            setChains((list) => list.filter((x) => x.chain_id !== c.chain_id))
-        } catch (e) {
-            console.error(e)
-            alert('Failed to delete')
-        } finally {
-            setUpdating(null)
-        }
-    }
-
-    const bulkPause = async (paused: number) => {
-        if (!selectedIds.length) return
-        setBulkUpdating(true)
-        try {
-            const body = selectedIds.map((id) => ({chain_id: id, paused: paused ? 1 : 0}))
-            const r = await apiFetch('/api/chains/status', {
-                method: 'PATCH',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body),
-            })
-            if (!r.ok) throw new Error(await r.text())
-            setChains((list) =>
-                list.map((c) => (sel[c.chain_id] ? {...c, paused} : c))
-            )
-            setSel((m) => {
-                const n = {...m}
-                selectedIds.forEach((id) => (n[id] = false))
-                return n
-            })
-        } catch (e) {
-            console.error(e)
-            alert('Bulk update failed')
-        } finally {
-            setBulkUpdating(false)
-        }
-    }
-
-    const allChecked = useMemo(
-        () => chains.length > 0 && chains.every((c) => sel[c.chain_id]),
-        [chains, sel]
-    )
-    const toggleAll = (checked: boolean) => {
-        setSel((m) => {
-            const n = {...m}
-            chains.forEach((c) => (n[c.chain_id] = checked))
-            return n
-        })
-    }
-
-    return (
-        <div className="container mx-auto px-4 py-6">
-            <Nav/>
-            <div className="card">
-
-                <div className="flex items-center justify-between mb-4">
-                    <h1 className="text-xl font-semibold">Chains</h1>
-                    <div className="flex items-center gap-2">
-                        <Link className="btn" href="/new">+ New</Link>
-                        <button
-                            className="btn"
-                            disabled={!selectedIds.length || bulkUpdating}
-                            onClick={() => bulkPause(1)}
-                        >
-                            Pause selected
-                        </button>
-                        <button
-                            className="btn"
-                            disabled={!selectedIds.length || bulkUpdating}
-                            onClick={() => bulkPause(0)}
-                        >
-                            Resume selected
-                        </button>
-                    </div>
-                </div>
-
-                {err && <p className="text-rose-400 mb-3">{err}</p>}
-                {loading ? (
-                    <p className="opacity-70">Loading…</p>
-                ) : (
-                    <div className="card overflow-x-auto">
-                        <table className="table w-full">
-                            <thead>
-                            <tr>
-                                <th className="w-10">
-                                    <input
-                                        type="checkbox"
-                                        checked={allChecked}
-                                        onChange={(e) => toggleAll(e.target.checked)}
-                                    />
-                                </th>
-                                <th>ID</th>
-                                <th>Name</th>
-                                <th>RPCs</th>
-                                <th className="text-right">Indexed</th>
-                                <th className="text-right">Head</th>
-                                <th className="text-right">Lag</th>
-                                <th>Status</th>
-                                <th className="w-56"></th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            {chains.map((c) => {
-                                const idx = indexed[c.chain_id] ?? 0
-                                const hd = head[c.chain_id] ?? 0
-                                const lag = hd && idx ? Math.max(hd - idx, 0) : 0
-                                return (
-                                    <tr key={c.chain_id} className={c.paused ? 'opacity-70' : ''}>
-                                        <td>
-                                            <input
-                                                type="checkbox"
-                                                checked={!!sel[c.chain_id]}
-                                                onChange={(e) =>
-                                                    setSel((m) => ({...m, [c.chain_id]: e.target.checked}))
-                                                }
-                                            />
-                                        </td>
-                                        <td className="font-mono">{c.chain_id}</td>
-                                        <td>{c.chain_name}</td>
-                                        <td className="text-slate-300 truncate max-w-[420px]">
-                                            {c.rpc_endpoints?.join(', ')}
-                                        </td>
-                                        <td className="text-right tabular-nums">{idx || '-'}</td>
-                                        <td className="text-right tabular-nums">{hd || '-'}</td>
-                                        <td className="text-right tabular-nums">
-                                            {lag ? (
-                                                <span className={lag > 1000 ? 'text-rose-400' : 'text-emerald-400'}>
-                          {lag}
-                        </span>
-                                            ) : '-'}
-                                        </td>
-                                        <td>
-                                            {c.paused ? (
-                                                <span
-                                                    className="inline-block px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 text-xs">
-                          paused
-                        </span>
-                                            ) : (
-                                                <span
-                                                    className="inline-block px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs">
-                          active
-                        </span>
-                                            )}
-                                        </td>
-                                        <td className="text-right">
-                                            <div className="flex items-center gap-2 justify-end">
-                                                <Link className="link" href={`/chains/view?id=${c.chain_id}`}>
-                                                    View
-                                                </Link>
-                                                <button
-                                                    className="btn"
-                                                    disabled={updating === c.chain_id}
-                                                    onClick={() => togglePause(c)}
-                                                >
-                                                    {c.paused ? 'Resume' : 'Pause'}
-                                                </button>
-                                                <button
-                                                    className="btn"
-                                                    disabled={updating === c.chain_id}
-                                                    onClick={() => deleteChain(c)}
-                                                >
-                                                    Delete
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )
-                            })}
-                            {!chains.length && (
-                                <tr>
-                                    <td colSpan={9} className="py-8 text-center opacity-70">
-                                        No chains yet. Click “New” to add one.
-                                    </td>
-                                </tr>
-                            )}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
+function QueueBadge({queue}: { queue: QueueStatus }) {
+  const backlog = queue.pending_workflow + queue.pending_activity
+  const tone = backlog > 500 ? 'bg-rose-500/20 text-rose-300' : backlog > 50 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
+  return (
+    <Tooltip.Root delayDuration={200}>
+      <Tooltip.Trigger asChild>
+        <span className={clsx('inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium', tone)}>
+          {formatNumber(backlog)} pending
+        </span>
+      </Tooltip.Trigger>
+      <Tooltip.Content className="rounded bg-slate-800 px-3 py-2 text-sm shadow-lg" sideOffset={6}>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between"><span className="text-slate-300">Workflow</span><span>{formatNumber(queue.pending_workflow)}</span></div>
+          <div className="flex items-center justify-between"><span className="text-slate-300">Activity</span><span>{formatNumber(queue.pending_activity)}</span></div>
+          <div className="flex items-center justify-between"><span className="text-slate-300">Pollers</span><span>{queue.pollers ?? 0}</span></div>
+          <div className="flex items-center justify-between"><span className="text-slate-300">Oldest</span><span>{secondsToFriendly(queue.backlog_age_secs)}</span></div>
         </div>
+        <Tooltip.Arrow className="fill-slate-800" />
+      </Tooltip.Content>
+    </Tooltip.Root>
+  )
+}
+
+export default function ChainsPage() {
+  const [chains, setChains] = useState<ChainRow[]>([])
+  const [status, setStatus] = useState<ChainStatusMap>({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string>('')
+  const [selected, setSelected] = useState<string | null>(null)
+  const [dialogChain, setDialogChain] = useState<ChainRow | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const loadChains = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await apiFetch('/api/chains')
+      if (!res.ok) throw new Error('fetch')
+      const list: ChainRow[] = await res.json()
+      setChains(list)
+    } catch (err) {
+      console.error(err)
+      setError('Unable to load chains. Please login again.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const loadStatus = useCallback(async (chainIds: string[]) => {
+    if (!chainIds.length) return
+    try {
+      const res = await apiFetch(`/api/chains/status?ids=${encodeURIComponent(chainIds.join(','))}`)
+      if (!res.ok) throw new Error('status')
+      const data: ChainStatusMap = await res.json()
+      setStatus(data)
+      setChains((list) => {
+        let mutated = false
+        const next = list.map((c) => {
+          const st = data[c.chain_id]
+          if (!st) return c
+          const paused = st.paused ? 1 : 0
+          const deleted = st.deleted ? 1 : 0
+          const minRep = st.min_replicas
+          const maxRep = st.max_replicas
+          const image = st.image || c.image
+          const notes = st.notes ?? c.notes
+          if (c.paused !== paused || (c.deleted ?? 0) !== deleted || c.min_replicas !== minRep || c.max_replicas !== maxRep || c.image !== image || c.notes !== notes) {
+            mutated = true
+            return {...c, paused, deleted, min_replicas: minRep, max_replicas: maxRep, image, notes}
+          }
+          return c
+        })
+        return mutated ? next : list
+      })
+    } catch (err) {
+      console.warn('status polling failed', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadChains()
+  }, [loadChains])
+
+  useEffect(() => {
+    if (!chains.length) return
+    loadStatus(chains.map((c) => c.chain_id))
+    const interval = setInterval(() => loadStatus(chains.map((c) => c.chain_id)), 15_000)
+    return () => clearInterval(interval)
+  }, [chains, loadStatus])
+
+  const rows = useMemo(() => {
+    return chains.map((chain) => {
+      const st = status[chain.chain_id]
+      return {
+        chain,
+        status: st,
+        lastIndexed: st?.last_indexed ?? 0,
+        head: st?.head ?? 0,
+        queue: st?.queue ?? {pending_activity: 0, pending_workflow: 0, backlog_age_secs: 0, pollers: 0},
+      }
+    })
+  }, [chains, status])
+
+  const togglePause = async (row: ChainRow) => {
+    const nextPaused = row.paused ? 0 : 1
+    try {
+      await apiFetch('/api/chains/status', {
+        method: 'PATCH',
+        body: JSON.stringify([{chain_id: row.chain_id, paused: nextPaused}])
+      })
+      setChains((list) => list.map((c) => c.chain_id === row.chain_id ? {...c, paused: nextPaused} : c))
+    } catch (err) {
+      console.error(err)
+      alert('Failed to update pause state')
+    }
+  }
+
+  const openEditDialog = (row: ChainRow) => {
+    setDialogChain(row)
+    setDialogOpen(true)
+  }
+
+  const saveChain = async (updates: Partial<ChainRow>) => {
+    if (!dialogChain) return
+    setSaving(true)
+    try {
+      const payload = {
+        ...dialogChain,
+        ...updates,
+      }
+      await apiFetch('/api/chains', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      setChains((list) => list.map((c) => c.chain_id === dialogChain.chain_id ? {...c, ...payload} : c))
+      setDialogOpen(false)
+    } catch (err) {
+      console.error(err)
+      alert('Failed to update chain')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="container">
+        <Nav />
+        <p className="mt-12 text-slate-300">Loading chains…</p>
+      </div>
     )
+  }
+
+  if (error) {
+    return (
+      <div className="container">
+        <Nav />
+        <div className="mt-12 rounded bg-rose-500/10 border border-rose-500/40 px-4 py-3 text-rose-200">
+          {error}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <Tooltip.Provider delayDuration={200}>
+    <div className="container">
+      <Nav />
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold">Chains</h1>
+          <p className="text-sm text-slate-400">Operational view across indexer workers and queues.</p>
+        </div>
+        <button className="btn" onClick={() => loadChains()}>
+          <ReloadIcon className="mr-2 h-4 w-4" /> Refresh
+        </button>
+      </div>
+
+      <Tabs.Root defaultValue="overview" className="space-y-4">
+        <Tabs.List className="flex gap-2 border-b border-slate-700">
+          <Tabs.Trigger value="overview" className="px-3 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-sky-400 data-[state=active]:text-sky-300">
+            Overview
+          </Tabs.Trigger>
+          <Tabs.Trigger value="selected" className="px-3 py-2 text-sm data-[state=active]:border-b-2 data-[state=active]:border-sky-400 data-[state=active]:text-sky-300" disabled={!selected}>
+            Selection
+          </Tabs.Trigger>
+        </Tabs.List>
+
+        <Tabs.Content value="overview">
+          <div className="overflow-x-auto rounded border border-slate-800">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-900/60 text-slate-300">
+                <tr>
+                  <th className="px-3 py-2 text-left">Chain</th>
+                  <th className="px-3 py-2 text-left">Queue</th>
+                  <th className="px-3 py-2 text-left">Indexed</th>
+                  <th className="px-3 py-2 text-left">Head</th>
+                  <th className="px-3 py-2 text-left">Replicas</th>
+                  <th className="px-3 py-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({chain, status, lastIndexed, head, queue}) => {
+                  const isSelected = selected === chain.chain_id
+                  return (
+                    <tr key={chain.chain_id} className={clsx('border-t border-slate-800', isSelected && 'bg-slate-800/40')}>
+                      <td className="px-3 py-3">
+                        <button className="text-left" onClick={() => setSelected(isSelected ? null : chain.chain_id)}>
+                          <div className="font-medium text-slate-100">{chain.chain_name || chain.chain_id}</div>
+                          <div className="text-xs text-slate-500">{chain.chain_id}</div>
+                          {chain.notes && <div className="mt-1 text-xs text-slate-400">{chain.notes}</div>}
+                        </button>
+                      </td>
+                      <td className="px-3 py-3"><QueueBadge queue={queue} /></td>
+                      <td className="px-3 py-3">{formatNumber(lastIndexed)}</td>
+                      <td className="px-3 py-3">{formatNumber(head)}</td>
+                      <td className="px-3 py-3 text-sm text-slate-300">
+                        <div className="flex items-center gap-2">
+                          <span>{chain.min_replicas}</span>
+                          <span className="text-slate-500">→</span>
+                          <span>{chain.max_replicas}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          <button className="btn-secondary" onClick={() => togglePause(chain)}>
+                            {chain.paused ? <PlayIcon /> : <PauseIcon />}
+                            <span>{chain.paused ? 'Resume' : 'Pause'}</span>
+                          </button>
+                          <button className="btn-secondary" onClick={() => openEditDialog(chain)}>
+                            <Pencil1Icon /> Edit
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Tabs.Content>
+
+        <Tabs.Content value="selected">
+          {selected ? (
+            <SelectionPane
+              chain={chains.find((c) => c.chain_id === selected)!}
+              status={status[selected]}
+              onEdit={() => openEditDialog(chains.find((c) => c.chain_id === selected)!)}
+            />
+          ) : (
+            <div className="rounded border border-slate-800 px-4 py-8 text-center text-slate-400">
+              Select a chain from the table to inspect details.
+            </div>
+          )}
+        </Tabs.Content>
+      </Tabs.Root>
+
+      <EditChainDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        chain={dialogChain}
+        onSave={saveChain}
+        saving={saving}
+      />
+    </div>
+    </Tooltip.Provider>
+  )
+}
+
+interface SelectionPaneProps {
+  chain: ChainRow
+  status?: ChainStatus
+  onEdit: () => void
+}
+
+function SelectionPane({chain, status, onEdit}: SelectionPaneProps) {
+  const queue = status?.queue
+  const paused = status ? status.paused : chain.paused === 1
+  const minReplicas = status?.min_replicas ?? chain.min_replicas
+  const maxReplicas = status?.max_replicas ?? chain.max_replicas
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="rounded border border-slate-800 p-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Overview</h3>
+          <button className="btn-secondary" onClick={onEdit}><Pencil1Icon /> Edit</button>
+        </div>
+        <dl className="mt-4 space-y-2 text-sm">
+          <div className="flex items-center justify-between"><dt className="text-slate-400">Chain ID</dt><dd>{chain.chain_id}</dd></div>
+          <div className="flex items-center justify-between"><dt className="text-slate-400">Image</dt><dd>{status?.image || chain.image || '—'}</dd></div>
+          <div className="flex items-center justify-between"><dt className="text-slate-400">Replicas</dt><dd>{minReplicas} &rarr; {maxReplicas}</dd></div>
+          <div className="flex items-center justify-between"><dt className="text-slate-400">Paused</dt><dd>{paused ? 'Yes' : 'No'}</dd></div>
+        </dl>
+        {chain.rpc_endpoints?.length ? (
+          <div className="mt-4">
+            <div className="text-sm text-slate-400">RPC Endpoints</div>
+            <ul className="mt-2 space-y-1 text-sm text-slate-300">
+              {chain.rpc_endpoints.map((ep) => <li key={ep}>{ep}</li>)}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+      <div className="rounded border border-slate-800 p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Queue</h3>
+          <Tooltip.Root delayDuration={200}>
+            <Tooltip.Trigger asChild>
+              <InfoCircledIcon className="text-slate-500" />
+            </Tooltip.Trigger>
+            <Tooltip.Content className="rounded bg-slate-800 px-3 py-2 text-sm shadow-lg" sideOffset={6}>
+              Metrics pulled from Temporal task queue `index:{chain.chain_id}`.
+              <Tooltip.Arrow className="fill-slate-800" />
+            </Tooltip.Content>
+          </Tooltip.Root>
+        </div>
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <div><dt className="text-slate-400">Workflow backlog</dt><dd className="text-slate-100">{formatNumber(queue?.pending_workflow ?? 0)}</dd></div>
+          <div><dt className="text-slate-400">Activity backlog</dt><dd className="text-slate-100">{formatNumber(queue?.pending_activity ?? 0)}</dd></div>
+          <div><dt className="text-slate-400">Age</dt><dd className="text-slate-100">{secondsToFriendly(queue?.backlog_age_secs ?? 0)}</dd></div>
+          <div><dt className="text-slate-400">Pollers</dt><dd className="text-slate-100">{queue?.pollers ?? 0}</dd></div>
+        </dl>
+        <div className="rounded bg-slate-900/60 px-4 py-3 text-sm text-slate-300">
+          <div className="flex items-center justify-between"><span>Indexed height</span><span>{formatNumber(status?.last_indexed ?? 0)}</span></div>
+          <div className="mt-1 flex items-center justify-between"><span>Head height</span><span>{formatNumber(status?.head ?? 0)}</span></div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface EditDialogProps {
+  chain: ChainRow | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSave: (updates: Partial<ChainRow>) => Promise<void>
+  saving: boolean
+}
+
+function EditChainDialog({chain, open, onOpenChange, onSave, saving}: EditDialogProps) {
+  const [image, setImage] = useState('')
+  const [minReplicas, setMinReplicas] = useState(1)
+  const [maxReplicas, setMaxReplicas] = useState(1)
+  const [notes, setNotes] = useState('')
+
+  useEffect(() => {
+    if (!chain) return
+    setImage(chain.image || '')
+    setMinReplicas(chain.min_replicas)
+    setMaxReplicas(chain.max_replicas)
+    setNotes(chain.notes || '')
+  }, [chain])
+
+  const submit = async () => {
+    if (!chain) return
+    await onSave({
+      ...chain,
+      image,
+      min_replicas: Number(minReplicas),
+      max_replicas: Number(maxReplicas),
+      notes,
+    })
+  }
+
+  return (
+    <Dialog.Root open={open && !!chain} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 bg-black/60" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-800 bg-slate-900 p-6 shadow-xl">
+          <Dialog.Title className="text-lg font-semibold">Edit chain</Dialog.Title>
+          <Dialog.Description className="text-sm text-slate-400 mt-1">Update deployment parameters for {chain?.chain_name || chain?.chain_id}.</Dialog.Description>
+          <div className="mt-4 space-y-3 text-sm">
+            <label className="block">
+              <span className="text-slate-300">Container image</span>
+              <input className="input mt-1" value={image} onChange={(e) => setImage(e.target.value)} placeholder="ghcr.io/..." />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-slate-300">Min replicas</span>
+                <input className="input mt-1" type="number" min={1} value={minReplicas} onChange={(e) => setMinReplicas(Number(e.target.value))} />
+              </label>
+              <label className="block">
+                <span className="text-slate-300">Max replicas</span>
+                <input className="input mt-1" type="number" min={minReplicas} value={maxReplicas} onChange={(e) => setMaxReplicas(Number(e.target.value))} />
+              </label>
+            </div>
+            <label className="block">
+              <span className="text-slate-300">Notes</span>
+              <textarea className="input mt-1 h-24" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </label>
+          </div>
+          <div className="mt-6 flex justify-end gap-2">
+            <Dialog.Close asChild>
+              <button className="btn-secondary" disabled={saving}>Cancel</button>
+            </Dialog.Close>
+            <button className="btn" onClick={submit} disabled={saving || !image.trim()}>
+              {saving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
 }

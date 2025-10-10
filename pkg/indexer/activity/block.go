@@ -2,12 +2,10 @@ package activity
 
 import (
 	"context"
-	"time"
 
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
-	"go.temporal.io/sdk/temporal"
-
 	"github.com/canopy-network/canopyx/pkg/rpc"
+	"go.temporal.io/sdk/temporal"
 )
 
 // IndexBlock indexes a block for a given chain.
@@ -23,7 +21,7 @@ func (c *Context) IndexBlock(ctx context.Context, in types.IndexBlockInput) (uin
 		return in.Height, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	cli := rpc.NewHTTPWithOpts(rpc.Opts{Endpoints: ch.RPCEndpoints, RPS: 20, Burst: 40, BreakerFailures: 3, BreakerCooldown: 5 * time.Second})
+	cli := c.rpcClient(ch.RPCEndpoints)
 	blk, err := cli.BlockByHeight(ctx, in.Height)
 	if err != nil {
 		return in.Height, err
@@ -35,11 +33,16 @@ func (c *Context) IndexBlock(ctx context.Context, in types.IndexBlockInput) (uin
 
 	blk.NumTxs = in.BlockSummaries.NumTxs
 
-	_, err = chainDb.Db.NewInsert().Model(blk).Exec(ctx)
-
-	if err != nil {
+	if err = chainDb.InsertBlock(ctx, blk); err != nil {
 		return blk.Height, err
 	}
 
 	return blk.Height, nil
+}
+func (c *Context) rpcClient(endpoints []string) rpc.Client {
+	factory := c.RPCFactory
+	if factory == nil {
+		factory = rpc.NewHTTPFactory(c.RPCOpts)
+	}
+	return factory.NewClient(endpoints)
 }

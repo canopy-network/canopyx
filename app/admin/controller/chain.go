@@ -17,6 +17,9 @@ import (
 	"github.com/go-jose/go-jose/v4/json"
 	"github.com/gorilla/mux"
 	"github.com/uptrace/go-clickhouse/ch"
+	enumspb "go.temporal.io/api/enums/v1"
+	taskqueuepb "go.temporal.io/api/taskqueue/v1"
+	workflowservicepb "go.temporal.io/api/workflowservice/v1"
 	"go.uber.org/zap"
 )
 
@@ -45,6 +48,25 @@ func (c *Controller) HandleChainsUpsert(w http.ResponseWriter, r *http.Request) 
 	if chain.ChainID == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chain_id required"})
+		return
+	}
+	chain.Image = strings.TrimSpace(chain.Image)
+	chain.Notes = strings.TrimSpace(chain.Notes)
+
+	if chain.MinReplicas == 0 {
+		chain.MinReplicas = 1
+	}
+	if chain.MaxReplicas == 0 {
+		chain.MaxReplicas = chain.MinReplicas
+	}
+	if chain.MaxReplicas < chain.MinReplicas {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "max_replicas must be greater than or equal to min_replicas"})
+		return
+	}
+	if chain.Image == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "image required"})
 		return
 	}
 
@@ -111,6 +133,18 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make(map[string]types.ChainStatus, len(chains))
+	for _, chn := range chains {
+		out[chn.ChainID] = types.ChainStatus{
+			ChainID:     chn.ChainID,
+			ChainName:   chn.ChainName,
+			Image:       chn.Image,
+			Notes:       chn.Notes,
+			Paused:      chn.Paused != 0,
+			Deleted:     chn.Deleted != 0,
+			MinReplicas: chn.MinReplicas,
+			MaxReplicas: chn.MaxReplicas,
+		}
+	}
 
 	// 2) Bulk last-indexed via aggregate table
 	// SELECT chain_id, maxMerge(max_height) FROM <db>.index_progress_agg GROUP BY chain_id
@@ -136,7 +170,10 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 				if err := rows.Scan(&id, &last); err != nil {
 					continue
 				}
-				cs := out[id]
+				cs, ok := out[id]
+				if !ok {
+					cs = types.ChainStatus{ChainID: id}
+				}
 				cs.LastIndexed = last
 				out[id] = cs
 			}
@@ -167,7 +204,10 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 				if err := rows.Scan(&id, &last); err != nil {
 					continue
 				}
-				cs := out[id]
+				cs, ok := out[id]
+				if !ok {
+					cs = types.ChainStatus{ChainID: id}
+				}
 				if cs.LastIndexed == 0 {
 					cs.LastIndexed = last
 					out[id] = cs
@@ -195,14 +235,75 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
-			cs := out[chn.ChainID]
+			cs, ok := out[chn.ChainID]
+			if !ok {
+				cs = types.ChainStatus{ChainID: chn.ChainID}
+			}
 			cs.Head = head
 			out[chn.ChainID] = cs
 		}()
 	}
 	wg.Wait()
 
+	if c.App.TemporalClient != nil {
+		for _, chn := range chains {
+			if stats, err := c.describeQueue(ctx, chn.ChainID); err == nil {
+				cs := out[chn.ChainID]
+				cs.Queue = stats
+				out[chn.ChainID] = cs
+			} else {
+				c.App.Logger.Warn("describe queue failed", zap.String("chain_id", chn.ChainID), zap.Error(err))
+			}
+		}
+	}
+
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (c *Controller) describeQueue(ctx context.Context, chainID string) (types.QueueStatus, error) {
+	stats := types.QueueStatus{}
+	client := c.App.TemporalClient
+	if client == nil {
+		return stats, fmt.Errorf("temporal client not initialized")
+	}
+
+	svc := client.TClient.WorkflowService()
+	if svc == nil {
+		return stats, fmt.Errorf("temporal workflow service unavailable")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	queueName := client.GetIndexerQueue(chainID)
+	baseReq := func(t enumspb.TaskQueueType) *workflowservicepb.DescribeTaskQueueRequest {
+		return &workflowservicepb.DescribeTaskQueueRequest{
+			Namespace:     client.Namespace,
+			TaskQueue:     &taskqueuepb.TaskQueue{Name: queueName},
+			TaskQueueType: t,
+			ReportStats:   true,
+		}
+	}
+
+	resp, err := svc.DescribeTaskQueue(reqCtx, baseReq(enumspb.TASK_QUEUE_TYPE_WORKFLOW))
+	if err != nil {
+		return stats, err
+	}
+	if s := resp.GetStats(); s != nil {
+		stats.PendingWorkflow = s.GetApproximateBacklogCount()
+		if age := s.GetApproximateBacklogAge(); age != nil {
+			stats.BacklogAgeSecs = float64(age.Seconds) + float64(age.Nanos)/1e9
+		}
+	}
+	stats.Pollers = len(resp.GetPollers())
+
+	if actResp, err := svc.DescribeTaskQueue(reqCtx, baseReq(enumspb.TASK_QUEUE_TYPE_ACTIVITY)); err == nil {
+		if s := actResp.GetStats(); s != nil {
+			stats.PendingActivity = s.GetApproximateBacklogCount()
+		}
+	}
+
+	return stats, nil
 }
 
 // HandleChainPatch updates a chain by ID

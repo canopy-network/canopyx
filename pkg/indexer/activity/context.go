@@ -6,17 +6,22 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/canopy-network/canopyx/pkg/db"
+	"github.com/canopy-network/canopyx/pkg/rpc"
+	temporalclient "github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type Context struct {
-	Logger    *zap.Logger
-	IndexerDB *db.AdminDB
-	ChainsDB  *xsync.Map[string, *db.ChainDB]
+	Logger         *zap.Logger
+	IndexerDB      db.AdminStore
+	ChainsDB       *xsync.Map[string, db.ChainStore]
+	RPCFactory     rpc.Factory
+	RPCOpts        rpc.Opts
+	TemporalClient *temporalclient.Client
 }
 
-// NewChainDb returns a new ChainDB instance for the provided chain ID.
-func (c *Context) NewChainDb(ctx context.Context, chainID string) (*db.ChainDB, error) {
+// NewChainDb returns a chain store instance for the provided chain ID.
+func (c *Context) NewChainDb(ctx context.Context, chainID string) (db.ChainStore, error) {
 	if chainDb, ok := c.ChainsDB.Load(chainID); ok {
 		// chainDb is already loaded
 		return chainDb, nil

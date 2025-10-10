@@ -200,7 +200,12 @@ build: build-web build-go
 # ----------------------------
 .PHONY: test
 test:
-	@$(GO) test ./...
+	@mkdir -p .gocache
+	@if [ -n "$(RUN)" ]; then \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -run '$(RUN)' $(if $(TEST_PKG),$(TEST_PKG),./...); \
+	else \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test $(if $(TEST_PKG),$(TEST_PKG),./...); \
+	fi
 
 .PHONY: clean
 clean:

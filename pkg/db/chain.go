@@ -30,3 +30,35 @@ func (db *ChainDB) InitializeDB(ctx context.Context) error {
 
 	return nil
 }
+
+// DatabaseName returns the ClickHouse database backing this chain.
+func (db *ChainDB) DatabaseName() string {
+	return db.Name
+}
+
+// ChainID returns the identifier associated with this chain store.
+func (db *ChainDB) ChainKey() string {
+	return db.ChainID
+}
+
+// InsertBlock persists an indexed block into the chain database.
+func (db *ChainDB) InsertBlock(ctx context.Context, block *indexer.Block) error {
+	_, err := db.Db.NewInsert().Model(block).Exec(ctx)
+	return err
+}
+
+// InsertTransactions persists indexed transactions and raw payloads into the chain database.
+func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raws []*indexer.TransactionRaw) error {
+	return indexer.InsertTransactions(ctx, db.Db, txs, raws)
+}
+
+// Exec executes an arbitrary query against the chain database.
+func (db *ChainDB) Exec(ctx context.Context, query string, args ...any) error {
+	_, err := db.Db.ExecContext(ctx, query, args...)
+	return err
+}
+
+// Close terminates the underlying ClickHouse connection.
+func (db *ChainDB) Close() error {
+	return db.Db.Close()
+}

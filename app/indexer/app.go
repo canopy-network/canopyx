@@ -8,6 +8,7 @@ import (
 	"github.com/canopy-network/canopyx/pkg/indexer/activity"
 	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
 	"github.com/canopy-network/canopyx/pkg/logging"
+	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.temporal.io/sdk/worker"
@@ -17,15 +18,18 @@ import (
 
 type App struct {
 	Worker         worker.Worker
+	OpsWorker      worker.Worker
 	TemporalClient *temporal.Client
 	Logger         *zap.Logger
 }
 
 // Start starts the worker and blocks until the context is canceled.
 func (a *App) Start(ctx context.Context) {
-	err := a.Worker.Start()
-	if err != nil {
+	if err := a.Worker.Start(); err != nil {
 		a.Logger.Fatal("Unable to start worker", zap.Error(err))
+	}
+	if err := a.OpsWorker.Start(); err != nil {
+		a.Logger.Fatal("Unable to start operations worker", zap.Error(err))
 	}
 	<-ctx.Done()
 	a.Stop()
@@ -34,6 +38,7 @@ func (a *App) Start(ctx context.Context) {
 // Stop stops the worker.
 func (a *App) Stop() {
 	a.Worker.Stop()
+	a.OpsWorker.Stop()
 	time.Sleep(200 * time.Millisecond)
 	a.Logger.Info("さようなら!")
 }
@@ -66,10 +71,14 @@ func Initialize(ctx context.Context) *App {
 		logger.Fatal("CHAIN_ID environment variable is required")
 	}
 
+	rpcOpts := rpc.Opts{RPS: 20, Burst: 40, BreakerFailures: 3, BreakerCooldown: 5 * time.Second}
 	activityContext := &activity.Context{
-		Logger:    logger,
-		IndexerDB: indexerDb,
-		ChainsDB:  chainsDb,
+		Logger:         logger,
+		IndexerDB:      indexerDb,
+		ChainsDB:       chainsDb,
+		RPCFactory:     rpc.NewHTTPFactory(rpcOpts),
+		RPCOpts:        rpcOpts,
+		TemporalClient: temporalClient,
 	}
 	workflowContext := workflow.Context{
 		TemporalClient:  temporalClient,
@@ -99,8 +108,32 @@ func Initialize(ctx context.Context) *App {
 	wkr.RegisterActivity(activityContext.IndexTransactions)
 	wkr.RegisterActivity(activityContext.RecordIndexed)
 
+	opsWorker := worker.New(
+		temporalClient.TClient,
+		temporalClient.GetIndexerOpsQueue(chainID),
+		worker.Options{
+			MaxConcurrentWorkflowTaskPollers: 5,
+			MaxConcurrentActivityTaskPollers: 5,
+			WorkerStopTimeout:                1 * time.Minute,
+		},
+	)
+
+	opsWorker.RegisterWorkflowWithOptions(
+		workflowContext.HeadScan,
+		temporalworkflow.RegisterOptions{Name: workflow.HeadScanWorkflowName},
+	)
+	opsWorker.RegisterWorkflowWithOptions(
+		workflowContext.GapScanWorkflow,
+		temporalworkflow.RegisterOptions{Name: workflow.GapScanWorkflowName},
+	)
+	opsWorker.RegisterActivity(activityContext.GetLatestHead)
+	opsWorker.RegisterActivity(activityContext.GetLastIndexed)
+	opsWorker.RegisterActivity(activityContext.FindGaps)
+	opsWorker.RegisterActivity(activityContext.StartIndexWorkflow)
+
 	return &App{
 		Worker:         wkr,
+		OpsWorker:      opsWorker,
 		TemporalClient: temporalClient,
 		Logger:         logger,
 	}

@@ -30,8 +30,8 @@ func (c *Context) computeTxsByChain(ctx context.Context, chainID string) error {
 		return temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	srcDB := chainDb.Name         // per-chain database (with txs table)
-	reportsDB := c.ReportsDB.Name // reports database (with chain_tx_* tables)
+	srcDB := chainDb.DatabaseName()         // per-chain database (with txs table)
+	reportsDB := c.ReportsDB.DatabaseName() // reports database (with chain_tx_* tables)
 
 	// Recompute windows slightly wider to heal late arrivals.
 	const hourlyWindow = "72 HOUR"
@@ -51,7 +51,7 @@ func (c *Context) computeTxsByChain(ctx context.Context, chainID string) error {
 		ORDER BY hour
 	`, reportsDB, srcDB, hourlyWindow)
 
-	if _, err := chainDb.Db.ExecContext(ctx, hourlySQL, chainID); err != nil {
+	if err := chainDb.Exec(ctx, hourlySQL, chainID); err != nil {
 		return temporal.NewApplicationError("insert_hourly_failed", err.Error(), nil)
 	}
 
@@ -69,7 +69,7 @@ func (c *Context) computeTxsByChain(ctx context.Context, chainID string) error {
 		ORDER BY day
 	`, reportsDB, srcDB, dailyWindow)
 
-	if _, err := chainDb.Db.ExecContext(ctx, dailySQL, chainID); err != nil {
+	if err := chainDb.Exec(ctx, dailySQL, chainID); err != nil {
 		return temporal.NewApplicationError("insert_daily_failed", err.Error(), nil)
 	}
 
@@ -84,7 +84,7 @@ func (c *Context) computeTxsByChain(ctx context.Context, chainID string) error {
 			toUInt64(now64())                   AS version
 	`, reportsDB, srcDB)
 
-	if _, err := chainDb.Db.ExecContext(ctx, rolling24hSQL, chainID); err != nil {
+	if err := chainDb.Exec(ctx, rolling24hSQL, chainID); err != nil {
 		return temporal.NewApplicationError("insert_24h_failed", err.Error(), nil)
 	}
 

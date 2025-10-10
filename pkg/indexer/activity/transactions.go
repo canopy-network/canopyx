@@ -2,14 +2,9 @@ package activity
 
 import (
 	"context"
-	"time"
-
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
 	"go.temporal.io/sdk/temporal"
-
-	"github.com/canopy-network/canopyx/pkg/rpc"
 )
 
 // IndexTransactions indexes transactions for a given block.
@@ -25,7 +20,7 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexBlockInpu
 		return 0, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	cli := rpc.NewHTTPWithOpts(rpc.Opts{Endpoints: ch.RPCEndpoints, RPS: 20, Burst: 40, BreakerFailures: 3, BreakerCooldown: 5 * time.Second})
+	cli := c.rpcClient(ch.RPCEndpoints)
 	txs, txsRaw, err := cli.TxsByHeight(ctx, in.Height)
 	if err != nil {
 		return 0, err
@@ -33,9 +28,8 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexBlockInpu
 
 	numTxs := uint32(len(txs))
 
-	insertTxsErr := indexer.InsertTransactions(ctx, chainDb.Db, txs, txsRaw)
-	if insertTxsErr != nil {
-		return 0, insertTxsErr
+	if err := chainDb.InsertTransactions(ctx, txs, txsRaw); err != nil {
+		return 0, err
 	}
 
 	return numTxs, nil
