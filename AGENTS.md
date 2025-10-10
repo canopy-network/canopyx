@@ -6,6 +6,12 @@
 - Web admin code sits in `web/admin/` with static exports under `web/admin/out`. Infra assets stay in the root `Makefile`, Dockerfiles, `Tiltfile`, and `deploy/`.
 - Indexer binaries now poll per-chain queues: `index:<chainID>` for block workflows and `admin:<chainID>` for head/gap maintenance tasks.
 
+## Admin UI Workflows
+- Chain metadata now includes `image`, `min_replicas`, `max_replicas`, and optional `notes`; the `/api/chains` create/update endpoints expect these fields and the UI form persists optimistic updates.
+- Shared toast notifications live in `web/admin/app/components/ToastProvider.tsx`; use the `useToast` hook for success/error feedback on admin actions (edits, reindex, head/gap scans).
+- Queue health badges (green/yellow/red) derive from controller thresholds (`low=10`, `high=1000`) via `web/admin/app/lib/constants.ts`; adjust both sides together if scaling logic changes.
+- Chain detail surfaces Temporal queue metrics (pollers, backlog age) alongside quick actions for head scans, gap scans, and targeted reindex requests.
+
 ## Build, Test, and Development Commands
 - `make tools` – install pnpm, golangci-lint, goimports.
 - `make deps` – tidy Go modules and install `web/admin` deps.

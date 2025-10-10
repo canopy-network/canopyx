@@ -2,9 +2,12 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-
+	"github.com/uptrace/go-clickhouse/ch"
 	"go.uber.org/zap"
 )
 
@@ -50,6 +53,43 @@ func (db *ChainDB) InsertBlock(ctx context.Context, block *indexer.Block) error 
 // InsertTransactions persists indexed transactions and raw payloads into the chain database.
 func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raws []*indexer.TransactionRaw) error {
 	return indexer.InsertTransactions(ctx, db.Db, txs, raws)
+}
+
+// RawDB exposes the underlying ClickHouse connection.
+func (db *ChainDB) RawDB() *ch.DB {
+	return db.Db
+}
+
+// HasBlock reports whether a block exists at the specified height.
+func (db *ChainDB) HasBlock(ctx context.Context, height uint64) (bool, error) {
+	_, err := indexer.GetBlock(ctx, db.Db, height)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// DeleteBlock removes a block record for the given height.
+func (db *ChainDB) DeleteBlock(ctx context.Context, height uint64) error {
+	stmt := fmt.Sprintf(`ALTER TABLE "%s"."blocks" DELETE WHERE height = ?`, db.Name)
+	_, err := db.Db.ExecContext(ctx, stmt, height)
+	return err
+}
+
+// DeleteTransactions removes transaction rows for the specified height from both fact and raw tables.
+func (db *ChainDB) DeleteTransactions(ctx context.Context, height uint64) error {
+	coreStmt := fmt.Sprintf(`ALTER TABLE "%s"."txs" DELETE WHERE height = ?`, db.Name)
+	if _, err := db.Db.ExecContext(ctx, coreStmt, height); err != nil {
+		return err
+	}
+	rawStmt := fmt.Sprintf(`ALTER TABLE "%s"."txs_raw" DELETE WHERE height = ?`, db.Name)
+	if _, err := db.Db.ExecContext(ctx, rawStmt, height); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Exec executes an arbitrary query against the chain database.

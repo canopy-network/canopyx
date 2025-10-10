@@ -28,6 +28,7 @@ const (
 	backlogLowWatermark  = int64(10)
 	backlogHighWatermark = int64(1000)
 	queueRequestTimeout  = 2 * time.Second
+	queueStatsTTL        = 10 * time.Second
 	scaleCooldown        = 60 * time.Second
 )
 
@@ -50,11 +51,18 @@ type App struct {
 
 	Temporal *temporal.Client
 
+	queueCache *xsync.Map[string, cachedQueueStats]
+
 	// Logger is used to log messages, errors, and events during the application's lifecycle and operations.
 	Logger *zap.Logger
 
 	// Server is the HTTP server that serves the API.
 	Server *http.Server
+}
+
+type cachedQueueStats struct {
+	stats   QueueStats
+	fetched time.Time
 }
 
 // Initialize initializes the App.
@@ -78,13 +86,14 @@ func Initialize(ctx context.Context, provider Provider) (*App, error) {
 	}
 
 	app := &App{
-		IndexerDB: indexerDb,
-		Cron:      nil,
-		CronSpec:  "*/15 * * * * *", // TODO: allow this to be set via env var?
-		Provider:  provider,
-		Running:   xsync.NewMap[string, *Chain](),
-		Temporal:  temporalClient,
-		Logger:    logger,
+		IndexerDB:  indexerDb,
+		Cron:       nil,
+		CronSpec:   "*/15 * * * * *", // TODO: allow this to be set via env var?
+		Provider:   provider,
+		Running:    xsync.NewMap[string, *Chain](),
+		Temporal:   temporalClient,
+		queueCache: xsync.NewMap[string, cachedQueueStats](),
+		Logger:     logger,
 	}
 
 	if err := app.SetupScheduler(ctx, cron.DefaultLogger, app.CronSpec); err != nil {
@@ -193,6 +202,12 @@ func (a *App) Reconcile(ctx context.Context) error {
 		desiredSet[ch.ID] = ch
 
 		queueId := ch.TaskQueue
+		prevReplicas := int32(0)
+		previouslyRunning := false
+		if prev, ok := a.Running.Load(queueId); ok {
+			prevReplicas = prev.Replicas
+			previouslyRunning = true
+		}
 		fields := []zap.Field{
 			zap.String("chain_id", ch.ID),
 			zap.Bool("paused", ch.Paused),
@@ -201,8 +216,11 @@ func (a *App) Reconcile(ctx context.Context) error {
 			zap.Int32("min_replicas", ch.MinReplicas),
 			zap.Int32("max_replicas", ch.MaxReplicas),
 			zap.Int32("desired_replicas", ch.Replicas),
+			zap.Int32("previous_replicas", prevReplicas),
 			zap.Int64("pending_workflow_tasks", ch.Queue.PendingWorkflowTasks),
 			zap.Int64("pending_activity_tasks", ch.Queue.PendingActivityTasks),
+			zap.Float64("backlog_age_seconds", ch.Queue.BacklogAgeSeconds),
+			zap.Int("poller_count", ch.Queue.PollerCount),
 		}
 
 		switch {
@@ -212,6 +230,7 @@ func (a *App) Reconcile(ctx context.Context) error {
 				a.Logger.Error("delete failed", append(fields, zap.Error(err))...)
 				return fmt.Errorf("delete %s: %w", ch.ID, err)
 			}
+			a.Logger.Info("delete applied", fields...)
 			a.Running.Delete(queueId)
 			deleted++
 
@@ -221,16 +240,26 @@ func (a *App) Reconcile(ctx context.Context) error {
 				a.Logger.Error("pause failed", append(fields, zap.Error(err))...)
 				return fmt.Errorf("pause %s: %w", ch.ID, err)
 			}
+			a.Logger.Info("pause applied", fields...)
 			a.Running.Store(queueId, ch)
 			paused++
 
 		default:
-			// If it's already recorded as running, we may treat as unchanged after EnsureChain succeeds.
-			_, previouslyRunning := a.Running.Load(queueId)
 			a.Logger.Info("ensure calculated", fields...)
 			if err := a.Provider.EnsureChain(ctx, ch); err != nil {
 				a.Logger.Error("ensure failed", append(fields, zap.Error(err))...)
 				return fmt.Errorf("ensure %s: %w", ch.ID, err)
+			}
+			a.Logger.Info("ensure applied", fields...)
+			if ch.Replicas != prevReplicas {
+				a.Logger.Info("replica change applied",
+					zap.String("chain_id", ch.ID),
+					zap.String("queue_id", queueId),
+					zap.Int32("previous_replicas", prevReplicas),
+					zap.Int32("new_replicas", ch.Replicas),
+					zap.Int64("queue_backlog_total", ch.Queue.PendingWorkflowTasks+ch.Queue.PendingActivityTasks),
+					zap.Float64("backlog_age_seconds", ch.Queue.BacklogAgeSeconds),
+				)
 			}
 			a.Running.Store(queueId, ch)
 			if previouslyRunning {
@@ -382,12 +411,26 @@ func (a *App) populateChain(ctx context.Context, ch *Chain) {
 	}
 
 	ch.Queue = stats
+	a.Logger.Info("queue depth metrics",
+		zap.String("chain_id", ch.ID),
+		zap.String("task_queue", ch.TaskQueue),
+		zap.Int64("pending_workflow_tasks", stats.PendingWorkflowTasks),
+		zap.Int64("pending_activity_tasks", stats.PendingActivityTasks),
+		zap.Int("pollers", stats.PollerCount),
+		zap.Float64("backlog_age_seconds", stats.BacklogAgeSeconds),
+		zap.Int64("queue_backlog_total", stats.PendingWorkflowTasks+stats.PendingActivityTasks),
+	)
 	ch.Replicas = a.desiredReplicas(ch, stats)
 }
 
 func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, error) {
 	if a.Temporal == nil {
 		return QueueStats{}, fmt.Errorf("temporal client not initialized")
+	}
+	if cached, ok := a.queueCache.Load(chainID); ok {
+		if time.Since(cached.fetched) < queueStatsTTL {
+			return cached.stats, nil
+		}
 	}
 	stats := QueueStats{}
 
@@ -412,6 +455,9 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 	}
 	if qStats := resp.GetStats(); qStats != nil {
 		stats.PendingWorkflowTasks = qStats.GetApproximateBacklogCount()
+		if dur := qStats.GetApproximateBacklogAge(); dur != nil {
+			stats.BacklogAgeSeconds = float64(dur.Seconds) + float64(dur.Nanos)/1e9
+		}
 	}
 	stats.PollerCount = len(resp.GetPollers())
 
@@ -428,6 +474,7 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 		}
 	}
 
+	a.queueCache.Store(chainID, cachedQueueStats{stats: stats, fetched: time.Now()})
 	return stats, nil
 }
 
@@ -445,12 +492,33 @@ func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
 		max = min
 	}
 
+	prevDecision := ch.Hysteresis.LastDecisionReplicas
 	if max == min {
+		now := time.Now()
+		if prevDecision == 0 {
+			ch.Hysteresis.LastDecisionReplicas = min
+			ch.Hysteresis.LastChangeTime = now
+		}
+		a.Logger.Debug("replica decision",
+			zap.String("chain_id", ch.ID),
+			zap.Int32("min_replicas", min),
+			zap.Int32("max_replicas", max),
+			zap.Int32("previous_replicas", prevDecision),
+			zap.Int32("calculated_replicas", min),
+			zap.Int32("desired_replicas", min),
+			zap.Int64("pending_workflow_tasks", stats.PendingWorkflowTasks),
+			zap.Int64("pending_activity_tasks", stats.PendingActivityTasks),
+			zap.Int64("queue_backlog_total", stats.PendingWorkflowTasks+stats.PendingActivityTasks),
+			zap.Float64("backlog_ratio", 0),
+			zap.Bool("cooldown_active", false),
+		)
 		return min
 	}
 
 	backlog := stats.PendingWorkflowTasks + stats.PendingActivityTasks
 	desired := min
+	calculated := min
+	ratio := 0.0
 	switch {
 	case backlog >= backlogHighWatermark:
 		desired = max
@@ -458,7 +526,7 @@ func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
 		desired = min
 	default:
 		span := float64(max - min)
-		ratio := float64(backlog-backlogLowWatermark) / float64(backlogHighWatermark-backlogLowWatermark)
+		ratio = float64(backlog-backlogLowWatermark) / float64(backlogHighWatermark-backlogLowWatermark)
 		if ratio < 0 {
 			ratio = 0
 		} else if ratio > 1 {
@@ -466,6 +534,8 @@ func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
 		}
 		desired = min + int32(math.Ceil(ratio*span))
 	}
+
+	calculated = desired
 
 	if desired < min {
 		desired = min
@@ -475,20 +545,33 @@ func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
 	}
 
 	now := time.Now()
-	if ch.Hysteresis.LastDecisionReplicas == 0 {
+	cooldownActive := false
+	if prevDecision == 0 {
 		ch.Hysteresis.LastDecisionReplicas = desired
 		ch.Hysteresis.LastChangeTime = now
-		return desired
-	}
-
-	if desired != ch.Hysteresis.LastDecisionReplicas {
+	} else if desired != ch.Hysteresis.LastDecisionReplicas {
 		if now.Sub(ch.Hysteresis.LastChangeTime) < scaleCooldown {
 			desired = ch.Hysteresis.LastDecisionReplicas
+			cooldownActive = true
 		} else {
 			ch.Hysteresis.LastDecisionReplicas = desired
 			ch.Hysteresis.LastChangeTime = now
 		}
 	}
+
+	a.Logger.Debug("replica decision",
+		zap.String("chain_id", ch.ID),
+		zap.Int32("min_replicas", min),
+		zap.Int32("max_replicas", max),
+		zap.Int32("previous_replicas", prevDecision),
+		zap.Int32("calculated_replicas", calculated),
+		zap.Int32("desired_replicas", desired),
+		zap.Int64("pending_workflow_tasks", stats.PendingWorkflowTasks),
+		zap.Int64("pending_activity_tasks", stats.PendingActivityTasks),
+		zap.Int64("queue_backlog_total", backlog),
+		zap.Float64("backlog_ratio", ratio),
+		zap.Bool("cooldown_active", cooldownActive),
+	)
 
 	return desired
 }

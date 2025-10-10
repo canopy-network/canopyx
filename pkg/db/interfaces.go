@@ -5,6 +5,7 @@ import (
 
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/uptrace/go-clickhouse/ch"
 )
 
 // AdminStore exposes the subset of admin database operations used by activities and workflows.
@@ -22,7 +23,11 @@ type ChainStore interface {
 	ChainKey() string
 	InsertBlock(ctx context.Context, block *indexer.Block) error
 	InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raw []*indexer.TransactionRaw) error
+	HasBlock(ctx context.Context, height uint64) (bool, error)
+	DeleteBlock(ctx context.Context, height uint64) error
+	DeleteTransactions(ctx context.Context, height uint64) error
 	Exec(ctx context.Context, query string, args ...any) error
+	RawDB() *ch.DB
 	Close() error
 }
 
