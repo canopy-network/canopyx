@@ -55,7 +55,9 @@ help:
 	@echo "  make build-web          - build Next.js admin (static export)"
 	@echo "  make build-go           - build all Go binaries"
 	@echo "  make build              - full build (web + go)"
-	@echo "  make test               - run go tests"
+	@echo "  make test               - run all tests (unit + integration)"
+	@echo "  make test-unit          - run unit tests only (fast, no Docker)"
+	@echo "  make test-integration   - run integration tests (requires Docker)"
 	@echo "  make clean              - remove build artifacts"
 	@echo "  make upgrade-admin      - bump core admin deps (Next/ESLint/etc.)"
 	@echo ""
@@ -203,12 +205,26 @@ build: build-web build-go
 # Test & Clean
 # ----------------------------
 .PHONY: test
-test:
+test: test-unit test-integration
+
+.PHONY: test-unit
+test-unit:
 	@mkdir -p .gocache
+	@echo ">> Running unit tests..."
 	@if [ -n "$(RUN)" ]; then \
-		GOCACHE=$(CURDIR)/.gocache $(GO) test -run '$(RUN)' $(if $(TEST_PKG),$(TEST_PKG),./...); \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -run '$(RUN)' $(if $(TEST_PKG),$(TEST_PKG),./tests/unit/...); \
 	else \
-		GOCACHE=$(CURDIR)/.gocache $(GO) test $(if $(TEST_PKG),$(TEST_PKG),./...); \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test $(if $(TEST_PKG),$(TEST_PKG),./tests/unit/...); \
+	fi
+
+.PHONY: test-integration
+test-integration:
+	@mkdir -p .gocache
+	@echo ">> Running integration tests (requires Docker)..."
+	@if [ -n "$(RUN)" ]; then \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -tags=integration -v -run '$(RUN)' ./tests/integration/...; \
+	else \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -tags=integration -v ./tests/integration/...; \
 	fi
 
 .PHONY: clean

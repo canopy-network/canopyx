@@ -24,9 +24,9 @@ type ChainStatus struct {
 	ReindexHistory []ReindexEntry `json:"reindex_history,omitempty"`
 
 	// Health Status - populated from stored chain health fields
-	Health     HealthInfo `json:"health"`      // overall health status
-	RPCHealth  HealthInfo `json:"rpc_health"`  // RPC endpoint health (from headscan)
-	QueueHealth HealthInfo `json:"queue_health"` // queue backlog health (from queue monitor)
+	Health           HealthInfo `json:"health"`            // overall health status
+	RPCHealth        HealthInfo `json:"rpc_health"`        // RPC endpoint health (from headscan)
+	QueueHealth      HealthInfo `json:"queue_health"`      // queue backlog health (from queue monitor)
 	DeploymentHealth HealthInfo `json:"deployment_health"` // k8s deployment health (from controller)
 }
 

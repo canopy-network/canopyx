@@ -1,0 +1,485 @@
+//go:build integration
+
+package indexer
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/models/admin"
+	"github.com/canopy-network/canopyx/tests/integration"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestRecordIndexed tests inserting index progress records
+func TestRecordIndexed(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-record"
+
+	// Create test chain
+	chain := integration.CreateTestChain(chainID, "Test Chain Record")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	tests := []struct {
+		name   string
+		height uint64
+	}{
+		{
+			name:   "record first height",
+			height: 1,
+		},
+		{
+			name:   "record sequential height",
+			height: 2,
+		},
+		{
+			name:   "record non-sequential height",
+			height: 100,
+		},
+		{
+			name:   "record duplicate height",
+			height: 100,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := integration.TestDB().RecordIndexed(ctx, chainID, tt.height)
+			require.NoError(t, err, "Failed to record indexed height %d", tt.height)
+
+			// Verify the record was inserted
+			count, err := integration.TestDB().Db.NewSelect().
+				Model((*admin.IndexProgress)(nil)).
+				Where("chain_id = ? AND height = ?", chainID, tt.height).
+				Count(ctx)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, count, 1, "Expected at least one record for height %d", tt.height)
+		})
+	}
+}
+
+// TestLastIndexed tests retrieving the last indexed height
+func TestLastIndexed(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-last"
+
+	// Create test chain
+	chain := integration.CreateTestChain(chainID, "Test Chain Last")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	tests := []struct {
+		name           string
+		heights        []uint64
+		expectedLast   uint64
+		waitForMV      bool
+	}{
+		{
+			name:         "no heights indexed",
+			heights:      []uint64{},
+			expectedLast: 0,
+		},
+		{
+			name:         "single height indexed",
+			heights:      []uint64{42},
+			expectedLast: 42,
+			waitForMV:    true,
+		},
+		{
+			name:         "multiple sequential heights",
+			heights:      []uint64{1, 2, 3, 4, 5},
+			expectedLast: 5,
+			waitForMV:    true,
+		},
+		{
+			name:         "multiple non-sequential heights",
+			heights:      []uint64{10, 20, 30, 15, 25},
+			expectedLast: 30,
+			waitForMV:    true,
+		},
+		{
+			name:         "heights with gaps",
+			heights:      []uint64{1, 2, 5, 6, 10},
+			expectedLast: 10,
+			waitForMV:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clean and reset for this test
+			integration.CleanDB(t)
+			integration.SeedData(t, integration.WithChains(chain))
+
+			// Insert heights
+			for _, height := range tt.heights {
+				err := integration.TestDB().RecordIndexed(ctx, chainID, height)
+				require.NoError(t, err, "Failed to record height %d", height)
+			}
+
+			// Wait for materialized view to process if needed
+			if tt.waitForMV {
+				integration.WaitForMaterializedView(t, 2*time.Second)
+			}
+
+			// Get last indexed height
+			lastHeight, err := integration.TestDB().LastIndexed(ctx, chainID)
+			require.NoError(t, err, "Failed to get last indexed height")
+			assert.Equal(t, tt.expectedLast, lastHeight, "Unexpected last indexed height")
+		})
+	}
+}
+
+// TestLastIndexed_ReplacingMergeTree tests ReplacingMergeTree behavior with aggregate table
+func TestLastIndexed_ReplacingMergeTree(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-rmt"
+
+	// Create test chain
+	chain := integration.CreateTestChain(chainID, "Test Chain RMT")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	// Insert multiple heights rapidly
+	heights := []uint64{100, 101, 102, 103, 104, 105}
+	for _, height := range heights {
+		err := integration.TestDB().RecordIndexed(ctx, chainID, height)
+		require.NoError(t, err, "Failed to record height %d", height)
+	}
+
+	// Wait for materialized view to aggregate
+	integration.WaitForMaterializedView(t, 2*time.Second)
+
+	// Should get the max height from the aggregate table
+	lastHeight, err := integration.TestDB().LastIndexed(ctx, chainID)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(105), lastHeight, "Expected max height from aggregate")
+
+	// Insert more heights
+	moreHeights := []uint64{106, 107, 108}
+	for _, height := range moreHeights {
+		err := integration.TestDB().RecordIndexed(ctx, chainID, height)
+		require.NoError(t, err, "Failed to record height %d", height)
+	}
+
+	// Wait again
+	integration.WaitForMaterializedView(t, 2*time.Second)
+
+	// Should now get the new max
+	lastHeight, err = integration.TestDB().LastIndexed(ctx, chainID)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(108), lastHeight, "Expected updated max height")
+}
+
+// TestFindGaps tests gap detection in indexed blocks
+func TestFindGaps(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-gaps"
+
+	// Create test chain
+	chain := integration.CreateTestChain(chainID, "Test Chain Gaps")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	tests := []struct {
+		name         string
+		heights      []uint64
+		expectedGaps []integration.GapExpectation
+	}{
+		{
+			name:         "no gaps - sequential",
+			heights:      []uint64{1, 2, 3, 4, 5},
+			expectedGaps: []integration.GapExpectation{},
+		},
+		{
+			name:         "single gap",
+			heights:      []uint64{1, 2, 3, 7, 8, 9},
+			expectedGaps: []integration.GapExpectation{
+				integration.Gap(4, 6),
+			},
+		},
+		{
+			name:         "multiple gaps",
+			heights:      []uint64{1, 2, 5, 6, 10, 11},
+			expectedGaps: []integration.GapExpectation{
+				integration.Gap(3, 4),
+				integration.Gap(7, 9),
+			},
+		},
+		{
+			name:         "large gap",
+			heights:      []uint64{1, 2, 3, 1000, 1001},
+			expectedGaps: []integration.GapExpectation{
+				integration.Gap(4, 999),
+			},
+		},
+		{
+			name:         "gap at beginning",
+			heights:      []uint64{10, 11, 12},
+			expectedGaps: []integration.GapExpectation{},
+		},
+		{
+			name:    "no heights",
+			heights: []uint64{},
+			expectedGaps: []integration.GapExpectation{},
+		},
+		{
+			name:         "single height",
+			heights:      []uint64{42},
+			expectedGaps: []integration.GapExpectation{},
+		},
+		{
+			name:         "two heights with gap",
+			heights:      []uint64{1, 10},
+			expectedGaps: []integration.GapExpectation{
+				integration.Gap(2, 9),
+			},
+		},
+		{
+			name:         "multiple small gaps",
+			heights:      []uint64{1, 3, 5, 7, 9},
+			expectedGaps: []integration.GapExpectation{
+				integration.Gap(2, 2),
+				integration.Gap(4, 4),
+				integration.Gap(6, 6),
+				integration.Gap(8, 8),
+			},
+		},
+		{
+			name:         "complex gap pattern",
+			heights:      []uint64{1, 2, 3, 10, 11, 12, 20, 21, 100},
+			expectedGaps: []integration.GapExpectation{
+				integration.Gap(4, 9),
+				integration.Gap(13, 19),
+				integration.Gap(22, 99),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clean and reset for this test
+			integration.CleanDB(t)
+			integration.SeedData(t, integration.WithChains(chain))
+
+			// Insert heights
+			for _, height := range tt.heights {
+				err := integration.TestDB().RecordIndexed(ctx, chainID, height)
+				require.NoError(t, err, "Failed to record height %d", height)
+			}
+
+			// Find gaps
+			integration.AssertGaps(t, chainID, tt.expectedGaps)
+		})
+	}
+}
+
+// TestFindGaps_MultipleChains tests that gaps are isolated per chain
+func TestFindGaps_MultipleChains(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+
+	// Create two test chains
+	chain1 := integration.CreateTestChain("chain-1", "Chain 1")
+	chain2 := integration.CreateTestChain("chain-2", "Chain 2")
+	integration.SeedData(t, integration.WithChains(chain1, chain2))
+
+	// Insert heights for chain 1 with gaps
+	heights1 := []uint64{1, 2, 3, 10, 11, 12}
+	for _, height := range heights1 {
+		err := integration.TestDB().RecordIndexed(ctx, "chain-1", height)
+		require.NoError(t, err)
+	}
+
+	// Insert heights for chain 2 with different gaps
+	heights2 := []uint64{1, 5, 6, 20}
+	for _, height := range heights2 {
+		err := integration.TestDB().RecordIndexed(ctx, "chain-2", height)
+		require.NoError(t, err)
+	}
+
+	// Verify chain 1 gaps
+	integration.AssertGaps(t, "chain-1", []integration.GapExpectation{
+		integration.Gap(4, 9),
+	})
+
+	// Verify chain 2 gaps
+	integration.AssertGaps(t, "chain-2", []integration.GapExpectation{
+		integration.Gap(2, 4),
+		integration.Gap(7, 19),
+	})
+}
+
+// TestFindGaps_OutOfOrder tests gap detection when heights are inserted out of order
+func TestFindGaps_OutOfOrder(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-outoforder"
+
+	// Create test chain
+	chain := integration.CreateTestChain(chainID, "Test Chain Out of Order")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	// Insert heights in random order
+	heights := []uint64{5, 1, 10, 3, 8, 2, 9, 6}
+	for _, height := range heights {
+		err := integration.TestDB().RecordIndexed(ctx, chainID, height)
+		require.NoError(t, err, "Failed to record height %d", height)
+	}
+
+	// Expected gaps: 4 (missing), 7 (missing)
+	integration.AssertGaps(t, chainID, []integration.GapExpectation{
+		integration.Gap(4, 4),
+		integration.Gap(7, 7),
+	})
+}
+
+// TestFindGaps_FillingGaps tests that gaps disappear when filled
+func TestFindGaps_FillingGaps(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-filling"
+
+	// Create test chain
+	chain := integration.CreateTestChain(chainID, "Test Chain Filling")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	// Insert heights with gaps
+	heights := []uint64{1, 2, 3, 10, 11, 12}
+	for _, height := range heights {
+		err := integration.TestDB().RecordIndexed(ctx, chainID, height)
+		require.NoError(t, err)
+	}
+
+	// Verify gap exists
+	integration.AssertGaps(t, chainID, []integration.GapExpectation{
+		integration.Gap(4, 9),
+	})
+
+	// Fill part of the gap
+	for height := uint64(4); height <= 6; height++ {
+		err := integration.TestDB().RecordIndexed(ctx, chainID, height)
+		require.NoError(t, err)
+	}
+
+	// Gap should now be smaller
+	integration.AssertGaps(t, chainID, []integration.GapExpectation{
+		integration.Gap(7, 9),
+	})
+
+	// Fill the rest
+	for height := uint64(7); height <= 9; height++ {
+		err := integration.TestDB().RecordIndexed(ctx, chainID, height)
+		require.NoError(t, err)
+	}
+
+	// No gaps should remain
+	integration.AssertGaps(t, chainID, []integration.GapExpectation{})
+}
+
+// TestFindGaps_Performance tests gap detection with a large dataset
+func TestFindGaps_Performance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping performance test in short mode")
+	}
+
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-perf"
+
+	// Create test chain
+	chain := integration.CreateTestChain(chainID, "Test Chain Performance")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	// Insert 10,000 heights with some gaps
+	for i := uint64(1); i <= 10000; i++ {
+		// Skip every 1000th height to create gaps
+		if i%1000 == 0 {
+			continue
+		}
+		err := integration.TestDB().RecordIndexed(ctx, chainID, i)
+		require.NoError(t, err)
+	}
+
+	// Measure gap detection performance
+	start := time.Now()
+	gaps, err := integration.TestDB().FindGaps(ctx, chainID)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.Len(t, gaps, 9, "Expected 9 gaps (skipped every 1000th height)")
+	t.Logf("Gap detection on 10,000 heights took %v", elapsed)
+
+	// Assert performance is reasonable (should be well under 1 second)
+	assert.Less(t, elapsed, 5*time.Second, "Gap detection took too long")
+}
+
+// TestDatabaseInitialization verifies that all required tables and views are created
+func TestDatabaseInitialization(t *testing.T) {
+	// This test verifies the schema created by TestMain
+
+	// Check that required tables exist
+	integration.RequireTableExists(t, "chains")
+	integration.RequireTableExists(t, "index_progress")
+	integration.RequireTableExists(t, "index_progress_agg")
+	integration.RequireTableExists(t, "reindex_requests")
+
+	// Check that materialized view exists
+	integration.RequireMaterializedViewExists(t, "index_progress_mv")
+}
+
+// TestConcurrentRecordIndexed tests concurrent inserts to ensure thread safety
+func TestConcurrentRecordIndexed(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-concurrent"
+
+	// Create test chain
+	chain := integration.CreateTestChain(chainID, "Test Chain Concurrent")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	// Insert heights concurrently
+	numGoroutines := 10
+	heightsPerGoroutine := 100
+
+	errChan := make(chan error, numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func(offset int) {
+			for j := 0; j < heightsPerGoroutine; j++ {
+				height := uint64(offset*heightsPerGoroutine + j + 1)
+				if err := integration.TestDB().RecordIndexed(ctx, chainID, height); err != nil {
+					errChan <- err
+					return
+				}
+			}
+			errChan <- nil
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < numGoroutines; i++ {
+		err := <-errChan
+		require.NoError(t, err, "Concurrent insert failed")
+	}
+
+	// Wait for materialized view
+	integration.WaitForMaterializedView(t, 2*time.Second)
+
+	// Verify last indexed height
+	expectedLast := uint64(numGoroutines * heightsPerGoroutine)
+	lastHeight, err := integration.TestDB().LastIndexed(ctx, chainID)
+	require.NoError(t, err)
+	assert.Equal(t, expectedLast, lastHeight, "Expected all heights to be recorded")
+}
