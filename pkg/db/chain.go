@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/uptrace/go-clickhouse/ch"
 	"go.uber.org/zap"
 )
 
@@ -55,9 +56,102 @@ func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transa
 	return indexer.InsertTransactions(ctx, db.Db, txs, raws)
 }
 
-// RawDB exposes the underlying ClickHouse connection.
-func (db *ChainDB) RawDB() *ch.DB {
-	return db.Db
+// QueryBlocks retrieves a paginated list of blocks ordered by height descending.
+// If cursor > 0, only blocks with height < cursor are returned.
+// The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
+func (db *ChainDB) QueryBlocks(ctx context.Context, cursor uint64, limit int) ([]indexer.BlockRow, error) {
+	type rowInternal struct {
+		Height          uint64    `ch:"height"`
+		Hash            string    `ch:"hash"`
+		Time            time.Time `ch:"time"`
+		ProposerAddress string    `ch:"proposer_address"`
+		NumTxs          uint32    `ch:"num_txs"`
+	}
+
+	conds := make([]string, 0)
+	args := make([]any, 0)
+	if cursor > 0 {
+		conds = append(conds, "height < ?")
+		args = append(args, cursor)
+	}
+
+	query := fmt.Sprintf(`SELECT height, hash, time, proposer_address, num_txs FROM "%s"."blocks"`, db.Name)
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	query += " ORDER BY height DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows := make([]rowInternal, 0, limit)
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("query blocks failed: %w", err)
+	}
+
+	// Convert to BlockRow to decouple from ClickHouse-specific tags
+	result := make([]indexer.BlockRow, len(rows))
+	for i, row := range rows {
+		result[i] = indexer.BlockRow{
+			Height:          row.Height,
+			Hash:            row.Hash,
+			Time:            row.Time,
+			ProposerAddress: row.ProposerAddress,
+			NumTxs:          row.NumTxs,
+		}
+	}
+
+	return result, nil
+}
+
+// QueryTransactions retrieves a paginated list of transactions ordered by height descending.
+// If cursor > 0, only transactions with height < cursor are returned.
+// The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
+func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit int) ([]indexer.TransactionRow, error) {
+	type rowInternal struct {
+		Height       uint64    `ch:"height"`
+		TxHash       string    `ch:"tx_hash"`
+		Time         time.Time `ch:"time"`
+		MessageType  string    `ch:"message_type"`
+		Counterparty *string   `ch:"counterparty"`
+		Signer       string    `ch:"signer"`
+		Amount       *uint64   `ch:"amount"`
+		Fee          uint64    `ch:"fee"`
+	}
+
+	conds := make([]string, 0)
+	args := make([]any, 0)
+	if cursor > 0 {
+		conds = append(conds, "height < ?")
+		args = append(args, cursor)
+	}
+
+	query := fmt.Sprintf(`SELECT height, tx_hash, time, message_type, counterparty, signer, amount, fee FROM "%s"."txs"`, db.Name)
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	query += " ORDER BY height DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows := make([]rowInternal, 0, limit)
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("query transactions failed: %w", err)
+	}
+
+	// Convert to TransactionRow to decouple from ClickHouse-specific tags
+	result := make([]indexer.TransactionRow, len(rows))
+	for i, row := range rows {
+		result[i] = indexer.TransactionRow{
+			Height:       row.Height,
+			TxHash:       row.TxHash,
+			Time:         row.Time,
+			MessageType:  row.MessageType,
+			Counterparty: row.Counterparty,
+			Signer:       row.Signer,
+			Amount:       row.Amount,
+			Fee:          row.Fee,
+		}
+	}
+
+	return result, nil
 }
 
 // HasBlock reports whether a block exists at the specified height.

@@ -68,6 +68,10 @@ func (f *reporterFakeAdminStore) FindGaps(context.Context, string) ([]db.Gap, er
 	return nil, nil
 }
 
+func (f *reporterFakeAdminStore) UpdateRPCHealth(context.Context, string, string, string) error {
+	return nil
+}
+
 type reporterFakeChainStore struct {
 	chainID      string
 	databaseName string
@@ -100,6 +104,14 @@ func (f *reporterFakeChainStore) DeleteTransactions(context.Context, uint64) err
 func (f *reporterFakeChainStore) Exec(_ context.Context, query string, _ ...any) error {
 	f.execQueries = append(f.execQueries, query)
 	return nil
+}
+
+func (*reporterFakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.BlockRow, error) {
+	return nil, nil
+}
+
+func (*reporterFakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.TransactionRow, error) {
+	return nil, nil
 }
 
 func (*reporterFakeChainStore) Close() error { return nil }

@@ -1,0 +1,17 @@
+./append.go
+./append_value.go
+./block.go
+./column.go
+./column_gen.go
+./column_lowcard.go
+./column_nullable.go
+./column_unsafe_gen.go
+./enum.go
+./field.go
+./formatter.go
+./hooks.go
+./reflect.go
+./sqlfmt.go
+./table.go
+./tables.go
+./types.go

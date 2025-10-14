@@ -1,0 +1,6 @@
+./app.go
+./provider.go
+./provider_fake.go
+./provider_k8s.go
+./types.go
+./app_test.go

@@ -2,21 +2,11 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
 )
-
-type blockRow struct {
-	Height          uint64    `ch:"height"`
-	Hash            string    `ch:"hash"`
-	Time            time.Time `ch:"time"`
-	ProposerAddress string    `ch:"proposer_address"`
-	NumTxs          uint32    `ch:"num_txs"`
-}
 
 type blockItem struct {
 	Height   uint64 `json:"height"`
@@ -51,25 +41,11 @@ func (c *Controller) HandleBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := store.RawDB()
 	ctx := context.Background()
 
-	conds := make([]string, 0)
-	args := make([]any, 0)
-	if page.Cursor > 0 {
-		conds = append(conds, "height < ?")
-		args = append(args, page.Cursor)
-	}
-
-	query := fmt.Sprintf(`SELECT height, hash, time, proposer_address, num_txs FROM "%s"."blocks"`, store.DatabaseName())
-	if len(conds) > 0 {
-		query += " WHERE " + strings.Join(conds, " AND ")
-	}
-	query += " ORDER BY height DESC LIMIT ?"
-	args = append(args, page.Limit+1)
-
-	rows := make([]blockRow, 0, page.Limit+1)
-	if err := db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+	// Query with limit+1 to detect if there are more pages
+	rows, err := store.QueryBlocks(ctx, page.Cursor, page.Limit+1)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
@@ -118,36 +94,11 @@ func (c *Controller) HandleTransactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	db := store.RawDB()
 	ctx := context.Background()
 
-	type txRow struct {
-		Height       uint64    `ch:"height"`
-		TxHash       string    `ch:"tx_hash"`
-		Time         time.Time `ch:"time"`
-		MessageType  string    `ch:"message_type"`
-		Counterparty *string   `ch:"counterparty"`
-		Signer       string    `ch:"signer"`
-		Amount       *uint64   `ch:"amount"`
-		Fee          uint64    `ch:"fee"`
-	}
-
-	conds := make([]string, 0)
-	args := make([]any, 0)
-	if page.Cursor > 0 {
-		conds = append(conds, "height < ?")
-		args = append(args, page.Cursor)
-	}
-
-	query := fmt.Sprintf(`SELECT height, tx_hash, time, message_type, counterparty, signer, amount, fee FROM "%s"."txs"`, store.DatabaseName())
-	if len(conds) > 0 {
-		query += " WHERE " + strings.Join(conds, " AND ")
-	}
-	query += " ORDER BY height DESC LIMIT ?"
-	args = append(args, page.Limit+1)
-
-	rows := make([]txRow, 0, page.Limit+1)
-	if err := db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+	// Query with limit+1 to detect if there are more pages
+	rows, err := store.QueryTransactions(ctx, page.Cursor, page.Limit+1)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}

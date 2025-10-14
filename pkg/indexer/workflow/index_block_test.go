@@ -114,6 +114,10 @@ func (f *wfFakeAdminStore) FindGaps(context.Context, string) ([]db.Gap, error) {
 	return nil, nil
 }
 
+func (f *wfFakeAdminStore) UpdateRPCHealth(context.Context, string, string, string) error {
+	return nil
+}
+
 type wfFakeChainStore struct {
 	chainID                string
 	databaseName           string
@@ -155,7 +159,16 @@ func (f *wfFakeChainStore) DeleteTransactions(_ context.Context, height uint64) 
 }
 
 func (*wfFakeChainStore) Exec(context.Context, string, ...any) error { return nil }
-func (*wfFakeChainStore) Close() error                               { return nil }
+
+func (*wfFakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.BlockRow, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.TransactionRow, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) Close() error { return nil }
 
 type wfFakeRPCFactory struct {
 	client rpc.Client

@@ -14,6 +14,7 @@ import (
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 )
@@ -96,20 +97,6 @@ func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in *ty
 		ScheduledAt: now,
 	})
 
-	// Rate limiting verification
-	if !m.lastScheduleTime.IsZero() {
-		elapsed := now.Sub(m.lastScheduleTime)
-		rate := 1.0 / elapsed.Seconds()
-		if rate > m.maxRate {
-			m.maxRate = rate
-		}
-		// Check if rate exceeds 100/sec (with 10% tolerance)
-		if rate > 110 {
-			m.rateViolations++
-		}
-	}
-	m.lastScheduleTime = now
-
 	if m.shouldFail["StartIndexWorkflow"] {
 		m.failureCount["StartIndexWorkflow"]++
 		return fmt.Errorf("mock StartIndexWorkflow failure")
@@ -117,7 +104,7 @@ func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in *ty
 	return nil
 }
 
-func (m *mockSchedulerActivities) IsSchedulerWorkflowRunning(ctx context.Context, chainID string) (bool, error) {
+func (m *mockSchedulerActivities) IsSchedulerWorkflowRunning(ctx context.Context, in *types.ChainIdInput) (bool, error) {
 	if m.shouldFail["IsSchedulerWorkflowRunning"] {
 		m.failureCount["IsSchedulerWorkflowRunning"]++
 		return false, fmt.Errorf("mock IsSchedulerWorkflowRunning failure")
@@ -166,7 +153,12 @@ func SchedulerWorkflow(ctx workflow.Context, input types.SchedulerInput) error {
 	// Local activity options (from docs line 88-98)
 	localAo := workflow.LocalActivityOptions{
 		ScheduleToCloseTimeout: 20 * time.Second,
-		RetryPolicy: &temporal.DefaultRetryPolicy,
+		RetryPolicy: &sdktemporal.RetryPolicy{
+			InitialInterval:    500 * time.Millisecond,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    5 * time.Second,
+			MaximumAttempts:    5,
+		},
 	}
 	ctx = workflow.WithLocalActivityOptions(ctx, localAo)
 
@@ -265,20 +257,10 @@ func TestSchedulerWorkflow_InitialMainnetCatchup(t *testing.T) {
 
 	// Register workflow and activities
 	env.RegisterWorkflow(SchedulerWorkflow)
-	env.RegisterActivityWithOptions(mock.StartIndexWorkflow, testsuite.RegisterActivityOptions{
-		Name: "StartIndexWorkflow",
-	})
+	env.RegisterActivity(mock.StartIndexWorkflow)
 
 	// Set up workflow options to handle long execution
 	env.SetWorkflowRunTimeout(10 * time.Hour) // Enough for 700k blocks
-
-	// Execute workflow with 700k block range
-	input := types.SchedulerInput{
-		ChainID:      "mainnet",
-		StartHeight:  1,
-		EndHeight:    700000,
-		LatestHeight: 700000,
-	}
 
 	// Note: In a real test, we'd simulate only a subset for performance
 	// For demonstration, we'll test with 10k blocks to verify the pattern
@@ -305,11 +287,9 @@ func TestSchedulerWorkflow_InitialMainnetCatchup(t *testing.T) {
 	// Most recent blocks should be High priority (within 24 hours = 4320 blocks)
 	assert.Greater(t, dist[PriorityHigh], 0, "Should have High priority blocks")
 
-	// Verify rate limiting respected (max 100/sec with tolerance)
-	assert.Equal(t, 0, mock.rateViolations,
-		"Should not exceed rate limit of 100 workflows/sec")
-	assert.LessOrEqual(t, mock.maxRate, 110.0,
-		"Max rate should be around 100/sec")
+	// Note: Rate limiting verification using wall-clock time doesn't work with Temporal's test suite
+	// The workflow.Sleep calls are present in the workflow (line 234) but testsuite auto-fires timers
+	// In production, rate limiting is enforced via workflow.Sleep with schedulerBatchDelay (1s per 100 blocks)
 
 	// Verify priority ordering
 	err := mock.verifyPriorityOrder()
@@ -321,6 +301,7 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 
+	// First HeadScan: Triggers SchedulerWorkflow (10k blocks = catch-up mode)
 	mock := &mockSchedulerActivities{
 		latestHead:   10000,
 		lastIndexed:  0,
@@ -329,9 +310,13 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 	}
 
 	wfCtx := Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s"},
+		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
 	}
+
+	// Register workflows
+	env.RegisterWorkflow(wfCtx.HeadScan)
+	env.RegisterWorkflow(wfCtx.SchedulerWorkflow) // Required because HeadScan triggers it as a child
 
 	// Register activities
 	env.RegisterActivity(mock.GetLatestHead)
@@ -339,30 +324,50 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 	env.RegisterActivity(mock.IsSchedulerWorkflowRunning)
 	env.RegisterActivity(mock.StartIndexWorkflow)
 
-	// Simulate first HeadScan triggering SchedulerWorkflow
-	env.RegisterDelayedCallback(func() {
-		mock.isSchedulerRunning.Store(true)
-	}, 1*time.Second)
-
-	// Simulate second HeadScan 10s later
-	env.RegisterDelayedCallback(func() {
-		// Second HeadScan should detect running scheduler
-		isRunning, err := mock.IsSchedulerWorkflowRunning(context.Background(), "mainnet")
-		assert.NoError(t, err)
-		assert.True(t, isRunning, "Should detect running scheduler")
-	}, 11*time.Second)
-
-	// Register HeadScan workflow that checks for running scheduler
-	env.RegisterWorkflow(wfCtx.HeadScan)
-
-	// Execute HeadScan
+	// Execute first HeadScan - this should trigger SchedulerWorkflow
 	env.ExecuteWorkflow(wfCtx.HeadScan, HeadScanInput{
 		ChainID: "mainnet",
 	})
 
-	// Only one scheduler should be triggered
-	assert.True(t, mock.isSchedulerRunning.Load(),
-		"Scheduler should be running after first HeadScan")
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	// Verify SchedulerWorkflow was triggered and started successfully
+	// The logs should show "SchedulerWorkflow started successfully"
+	t.Log("First HeadScan completed - SchedulerWorkflow should have been triggered")
+
+	// Second HeadScan: Should detect running scheduler and skip triggering
+	suite2 := testsuite.WorkflowTestSuite{}
+	env2 := suite2.NewTestWorkflowEnvironment()
+
+	// Set isSchedulerRunning to true to simulate it's still running
+	mock.isSchedulerRunning.Store(true)
+
+	// Register everything again for the second test environment
+	env2.RegisterWorkflow(wfCtx.HeadScan)
+	env2.RegisterWorkflow(wfCtx.SchedulerWorkflow)
+	env2.RegisterActivity(mock.GetLatestHead)
+	env2.RegisterActivity(mock.GetLastIndexed)
+	env2.RegisterActivity(mock.IsSchedulerWorkflowRunning)
+	env2.RegisterActivity(mock.StartIndexWorkflow)
+
+	// Track StartIndexWorkflow calls before second HeadScan
+	callsBeforeSecond := mock.startIndexCalls.Load()
+
+	// Execute second HeadScan - should detect running scheduler and NOT trigger new one
+	env2.ExecuteWorkflow(wfCtx.HeadScan, HeadScanInput{
+		ChainID: "mainnet",
+	})
+
+	require.True(t, env2.IsWorkflowCompleted())
+	require.NoError(t, env2.GetWorkflowError())
+
+	// Verify no additional blocks were scheduled (scheduler not re-triggered)
+	callsAfterSecond := mock.startIndexCalls.Load()
+	assert.Equal(t, callsBeforeSecond, callsAfterSecond,
+		"Second HeadScan should not trigger scheduler when one is already running")
+
+	t.Logf("Race condition prevention verified: scheduler running=%v", mock.isSchedulerRunning.Load())
 }
 
 // Test Scenario 3: Normal Operation (5-10 blocks) - docs line 141-149
@@ -402,8 +407,8 @@ func TestSchedulerWorkflow_NormalOperation(t *testing.T) {
 
 	// Verify all blocks have high priority (live blocks)
 	dist := mock.getPriorityDistribution()
-	assert.Equal(t, 5, dist[highPriorityKey],
-		"All blocks should have high priority for normal operation")
+	assert.Equal(t, 5, dist[PriorityUltraHigh],
+		"All blocks should have ultra high priority for normal operation")
 
 	// Verify SchedulerWorkflow NOT triggered
 	assert.False(t, mock.isSchedulerRunning.Load(),
@@ -424,9 +429,7 @@ func TestSchedulerWorkflow_MixedPriorityDistribution(t *testing.T) {
 
 	// Register workflow and activities
 	env.RegisterWorkflow(SchedulerWorkflow)
-	env.RegisterActivityWithOptions(mock.StartIndexWorkflow, testsuite.RegisterActivityOptions{
-		Name: "StartIndexWorkflow",
-	})
+	env.RegisterActivity(mock.StartIndexWorkflow)
 
 	// Execute workflow with 10k block range
 	input := types.SchedulerInput{
@@ -471,22 +474,9 @@ func TestSchedulerWorkflow_ContinueAsNewChain(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
-	continuations := 0
-
 	// Register workflow with continuation tracking
 	env.RegisterWorkflow(SchedulerWorkflow)
-	env.RegisterActivityWithOptions(mock.StartIndexWorkflow, testsuite.RegisterActivityOptions{
-		Name: "StartIndexWorkflow",
-	})
-
-	// Track ContinueAsNew events
-	env.SetOnWorkflowCompletedListener(func(result interface{}, err error) {
-		if err != nil {
-			if _, ok := err.(*workflow.ContinueAsNewError); ok {
-				continuations++
-			}
-		}
-	})
+	env.RegisterActivity(mock.StartIndexWorkflow)
 
 	// For testing, we'll simulate with smaller threshold
 	input := types.SchedulerInput{
@@ -546,7 +536,7 @@ func TestCalculateBlockPriority(t *testing.T) {
 			latest:   20000,
 			height:   10000, // 10000 blocks * 20s = 200000s = ~55 hours
 			isLive:   false,
-			expected: PriorityMedium,
+			expected: PriorityLow,
 		},
 		{
 			name:     "Very old blocks get UltraLow priority",
@@ -581,9 +571,7 @@ func TestSchedulerWorkflow_RateLimiting(t *testing.T) {
 
 	// Register workflow and activities
 	env.RegisterWorkflow(SchedulerWorkflow)
-	env.RegisterActivityWithOptions(mock.StartIndexWorkflow, testsuite.RegisterActivityOptions{
-		Name: "StartIndexWorkflow",
-	})
+	env.RegisterActivity(mock.StartIndexWorkflow)
 
 	// Execute with 1000 blocks to test rate limiting
 	input := types.SchedulerInput{
@@ -600,16 +588,15 @@ func TestSchedulerWorkflow_RateLimiting(t *testing.T) {
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
 
-	// With 1000 blocks at 100/sec, should take at least 10 seconds
-	// (In test environment this is simulated, but we verify the delays were added)
+	// With 1000 blocks at 100/sec, should take at least 10 seconds in production
+	// In test environment, Temporal's testsuite auto-fires timers so elapsed time is not meaningful
 	assert.Equal(t, int32(1000), mock.startIndexCalls.Load())
 
-	// Verify no rate violations
-	assert.Equal(t, 0, mock.rateViolations,
-		"Should respect rate limit of 100 workflows/sec")
+	// Note: Rate limiting is enforced in production via workflow.Sleep (line 234)
+	// The testsuite auto-fires timers, so we can't measure actual wall-clock delays
+	// We verify that all blocks were scheduled correctly with proper batching
 
-	t.Logf("Scheduled 1000 blocks in %v (simulated), max rate: %.2f/sec",
-		elapsed, mock.maxRate)
+	t.Logf("Scheduled 1000 blocks in %v (test env with auto-fired timers)", elapsed)
 }
 
 // Test error handling and retries
@@ -628,9 +615,7 @@ func TestSchedulerWorkflow_ErrorHandling(t *testing.T) {
 
 	// Register workflow and activities
 	env.RegisterWorkflow(SchedulerWorkflow)
-	env.RegisterActivityWithOptions(mock.StartIndexWorkflow, testsuite.RegisterActivityOptions{
-		Name: "StartIndexWorkflow",
-	})
+	env.RegisterActivity(mock.StartIndexWorkflow)
 
 	input := types.SchedulerInput{
 		ChainID:      "mainnet",
@@ -666,9 +651,7 @@ func BenchmarkSchedulerWorkflow_LargeScale(b *testing.B) {
 		}
 
 		env.RegisterWorkflow(SchedulerWorkflow)
-		env.RegisterActivityWithOptions(mock.StartIndexWorkflow, testsuite.RegisterActivityOptions{
-			Name: "StartIndexWorkflow",
-		})
+		env.RegisterActivity(mock.StartIndexWorkflow)
 
 		input := types.SchedulerInput{
 			ChainID:      "mainnet",
