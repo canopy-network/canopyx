@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"time"
 
 	"github.com/uptrace/go-clickhouse/ch"
 )
@@ -9,11 +10,11 @@ import (
 type ReindexRequest struct {
 	ch.CHModel `ch:"table:reindex_requests"`
 
-	ChainID     string `ch:"chain_id"`
-	Height      uint64 `ch:"height"`
-	RequestedBy string `ch:"requested_by"`
-	Status      string `ch:"status,default:'queued'"`
-	RequestedAt string `ch:"requested_at,default:now()"`
+	ChainID     string    `ch:"chain_id"`
+	Height      uint64    `ch:"height"`
+	RequestedBy string    `ch:"requested_by"`
+	Status      string    `ch:"status,default:'queued'"`
+	RequestedAt time.Time `ch:"requested_at,default:now()"`
 }
 
 // InitReindexRequests creates the reindex request log table.

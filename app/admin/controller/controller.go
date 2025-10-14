@@ -77,7 +77,7 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 
 	// API (crud?)
 	r.Handle("/api/chains", c.RequireAuth(http.HandlerFunc(c.HandleChainsList))).Methods(http.MethodGet)
-	r.Handle("/api/chains", c.RequireAdmin(http.HandlerFunc(c.HandleChainsUpsert))).Methods(http.MethodPost)
+	r.Handle("/api/chains", c.RequireAuth(http.HandlerFunc(c.HandleChainsUpsert))).Methods(http.MethodPost)
 	// GET/PATCH bulk status
 	r.Handle("/api/chains/status", c.RequireAuth(http.HandlerFunc(c.HandleChainStatus))).Methods(http.MethodGet)
 	r.Handle("/api/chains/status", c.RequireAuth(http.HandlerFunc(c.HandlePatchChainsStatus))).Methods(http.MethodPatch)

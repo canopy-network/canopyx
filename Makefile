@@ -63,6 +63,7 @@ help:
 	@echo "  make register-chain     - register a chain via admin API (requires ADMIN_TOKEN)"
 	@echo ""
 	@echo "  make docker-admin       - build admin docker image"
+	@echo "  make docker-admin-web   - build admin web docker image"
 	@echo "  make docker-indexer     - build indexer docker image"
 	@echo "  make docker-controller  - build controller docker image"
 	@echo "  make docker-query       - build query docker image"
@@ -85,6 +86,9 @@ help:
 	@echo "  make metrics-server-install - install metrics-server (kind-friendly flags)"
 	@echo "  make metrics-server-status  - show metrics-server API/pod status, sample metrics"
 	@echo "  make metrics-server-uninstall - uninstall metrics-server"
+	@echo ""
+	@echo "  make canopy-reset-data  - delete Canopy node data (fresh start on next tilt-up)"
+	@echo "  make canopy-scale-down  - scale Canopy node to 0 replicas (preserves data)"
 	@echo ""
 	@echo "  make tilt-up            - start Tilt (interactive HUD)"
 	@echo "  make tilt-up-stream     - start Tilt (stream logs, no HUD)"
@@ -260,6 +264,14 @@ docker-admin:
 		--build-arg NEXT_PUBLIC_API_BASE=http://localhost:3000 \
 		-t $(IMAGE_PREFIX)/admin:$(TAG) .
 
+.PHONY: docker-admin-web
+docker-admin-web:
+	$(DOCKER) build \
+		-f web/admin/Dockerfile \
+		--build-arg NEXT_PUBLIC_API_BASE=http://localhost:3000 \
+		-t $(IMAGE_PREFIX)/admin-web:$(TAG) \
+		./web/admin
+
 .PHONY: docker-indexer
 docker-indexer:
 	$(DOCKER) build \
@@ -285,7 +297,7 @@ docker-reporter:
 		-t $(IMAGE_PREFIX)/reporter:$(TAG) .
 
 .PHONY: docker-all
-docker-all: docker-admin docker-indexer docker-controller docker-query docker-reporter
+docker-all: docker-admin docker-admin-web docker-indexer docker-controller docker-query docker-reporter
 	@echo "✅ All Docker images built with tag $(TAG)"
 
 # ----------------------------
@@ -548,6 +560,34 @@ kind-purge: ## ⚠️ Aggressive cleanup: prune ALL unused Docker data (includes
 	@docker images 'kindest/node' -q | xargs -r docker rmi -f || true
 	@echo ">> Done. You can now recreate with 'make tilt-up' or 'make kind-up'."
 
+
+# ----------------------------
+# Canopy Local Node Management
+# ----------------------------
+
+.PHONY: canopy-reset-data canopy-scale-down
+
+# Reset Canopy node data by deleting the PVC
+# The PVC will be automatically recreated on next tilt-up with fresh data
+canopy-reset-data: ## Delete Canopy node data (PVC) - fresh start on next tilt-up
+	@echo ">> This will delete the Canopy node's blockchain data."
+	@echo ">> The data will be reset to genesis on next tilt-up."
+	@if [ "$(FORCE)" != "1" ]; then \
+		read -r -p "Proceed? [y/N] " ans; case $$ans in [yY]*) ;; *) echo "aborted."; exit 1;; esac; \
+	fi
+	@echo ">> Scaling down Canopy node..."
+	@kubectl scale deployment canopy-node --replicas=0 2>/dev/null || true
+	@echo ">> Waiting for pod to terminate..."
+	@kubectl wait --for=delete pod -l app=canopy-node --timeout=60s 2>/dev/null || true
+	@echo ">> Deleting PVC canopy-node-data..."
+	@kubectl delete pvc canopy-node-data --ignore-not-found
+	@echo ">> Done. Run 'tilt up' to recreate with fresh data."
+
+# Scale down Canopy node without deleting data (useful for maintenance)
+canopy-scale-down: ## Scale Canopy node to 0 replicas (preserves data)
+	@echo ">> Scaling down Canopy node to 0 replicas..."
+	@kubectl scale deployment canopy-node --replicas=0 2>/dev/null || echo "Canopy node not found (maybe not deployed?)"
+	@echo ">> Done. Data is preserved. Scale back up with 'kubectl scale deployment canopy-node --replicas=1'"
 
 # ----------------------------
 # Tilt

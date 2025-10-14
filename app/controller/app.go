@@ -28,7 +28,7 @@ const (
 	backlogLowWatermark  = int64(10)
 	backlogHighWatermark = int64(1000)
 	queueRequestTimeout  = 2 * time.Second
-	queueStatsTTL        = 10 * time.Second
+	queueStatsTTL        = 30 * time.Second // Increased from 10s to reduce Temporal API calls
 	scaleCooldown        = 60 * time.Second
 )
 
@@ -403,10 +403,13 @@ func (a *App) populateChain(ctx context.Context, ch *Chain) {
 		return
 	}
 
+	// Fetch and update queue stats
 	stats, err := a.fetchQueueStats(ctx, ch.ID)
 	if err != nil {
 		a.Logger.Warn("queue stats fetch failed", zap.String("chain_id", ch.ID), zap.Error(err))
 		ch.Replicas = ch.MinReplicas
+		// Update queue health to unknown on error
+		a.updateQueueHealthStatus(ctx, ch.ID, "unknown", fmt.Sprintf("failed to fetch queue stats: %v", err))
 		return
 	}
 
@@ -421,6 +424,92 @@ func (a *App) populateChain(ctx context.Context, ch *Chain) {
 		zap.Int64("queue_backlog_total", stats.PendingWorkflowTasks+stats.PendingActivityTasks),
 	)
 	ch.Replicas = a.desiredReplicas(ch, stats)
+
+	// Update queue health status based on backlog
+	a.updateQueueHealthStatus(ctx, ch.ID, computeQueueHealthStatus(stats), "")
+
+	// Update deployment health status
+	a.updateDeploymentHealthStatus(ctx, ch.ID)
+}
+
+// computeQueueHealthStatus determines queue health based on backlog size
+func computeQueueHealthStatus(stats QueueStats) string {
+	backlog := stats.PendingWorkflowTasks + stats.PendingActivityTasks
+
+	switch {
+	case backlog < backlogLowWatermark:
+		return "healthy"
+	case backlog >= backlogLowWatermark && backlog < backlogHighWatermark:
+		return "warning"
+	case backlog >= backlogHighWatermark:
+		return "critical"
+	default:
+		return "unknown"
+	}
+}
+
+// updateQueueHealthStatus updates queue health in the database
+func (a *App) updateQueueHealthStatus(ctx context.Context, chainID, status, customMessage string) {
+	backlog := int64(0)
+	if cached, ok := a.queueCache.Load(chainID); ok {
+		backlog = cached.stats.PendingWorkflowTasks + cached.stats.PendingActivityTasks
+	}
+
+	message := customMessage
+	if message == "" {
+		switch status {
+		case "healthy":
+			message = fmt.Sprintf("Queue backlog: %d tasks (below low watermark of %d)", backlog, backlogLowWatermark)
+		case "warning":
+			message = fmt.Sprintf("Queue backlog: %d tasks (between %d and %d)", backlog, backlogLowWatermark, backlogHighWatermark)
+		case "critical":
+			message = fmt.Sprintf("Queue backlog: %d tasks (above high watermark of %d)", backlog, backlogHighWatermark)
+		default:
+			message = "Queue status unknown"
+		}
+	}
+
+	if err := admin.UpdateQueueHealth(ctx, a.IndexerDB.Db, chainID, status, message); err != nil {
+		a.Logger.Warn("failed to update queue health status",
+			zap.String("chain_id", chainID),
+			zap.String("status", status),
+			zap.Error(err),
+		)
+	} else {
+		a.Logger.Debug("queue health updated",
+			zap.String("chain_id", chainID),
+			zap.String("status", status),
+			zap.String("message", message),
+		)
+	}
+}
+
+// updateDeploymentHealthStatus updates deployment health in the database
+func (a *App) updateDeploymentHealthStatus(ctx context.Context, chainID string) {
+	status, message, err := a.Provider.GetDeploymentHealth(ctx, chainID)
+	if err != nil {
+		a.Logger.Warn("failed to get deployment health",
+			zap.String("chain_id", chainID),
+			zap.Error(err),
+		)
+		// Still update with unknown status
+		status = "unknown"
+		message = fmt.Sprintf("failed to check deployment: %v", err)
+	}
+
+	if err := admin.UpdateDeploymentHealth(ctx, a.IndexerDB.Db, chainID, status, message); err != nil {
+		a.Logger.Warn("failed to update deployment health status",
+			zap.String("chain_id", chainID),
+			zap.String("status", status),
+			zap.Error(err),
+		)
+	} else {
+		a.Logger.Debug("deployment health updated",
+			zap.String("chain_id", chainID),
+			zap.String("status", status),
+			zap.String("message", message),
+		)
+	}
 }
 
 func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, error) {

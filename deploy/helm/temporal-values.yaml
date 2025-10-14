@@ -6,6 +6,49 @@ server:
       namespace:
         - name: canopyx
           retention: 1d
+    # Increase RPC rate limits to handle high query volumes
+    # Default limits are too low for our use case (controller + admin polling every 15-30s)
+    limits:
+      maxIDLengthLimit: 255
+      # Frontend service RPC rate limits (handles client requests)
+      frontend:
+        rps: 4000                    # Requests per second (default: 1200)
+        namespaceReplicationInducingAPIsRPS: 100  # default: 20
+      # History service rate limits
+      history:
+        rps: 9000                    # default: 9000
+      # Matching service rate limits (task queue operations)
+      matching:
+        rps: 4000                    # default: 1200
+      # Worker service rate limits
+      worker:
+        rps: 1000                    # default: 1000
+    # Configure persistence to use PostgreSQL instead of Cassandra
+    persistence:
+      default:
+        driver: "sql"
+        sql:
+          driver: "postgres12"
+          host: "temporal-postgresql"
+          port: 5432
+          database: "temporal"
+          user: "temporal"
+          password: "temporal"
+          maxConns: 20
+          maxIdleConns: 20
+          maxConnLifetime: "1h"
+      visibility:
+        driver: "sql"
+        sql:
+          driver: "postgres12"
+          host: "temporal-postgresql"
+          port: 5432
+          database: "temporal_visibility"
+          user: "temporal"
+          password: "temporal"
+          maxConns: 10
+          maxIdleConns: 10
+          maxConnLifetime: "1h"
 
 prometheus:
   enabled: false
@@ -13,10 +56,23 @@ prometheus:
 grafana:
   enabled: false
 
+# Disable Elasticsearch - using PostgreSQL for visibility instead
 elasticsearch:
-  replicas: 1
-  imageTag: "7.17.28"
+  enabled: false
 
+# Disable Cassandra
 cassandra:
-  config:
-    cluster_size: 1
+  enabled: false
+
+# Disable built-in PostgreSQL (we deploy it separately via Tiltfile)
+postgresql:
+  enabled: false
+
+# Schema tool configuration for PostgreSQL
+schema:
+  setup:
+    enabled: true
+    backoffLimit: 100
+  update:
+    enabled: true
+    backoffLimit: 100

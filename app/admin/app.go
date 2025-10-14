@@ -77,6 +77,9 @@ func Initialize(ctx context.Context) *types.App {
 
 		// Worker initialization
 		Worker: managerTemporalWorker,
+
+		// Queue stats cache initialization (30s TTL to reduce Temporal API rate limiting)
+		QueueStatsCache: types.NewQueueStatsCache(),
 	}
 
 	err = app.ReconcileSchedules(ctx)

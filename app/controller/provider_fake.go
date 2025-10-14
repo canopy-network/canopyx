@@ -33,5 +33,11 @@ func (p *FakeProvider) DeleteChain(_ context.Context, chainID string) error {
 	return nil
 }
 
+// GetDeploymentHealth always returns "healthy" for testing purposes.
+func (p *FakeProvider) GetDeploymentHealth(_ context.Context, chainID string) (status, message string, err error) {
+	log.Printf("[controller/Provider=fake] get deployment health chain=%s", chainID)
+	return "healthy", "fake provider deployment always healthy", nil
+}
+
 // Close is a no-op.
 func (p *FakeProvider) Close() error { return nil }

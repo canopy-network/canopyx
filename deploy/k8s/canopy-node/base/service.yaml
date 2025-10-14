@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: canopy-node
+spec:
+  selector:
+    app: canopy-node
+  ports:
+    - name: wallet
+      port: 50000
+      targetPort: 50000
+    - name: explorer
+      port: 50001
+      targetPort: 50001
+    - name: rpc
+      port: 50002
+      targetPort: 50002
+    - name: admin-rpc
+      port: 50003
+      targetPort: 50003
+    - name: p2p
+      port: 9001
+      targetPort: 9001
+    - name: debug
+      port: 6060
+      targetPort: 6060
+    - name: metrics
+      port: 9090
+      targetPort: 9090

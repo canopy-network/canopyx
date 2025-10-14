@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopy-node
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: canopy-node
+  template:
+    metadata:
+      labels:
+        app: canopy-node
+    spec:
+      initContainers:
+        - name: init-config
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              # Copy all config files from ConfigMaps to the data directory
+              cp /config/config.json /data/config.json
+              cp /config/genesis.json /data/genesis.json
+              cp /config/keystore.json /data/keystore.json
+              cp /config/validator_key.json /data/validator_key.json
+              cp /config/book.json /data/book.json
+              cp /config/proposals.json /data/proposals.json
+              cp /config/polls.json /data/polls.json
+
+              # Create logs directory
+              mkdir -p /data/logs
+
+              # Create canopy subdirectory for database
+              mkdir -p /data/canopy
+
+              echo "Initialized Canopy config files"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config/config.json
+              subPath: config.json
+            - name: genesis
+              mountPath: /config/genesis.json
+              subPath: genesis.json
+            - name: keystore
+              mountPath: /config/keystore.json
+              subPath: keystore.json
+            - name: keystore
+              mountPath: /config/validator_key.json
+              subPath: validator_key.json
+            - name: keystore
+              mountPath: /config/book.json
+              subPath: book.json
+            - name: keystore
+              mountPath: /config/proposals.json
+              subPath: proposals.json
+            - name: keystore
+              mountPath: /config/polls.json
+              subPath: polls.json
+      containers:
+        - name: canopy
+          image: localhost:5001/canopy-node
+          command:
+            - /app/bin
+            - start
+            - --nickname=test
+            - --password=test
+          ports:
+            - name: wallet
+              containerPort: 50000
+            - name: explorer
+              containerPort: 50001
+            - name: rpc
+              containerPort: 50002
+            - name: admin-rpc
+              containerPort: 50003
+            - name: p2p
+              containerPort: 9001
+            - name: debug
+              containerPort: 6060
+            - name: metrics
+              containerPort: 9090
+          volumeMounts:
+            - name: data
+              mountPath: /root/.canopy
+          readinessProbe:
+            httpGet:
+              path: /v1/
+              port: 50002
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/
+              port: 50002
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 2Gi
+              cpu: "1000m"
+            requests:
+              memory: 512Mi
+              cpu: "250m"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: canopy-node-data
+        - name: config
+          configMap:
+            name: canopy-node-config
+        - name: genesis
+          configMap:
+            name: canopy-node-genesis
+        - name: keystore
+          configMap:
+            name: canopy-node-keystore

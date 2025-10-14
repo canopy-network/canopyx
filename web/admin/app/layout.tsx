@@ -1,5 +1,6 @@
 import './globals.css'
-import {ToastProvider} from './components/ToastProvider'
+import { ToastProvider } from './components/ToastProvider'
+import { AuthProvider } from './lib/auth-context'
 
 export const metadata = {
   title: 'CanopyX Admin',
@@ -10,7 +11,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <ToastProvider>{children}</ToastProvider>
+        <AuthProvider>
+          <ToastProvider>{children}</ToastProvider>
+        </AuthProvider>
       </body>
     </html>
   )

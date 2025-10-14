@@ -15,6 +15,7 @@ type AdminStore interface {
 	ListChain(ctx context.Context) ([]admin.Chain, error)
 	LastIndexed(ctx context.Context, chainID string) (uint64, error)
 	FindGaps(ctx context.Context, chainID string) ([]Gap, error)
+	UpdateRPCHealth(ctx context.Context, chainID, status, message string) error
 }
 
 // ChainStore describes the per-chain database operations required by indexer and reporter activities.

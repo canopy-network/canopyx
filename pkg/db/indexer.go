@@ -270,3 +270,8 @@ func (db *AdminDB) ListReindexRequests(ctx context.Context, chainID string, limi
 	}
 	return rows, nil
 }
+
+// UpdateRPCHealth updates the RPC health status for a chain.
+func (db *AdminDB) UpdateRPCHealth(ctx context.Context, chainID, status, message string) error {
+	return admin.UpdateRPCHealth(ctx, db.Db, chainID, status, message)
+}

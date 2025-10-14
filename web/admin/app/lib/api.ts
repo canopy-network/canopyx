@@ -18,8 +18,14 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
         headers,
     })
 
-    if (res.status === 401 && typeof window !== 'undefined' && !path.startsWith('/auth/')) {
-        window.location.href = '/'
+    // Don't redirect to login if already on login page or making login/logout requests
+    if (res.status === 401 && typeof window !== 'undefined') {
+        const isLoginPage = window.location.pathname === '/login'
+        const isAuthRequest = path.includes('/login') || path.includes('/logout')
+
+        if (!isLoginPage && !isAuthRequest) {
+            window.location.href = '/login'
+        }
     }
 
     return res

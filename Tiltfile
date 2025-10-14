@@ -18,6 +18,14 @@ helm_repo(
   resource_name='helm-repo-temporal'
 )
 
+# Add bitnami repo for PostgreSQL
+helm_repo(
+  name='bitnami',
+  url='https://charts.bitnami.com/bitnami',
+  labels=['helm_repo'],
+  resource_name='helm-repo-bitnami'
+)
+
 # Add postgresql helm release
 helm_resource(
   name='clickhouse',
@@ -54,6 +62,39 @@ k8s_attach(
     labels=['clickhouse'],
 )
 
+# Add PostgreSQL for Temporal (Temporal chart doesn't include PostgreSQL)
+# Note: PVC retention policy set to Delete for clean state on tilt down
+helm_resource(
+  name='temporal-postgresql',
+  chart='bitnami/postgresql',
+  release_name='temporal-postgresql',
+  flags=[
+    '--set', 'auth.username=temporal',
+    '--set', 'auth.password=temporal',
+    '--set', 'auth.database=temporal',
+    '--set', 'primary.persistence.enabled=true',
+    '--set', 'primary.persistence.size=10Gi',
+    '--set', 'primary.persistentVolumeClaimRetentionPolicy.enabled=true',
+    '--set', 'primary.persistentVolumeClaimRetentionPolicy.whenDeleted=Delete',
+    '--set', 'primary.persistentVolumeClaimRetentionPolicy.whenScaled=Retain',
+    '--set', 'resources.limits.memory=512Mi',
+    '--set', 'resources.limits.cpu=500m',
+    '--set', 'resources.requests.memory=256Mi',
+    '--set', 'resources.requests.cpu=250m',
+  ],
+  pod_readiness='wait',
+  labels=['database'],
+  resource_deps=['helm-repo-bitnami']
+)
+
+k8s_attach(
+    name="temporal-postgresql-server",
+    obj="statefulset/temporal-postgresql",
+    port_forwards=["5432:5432"],
+    resource_deps=["temporal-postgresql"],
+    labels=['database'],
+)
+
 # Add temporal helm release
 helm_resource(
   name='temporal',
@@ -63,6 +104,7 @@ helm_resource(
     '--values=./deploy/helm/temporal-values.yaml'
   ],
   pod_readiness='wait',
+  resource_deps=['temporal-postgresql'],
   labels=['temporal']
 )
 
@@ -91,7 +133,7 @@ k8s_attach(
 )
 
 # ------------------------------------------
-# ADMIN
+# ADMIN API (Go Backend)
 # ------------------------------------------
 
 # Build an image with a admin binary
@@ -110,6 +152,36 @@ k8s_resource(
     port_forwards=["3000:3000"],
     labels=['apps'],
     resource_deps=["clickhouse-server", "temporal-frontend"],
+    pod_readiness='wait',  # Wait for readiness probe to pass
+)
+
+# ------------------------------------------
+# ADMIN WEB (Next.js Frontend)
+# ------------------------------------------
+
+# Build the admin web frontend image with hot reload support
+docker_build(
+    "localhost:5001/canopyx-admin-web",
+    "./web/admin",
+    dockerfile="./web/admin/Dockerfile",
+    build_args={"NEXT_PUBLIC_API_BASE": "http://localhost:3000"},
+    live_update=[
+        # Fall back to full rebuild if dependencies change (must be first)
+        fall_back_on(['./web/admin/package.json', './web/admin/pnpm-lock.yaml']),
+        # Sync app directory changes - triggers Next.js hot reload
+        sync('./web/admin/app', '/app/app'),
+        # Sync public directory changes
+        sync('./web/admin/public', '/app/public'),
+    ],
+)
+
+k8s_yaml(kustomize("./deploy/k8s/admin-web/overlays/local"))
+
+k8s_resource(
+    "canopyx-admin-web",
+    port_forwards=["3003:3003"],
+    labels=['apps'],
+    resource_deps=["canopyx-admin"],
 )
 
 # ------------------------------------------
@@ -132,7 +204,49 @@ k8s_resource(
     labels=['apps'],
     objects=["canopyx-controller:serviceaccount", "canopyx-controller:role", "canopyx-controller:rolebinding"],
     resource_deps=["clickhouse-server", "temporal-frontend", "canopyx-admin"],
+    pod_readiness='wait',  # Wait for readiness probe to pass
 )
+
+# ------------------------------------------
+# CANOPY LOCAL NODE (Optional)
+# ------------------------------------------
+
+# Only include Canopy node if the ../canopy directory exists
+canopy_path = '../canopy'
+if os.path.exists(canopy_path):
+    print("Found Canopy source at %s - including local node in deployment" % canopy_path)
+
+    # Build Canopy node image using the Dockerfile from the canopy project
+    docker_build(
+        "localhost:5001/canopy-node",
+        canopy_path,
+        dockerfile=canopy_path + "/.docker/Dockerfile",
+        # Watch for changes in canopy source
+        live_update=[],  # Full rebuild on any change - can optimize later
+    )
+
+    # Deploy Canopy node manifests
+    k8s_yaml(kustomize("./deploy/k8s/canopy-node/overlays/local"))
+
+    # Configure Canopy node resource with port forwards
+    k8s_resource(
+        "canopy-node",
+        objects=["canopy-node-data:persistentvolumeclaim", "canopy-node-config:configmap", "canopy-node-genesis:configmap", "canopy-node-keystore:configmap"],
+        port_forwards=[
+            "50000:50000",  # Wallet
+            "50001:50001",  # Explorer
+            "50002:50002",  # RPC
+            "50003:50003",  # Admin RPC
+            "9001:9001",    # TCP P2P
+            "6060:6060",    # Debug
+            "9090:9090",    # Metrics
+        ],
+        labels=['blockchain'],
+        pod_readiness='wait',  # Wait for readiness probe to pass
+    )
+else:
+    print("Canopy source not found at %s - skipping local node deployment" % canopy_path)
+    print("To use local Canopy node, clone it to: %s" % canopy_path)
 
 # ------------------------------------------
 # INDEXER
@@ -146,6 +260,7 @@ idx_repo = "localhost:5001/canopyx-indexer:dev"
 # Only include the files that affect the indexer image to avoid rebuilding on every change
 idx_deps = [
   "Dockerfile.indexer",
+  "app/indexer",
   "cmd/indexer",
   "pkg",
   "go.mod",
@@ -154,56 +269,51 @@ idx_deps = [
 
 local_resource(
   name = "build:indexer-stable",
-  cmd  = "docker build -f Dockerfile.indexer -t %s . && docker push %s" % (idx_repo, idx_repo),
+  cmd  = "docker build -f Dockerfile.indexer -t %s . && docker push %s && kubectl rollout restart deployment -l managed-by=canopyx-controller -l app=indexer || true" % (idx_repo, idx_repo),
   deps = idx_deps,
-  # optional: set to TRIGGER_MODE_MANUAL if you don’t want auto rebuild
+  # optional: set to TRIGGER_MODE_MANUAL if you don't want auto rebuild
   trigger_mode = TRIGGER_MODE_AUTO,
   labels = ["Indexer"],
 )
 
 # ------------------------------------------
-# TRIGGER DEFAULT CHAIN
+# TRIGGER DEFAULT CHAIN (Conditional on Canopy local node)
 # ------------------------------------------
 
-# Run curl AFTER the "admin" resource is deployed and marked healthy
-local_resource(
-    name="add-canopy-mainnet",
-    cmd="curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{\"chain_id\":\"canopy_mainnet\",\"chain_name\":\"Canopy MainNet\",\"rpc_endpoints\":[\"https://node1.canopy.us.nodefleet.net/rpc\"]}' || exit 1",
-    deps=[],
-    labels=['no-op'],
-    resource_deps=["canopyx-admin"],  # 👈 waits for admin resource to be healthy
-    allow_parallel=False,     # run sequentially, after admin
-    auto_init=True,           # runs on startup
-)
+# Only register local Canopy chain if the canopy source exists
+if os.path.exists(canopy_path):
+    local_resource(
+        name="add-canopy-local",
+        cmd="""
+        for i in {1..30}; do
+          if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["http://canopy-node.default.svc.cluster.local:50002"], "image":"localhost:5001/canopyx-indexer:dev"}' 2>/dev/null; then
+            echo "Successfully registered canopy_local chain"
+            exit 0
+          fi
+          echo "Waiting for admin API to be ready... attempt $i/30"
+          sleep 2
+        done
+        echo "Failed to register chain after 30 attempts"
+        exit 1
+        """,
+        deps=[],
+        labels=['no-op'],
+        resource_deps=["canopyx-admin", "canopy-node"],  # Wait for both admin and canopy node
+        allow_parallel=False,
+        auto_init=True,
+    )
 
-local_resource(
-    name="add-canopy-canary",
-    cmd="curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{\"chain_id\":\"canopy_canary\",\"chain_name\":\"Canopy CanaryNet\",\"rpc_endpoints\":[\"https://node2.canopy.us.nodefleet.net/rpc\"]}' || exit 1",
-    deps=[],
-    labels=['no-op'],
-    resource_deps=["canopyx-admin"],  # 👈 waits for admin resource to be healthy
-    allow_parallel=False,     # run sequentially, after admin
-    auto_init=True,           # runs on startup
-)
+    # ------------------------------------------
+    # HANDLE LOCAL CHAIN INDEXER
+    # ------------------------------------------
 
-# ------------------------------------------
-# HANDLE DEFAULT CHAIN AS RESOURCE (need research/dev)
-# ------------------------------------------
-
-# Logical resource in Tilt - TODO: research if this will be allowed by tilt, since it require an object, but the deployment does not exists yet...
-k8s_attach(
-    name="indexer-mainnet",
-    obj="deployment/canopyx-indexer-canopy-mainnet",
-    resource_deps=["canopyx-controller", "add-canopy-mainnet"],
-    labels=['indexers'],
-)
-
-k8s_attach(
-    name="indexer-canary",
-    obj="deployment/canopyx-indexer-canopy-canary",
-    resource_deps=["canopyx-controller", "add-canopy-canary"],
-    labels=['indexers'],
-)
+    # Attach to indexer deployment created by the controller for local node
+    k8s_attach(
+        name="indexer-local",
+        obj="deployment/canopyx-indexer-canopy-local",
+        resource_deps=["canopyx-controller", "add-canopy-local"],
+        labels=['indexers'],
+    )
 
 # This resource only exists so `tilt down` deletes the child made by the controller
 k8s_custom_deploy(

@@ -149,6 +149,27 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 			Deleted:     chn.Deleted != 0,
 			MinReplicas: chn.MinReplicas,
 			MaxReplicas: chn.MaxReplicas,
+			// Populate health fields from stored chain data
+			Health: admintypes.HealthInfo{
+				Status:    chn.OverallHealthStatus,
+				Message:   "", // Overall health doesn't have a message
+				UpdatedAt: chn.OverallHealthUpdatedAt,
+			},
+			RPCHealth: admintypes.HealthInfo{
+				Status:    chn.RPCHealthStatus,
+				Message:   chn.RPCHealthMessage,
+				UpdatedAt: chn.RPCHealthUpdatedAt,
+			},
+			QueueHealth: admintypes.HealthInfo{
+				Status:    chn.QueueHealthStatus,
+				Message:   chn.QueueHealthMessage,
+				UpdatedAt: chn.QueueHealthUpdatedAt,
+			},
+			DeploymentHealth: admintypes.HealthInfo{
+				Status:    chn.DeploymentHealthStatus,
+				Message:   chn.DeploymentHealthMessage,
+				UpdatedAt: chn.DeploymentHealthUpdatedAt,
+			},
 		}
 	}
 
@@ -409,7 +430,18 @@ func (c *Controller) startOpsWorkflow(ctx context.Context, chainID, workflowName
 		return fmt.Errorf("temporal client unavailable")
 	}
 
-	input := indexertypes.ChainIdInput{ChainID: chainID}
+	// Use the correct input type based on workflow name
+	var input interface{}
+	switch workflowName {
+	case indexerworkflow.HeadScanWorkflowName:
+		input = indexerworkflow.HeadScanInput{ChainID: chainID}
+	case indexerworkflow.GapScanWorkflowName:
+		input = indexerworkflow.GapScanInput{ChainID: chainID}
+	default:
+		// Fallback to old input type for unknown workflows
+		input = indexertypes.ChainIdInput{ChainID: chainID}
+	}
+
 	options := client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("%s:%s:%d", chainID, strings.ToLower(workflowName), time.Now().UnixNano()),
 		TaskQueue: tc.GetIndexerOpsQueue(chainID),
@@ -448,6 +480,13 @@ func (c *Controller) describeQueue(ctx context.Context, chainID string) (adminty
 		return stats, fmt.Errorf("temporal client not initialized")
 	}
 
+	// Check cache first (30s TTL to reduce Temporal API rate limiting)
+	if cached, ok := c.App.QueueStatsCache.Load(chainID); ok {
+		if time.Since(cached.Fetched) < 30*time.Second {
+			return cached.Status, nil
+		}
+	}
+
 	svc := client.TClient.WorkflowService()
 	if svc == nil {
 		return stats, fmt.Errorf("temporal workflow service unavailable")
@@ -483,6 +522,12 @@ func (c *Controller) describeQueue(ctx context.Context, chainID string) (adminty
 			stats.PendingActivity = s.GetApproximateBacklogCount()
 		}
 	}
+
+	// Store in cache
+	c.App.QueueStatsCache.Store(chainID, admintypes.CachedQueueStats{
+		Status:  stats,
+		Fetched: time.Now(),
+	})
 
 	return stats, nil
 }
