@@ -14,14 +14,28 @@ const (
     HeadScanWorkflowName   = "HeadScanWorkflow"
     GapScanWorkflowName    = "GapScanWorkflow"
     IndexBlockWorkflowName = "IndexBlockWorkflow"
+    SchedulerWorkflowName  = "SchedulerWorkflow"
 
-    highPriorityKey   = 1
-    mediumPriorityKey = 2
-    lowPriorityKey    = 4
-    newBlockWindow    = 100
-    recentBlockWindow = 5000
+    // Priority levels (time-based calculation)
+    PriorityUltraHigh = 5 // Live blocks from HeadScan
+    PriorityHigh      = 4 // Last 24 hours
+    PriorityMedium    = 3 // 24-48 hours
+    PriorityLow       = 2 // 48-72 hours
+    PriorityUltraLow  = 1 // Older than 72 hours
 
-    // Batching and continuation constants
+    // Thresholds
+    catchupThreshold        = 1000 // Switch to SchedulerWorkflow at this many blocks
+    directScheduleBatchSize = 50   // Batch size for direct scheduling
+
+    // SchedulerWorkflow settings
+    schedulerBatchSize         = 100                  // Schedule 100 workflows at a time
+    schedulerBatchDelay        = 1 * time.Second      // 1s between batches = 100 wf/sec
+    schedulerContinueThreshold = 10000                // ContinueAsNew after 10k blocks
+
+    // Block timing
+    blockTime = 20 // seconds per block
+
+    // Legacy batching constants (for HeadScan/GapScan)
     activityBatchSize        = 100  // Schedule 100 heights per batch
     continueAsNewThreshold   = 5000 // Continue as new after processing 5000 heights
     maxWorkflowHistoryEvents = 30000
@@ -36,9 +50,23 @@ type HeadScanInput struct {
 }
 
 // HeadScan scans the chain for missing blocks and starts indexing them.
-// Uses asynchronous activity execution with batching and ContinueAsNew for large ranges.
+// Uses adaptive scheduling: direct scheduling for small ranges, SchedulerWorkflow for large backlogs.
 func (wc *Context) HeadScan(ctx workflow.Context, in HeadScanInput) (*activity.HeadResult, error) {
     logger := workflow.GetLogger(ctx)
+
+    // Local activity options for fast DB queries and RPC calls
+    localAo := workflow.LocalActivityOptions{
+        ScheduleToCloseTimeout: 20 * time.Second,
+        RetryPolicy: &sdktemporal.RetryPolicy{
+            InitialInterval:    500 * time.Millisecond,
+            BackoffCoefficient: 2.0,
+            MaximumInterval:    5 * time.Second,
+            MaximumAttempts:    5,
+        },
+    }
+    localCtx := workflow.WithLocalActivityOptions(ctx, localAo)
+
+    // Regular activity options for IsSchedulerWorkflowRunning (Temporal API call)
     ao := workflow.ActivityOptions{
         StartToCloseTimeout: 30 * time.Second,
         RetryPolicy: &sdktemporal.RetryPolicy{
@@ -49,16 +77,15 @@ func (wc *Context) HeadScan(ctx workflow.Context, in HeadScanInput) (*activity.H
         },
         TaskQueue: wc.TemporalClient.GetIndexerOpsQueue(in.ChainID),
     }
-    ctx = workflow.WithActivityOptions(ctx, ao)
+    regularCtx := workflow.WithActivityOptions(ctx, ao)
 
     var latest, last uint64
-    var err error
 
     // Only query if not resuming from a continuation
     if in.TargetLatest > 0 {
         latest = in.TargetLatest
     } else {
-        if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.GetLatestHead, &types.ChainIdInput{ChainID: in.ChainID}).Get(ctx, &latest); err != nil {
+        if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.GetLatestHead, &types.ChainIdInput{ChainID: in.ChainID}).Get(localCtx, &latest); err != nil {
             return nil, err
         }
     }
@@ -67,7 +94,7 @@ func (wc *Context) HeadScan(ctx workflow.Context, in HeadScanInput) (*activity.H
         // Resuming from continuation - use ResumeFrom as the starting point
         last = in.ResumeFrom - 1
     } else {
-        if err = workflow.ExecuteActivity(ctx, wc.ActivityContext.GetLastIndexed, &types.ChainIdInput{ChainID: in.ChainID}).Get(ctx, &last); err != nil {
+        if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.GetLastIndexed, &types.ChainIdInput{ChainID: in.ChainID}).Get(localCtx, &last); err != nil {
             return nil, err
         }
     }
@@ -97,46 +124,78 @@ func (wc *Context) HeadScan(ctx workflow.Context, in HeadScanInput) (*activity.H
         "is_continuation", in.ResumeFrom > 0,
     )
 
-    processed := in.ProcessedSoFar
-    currentHeight := rangeStart
-
-    // Process in batches to avoid blocking on individual activities
-    for currentHeight <= rangeEnd {
-        batchEnd := currentHeight + activityBatchSize - 1
-        if batchEnd > rangeEnd {
-            batchEnd = rangeEnd
-        }
-
-        // Schedule a batch of heights asynchronously
-        if err := wc.scheduleHeightBatch(ctx, in.ChainID, currentHeight, batchEnd, latest); err != nil {
+    // Determine mode: normal (<1000 blocks) vs catch-up (>=1000 blocks)
+    if totalToProcess < catchupThreshold {
+        // Normal mode: Direct scheduling with ultra high priority
+        logger.Info("HeadScan using direct scheduling (normal mode)",
+            "chain_id", in.ChainID,
+            "total_blocks", totalToProcess,
+        )
+        if err := wc.scheduleDirectly(ctx, in.ChainID, rangeStart, rangeEnd, latest); err != nil {
             return nil, err
         }
-
-        processed += batchEnd - currentHeight + 1
-        currentHeight = batchEnd + 1
-
-        // Check if we should continue as new to avoid history limits
-        if processed >= continueAsNewThreshold && currentHeight <= rangeEnd {
-            logger.Info("HeadScan continuing as new",
+    } else {
+        // Catch-up mode: Check if SchedulerWorkflow is already running
+        var isRunning bool
+        if err := workflow.ExecuteActivity(regularCtx, wc.ActivityContext.IsSchedulerWorkflowRunning, &types.ChainIdInput{ChainID: in.ChainID}).Get(regularCtx, &isRunning); err != nil {
+            logger.Warn("Failed to check if scheduler is running, proceeding with trigger",
                 "chain_id", in.ChainID,
-                "processed_so_far", processed,
-                "resume_from", currentHeight,
-                "remaining", rangeEnd-currentHeight+1,
+                "error", err.Error(),
+            )
+            isRunning = false
+        }
+
+        if isRunning {
+            logger.Info("SchedulerWorkflow already running, skipping trigger",
+                "chain_id", in.ChainID,
+                "total_blocks", totalToProcess,
+            )
+        } else {
+            // Trigger SchedulerWorkflow for large backlog
+            logger.Info("HeadScan triggering SchedulerWorkflow (catch-up mode)",
+                "chain_id", in.ChainID,
+                "total_blocks", totalToProcess,
             )
 
-            // Continue as new with updated state
-            return nil, workflow.NewContinueAsNewError(ctx, wc.HeadScan, HeadScanInput{
-                ChainID:        in.ChainID,
-                ResumeFrom:     currentHeight,
-                TargetLatest:   latest,
-                ProcessedSoFar: 0, // Reset counter for new execution
-            })
+            // Start SchedulerWorkflow asynchronously
+            schedulerInput := types.SchedulerInput{
+                ChainID:      in.ChainID,
+                StartHeight:  rangeStart,
+                EndHeight:    rangeEnd,
+                LatestHeight: latest,
+            }
+
+            wfID := wc.TemporalClient.GetSchedulerWorkflowID(in.ChainID)
+            wfOptions := workflow.ChildWorkflowOptions{
+                WorkflowID: wfID,
+                TaskQueue:  wc.TemporalClient.GetIndexerOpsQueue(in.ChainID),
+            }
+            childCtx := workflow.WithChildOptions(ctx, wfOptions)
+
+            // Start child workflow without waiting for completion
+            future := workflow.ExecuteChildWorkflow(childCtx, wc.SchedulerWorkflow, schedulerInput)
+
+            // Just check if workflow started successfully
+            var childExec workflow.Execution
+            if err := future.GetChildWorkflowExecution().Get(ctx, &childExec); err != nil {
+                logger.Error("Failed to start SchedulerWorkflow",
+                    "chain_id", in.ChainID,
+                    "error", err.Error(),
+                )
+                return nil, err
+            }
+
+            logger.Info("SchedulerWorkflow started successfully",
+                "chain_id", in.ChainID,
+                "workflow_id", childExec.ID,
+                "run_id", childExec.RunID,
+            )
         }
     }
 
     logger.Info("HeadScan completed",
         "chain_id", in.ChainID,
-        "total_processed", processed,
+        "total_processed", totalToProcess,
         "range_start", rangeStart,
         "range_end", rangeEnd,
     )
@@ -149,238 +208,400 @@ func (wc *Context) HeadScan(ctx workflow.Context, in HeadScanInput) (*activity.H
     }, nil
 }
 
-// GapScanInput extends ChainIdInput with continuation support for gap filling
+// GapScanInput is the input for GapScanWorkflow
 type GapScanInput struct {
-    ChainID        string
-    ResumeGapIndex int      // Index of gap to resume from (for ContinueAsNew)
-    ResumeHeight   uint64   // Height within gap to resume from (for ContinueAsNew)
-    CachedGaps     []db.Gap // Cached gaps list (for ContinueAsNew)
-    CachedLatest   uint64   // Cached latest height (for ContinueAsNew)
-    ProcessedSoFar uint64   // Track how many heights we've processed
+    ChainID string
 }
 
-// GapScanWorkflow periodically checks for missing heights and (re)starts their indexing workflows.
-// Uses asynchronous activity execution with batching and ContinueAsNew for large gap ranges.
+// GapScanWorkflow periodically checks for missing heights and schedules their indexing.
+// Uses adaptive scheduling: SchedulerWorkflow for large ranges (>=1000 blocks), direct for small ranges.
 func (wc *Context) GapScanWorkflow(ctx workflow.Context, in GapScanInput) error {
     logger := workflow.GetLogger(ctx)
+
+    // Local activity options for fast DB queries and RPC calls
+    localAo := workflow.LocalActivityOptions{
+        ScheduleToCloseTimeout: 20 * time.Second,
+        RetryPolicy: &sdktemporal.RetryPolicy{
+            InitialInterval:    500 * time.Millisecond,
+            BackoffCoefficient: 2.0,
+            MaximumInterval:    5 * time.Second,
+            MaximumAttempts:    5,
+        },
+    }
+    localCtx := workflow.WithLocalActivityOptions(ctx, localAo)
+
+    // Regular activity options for IsSchedulerWorkflowRunning (Temporal API call)
     ao := workflow.ActivityOptions{
-        StartToCloseTimeout: 2 * time.Minute,
+        StartToCloseTimeout: 30 * time.Second,
         RetryPolicy: &sdktemporal.RetryPolicy{
             InitialInterval:    time.Second,
             BackoffCoefficient: 2.0,
-            MaximumInterval:    30 * time.Second,
-            MaximumAttempts:    10,
+            MaximumInterval:    10 * time.Second,
+            MaximumAttempts:    5,
         },
         TaskQueue: wc.TemporalClient.GetIndexerOpsQueue(in.ChainID),
     }
-    ctx = workflow.WithActivityOptions(ctx, ao)
+    regularCtx := workflow.WithActivityOptions(ctx, ao)
 
-    var latest, last uint64
+    // Query for gaps and latest head
+    var latest uint64
+    if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.GetLatestHead, types.ChainIdInput{ChainID: in.ChainID}).Get(localCtx, &latest); err != nil {
+        return err
+    }
+
     var gaps []db.Gap
-
-    // Use cached values if resuming, otherwise query fresh data
-    if len(in.CachedGaps) > 0 && in.CachedLatest > 0 {
-        gaps = in.CachedGaps
-        latest = in.CachedLatest
-        // For last, we need to query fresh since it may have changed
-        if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.GetLastIndexed, types.ChainIdInput{ChainID: in.ChainID}).Get(ctx, &last); err != nil {
-            return err
-        }
-    } else {
-        // Fresh query
-        if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.GetLatestHead, types.ChainIdInput{ChainID: in.ChainID}).Get(ctx, &latest); err != nil {
-            return err
-        }
-        if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.GetLastIndexed, types.ChainIdInput{ChainID: in.ChainID}).Get(ctx, &last); err != nil {
-            return err
-        }
-        if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.FindGaps, types.ChainIdInput{ChainID: in.ChainID}).Get(ctx, &gaps); err != nil {
-            return err
-        }
+    if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.FindGaps, types.ChainIdInput{ChainID: in.ChainID}).Get(localCtx, &gaps); err != nil {
+        return err
     }
 
     logger.Info("GapScan starting",
         "chain_id", in.ChainID,
         "gaps_count", len(gaps),
         "latest", latest,
-        "last_indexed", last,
-        "is_continuation", in.ResumeGapIndex > 0 || in.ResumeHeight > 0,
     )
 
-    processed := in.ProcessedSoFar
-    startGapIndex := in.ResumeGapIndex
-
-    // Process gaps
-    for gapIdx := startGapIndex; gapIdx < len(gaps); gapIdx++ {
-        gap := gaps[gapIdx]
-
-        // Determine starting height within this gap
-        startHeight := gap.From
-        if gapIdx == startGapIndex && in.ResumeHeight > 0 {
-            startHeight = in.ResumeHeight
-        }
-
-        logger.Info("Processing gap",
+    if len(gaps) == 0 {
+        logger.Info("GapScan completed - no gaps found",
             "chain_id", in.ChainID,
-            "gap_index", gapIdx,
-            "gap_from", gap.From,
-            "gap_to", gap.To,
-            "start_height", startHeight,
         )
-
-        // Process gap in batches
-        for currentHeight := startHeight; currentHeight <= gap.To; {
-            batchEnd := currentHeight + activityBatchSize - 1
-            if batchEnd > gap.To {
-                batchEnd = gap.To
-            }
-
-            if err := wc.scheduleHeightBatch(ctx, in.ChainID, currentHeight, batchEnd, latest); err != nil {
-                return err
-            }
-
-            processed += (batchEnd - currentHeight + 1)
-            currentHeight = batchEnd + 1
-
-            // Check if we should continue as new
-            if processed >= continueAsNewThreshold {
-                logger.Info("GapScan continuing as new (within gap)",
-                    "chain_id", in.ChainID,
-                    "processed_so_far", processed,
-                    "resume_gap_index", gapIdx,
-                    "resume_height", currentHeight,
-                )
-
-                return workflow.NewContinueAsNewError(ctx, wc.GapScanWorkflow, GapScanInput{
-                    ChainID:        in.ChainID,
-                    ResumeGapIndex: gapIdx,
-                    ResumeHeight:   currentHeight,
-                    CachedGaps:     gaps,
-                    CachedLatest:   latest,
-                    ProcessedSoFar: 0,
-                })
-            }
-        }
+        return nil
     }
 
-    // Process any new blocks after last indexed
-    if latest > last {
-        logger.Info("Processing new blocks beyond last indexed",
+    // Calculate total blocks across all gaps
+    var totalBlocks uint64
+    for _, gap := range gaps {
+        totalBlocks += (gap.To - gap.From + 1)
+    }
+
+    logger.Info("Gap analysis complete",
+        "chain_id", in.ChainID,
+        "total_gaps", len(gaps),
+        "total_blocks", totalBlocks,
+    )
+
+    // Determine mode: normal (<1000 blocks) vs catch-up (>=1000 blocks)
+    if totalBlocks < catchupThreshold {
+        // Normal mode: Process gaps directly with high priority
+        logger.Info("GapScan using direct scheduling (small gaps)",
             "chain_id", in.ChainID,
-            "last_indexed", last,
-            "latest", latest,
-            "count", latest-last,
+            "total_blocks", totalBlocks,
         )
 
-        for currentHeight := last + 1; currentHeight <= latest; {
-            batchEnd := currentHeight + activityBatchSize - 1
-            if batchEnd > latest {
-                batchEnd = latest
+        for _, gap := range gaps {
+            logger.Info("Scheduling gap directly",
+                "chain_id", in.ChainID,
+                "from", gap.From,
+                "to", gap.To,
+                "count", gap.To-gap.From+1,
+            )
+
+            if err := wc.scheduleDirectly(ctx, in.ChainID, gap.From, gap.To, latest); err != nil {
+                return err
+            }
+        }
+    } else {
+        // Catch-up mode: Check if SchedulerWorkflow is already running
+        var isRunning bool
+        if err := workflow.ExecuteActivity(regularCtx, wc.ActivityContext.IsSchedulerWorkflowRunning, &types.ChainIdInput{ChainID: in.ChainID}).Get(regularCtx, &isRunning); err != nil {
+            logger.Warn("Failed to check if scheduler is running, proceeding with trigger",
+                "chain_id", in.ChainID,
+                "error", err.Error(),
+            )
+            isRunning = false
+        }
+
+        if isRunning {
+            logger.Info("SchedulerWorkflow already running, skipping trigger",
+                "chain_id", in.ChainID,
+                "total_blocks", totalBlocks,
+            )
+        } else {
+            // Trigger SchedulerWorkflow for large gaps
+            logger.Info("GapScan triggering SchedulerWorkflow (large gaps)",
+                "chain_id", in.ChainID,
+                "total_blocks", totalBlocks,
+            )
+
+            // Combine all gaps into a single range for scheduler
+            // Find minimum From and maximum To across all gaps
+            minHeight := gaps[0].From
+            maxHeight := gaps[0].To
+            for _, gap := range gaps[1:] {
+                if gap.From < minHeight {
+                    minHeight = gap.From
+                }
+                if gap.To > maxHeight {
+                    maxHeight = gap.To
+                }
             }
 
-            if err := wc.scheduleHeightBatch(ctx, in.ChainID, currentHeight, batchEnd, latest); err != nil {
+            schedulerInput := types.SchedulerInput{
+                ChainID:      in.ChainID,
+                StartHeight:  minHeight,
+                EndHeight:    maxHeight,
+                LatestHeight: latest,
+            }
+
+            wfID := wc.TemporalClient.GetSchedulerWorkflowID(in.ChainID)
+            wfOptions := workflow.ChildWorkflowOptions{
+                WorkflowID: wfID,
+                TaskQueue:  wc.TemporalClient.GetIndexerOpsQueue(in.ChainID),
+            }
+            childCtx := workflow.WithChildOptions(ctx, wfOptions)
+
+            // Start child workflow without waiting for completion
+            future := workflow.ExecuteChildWorkflow(childCtx, wc.SchedulerWorkflow, schedulerInput)
+
+            // Just check if workflow started successfully
+            var childExec workflow.Execution
+            if err := future.GetChildWorkflowExecution().Get(ctx, &childExec); err != nil {
+                logger.Error("Failed to start SchedulerWorkflow",
+                    "chain_id", in.ChainID,
+                    "error", err.Error(),
+                )
                 return err
             }
 
-            processed += (batchEnd - currentHeight + 1)
-            currentHeight = batchEnd + 1
-
-            // Check if we should continue as new
-            if processed >= continueAsNewThreshold && currentHeight <= latest {
-                logger.Info("GapScan continuing as new (new blocks)",
-                    "chain_id", in.ChainID,
-                    "processed_so_far", processed,
-                    "resume_height", currentHeight,
-                )
-
-                return workflow.NewContinueAsNewError(ctx, wc.GapScanWorkflow, GapScanInput{
-                    ChainID:        in.ChainID,
-                    ResumeGapIndex: len(gaps), // All gaps done, just continue with new blocks
-                    ResumeHeight:   currentHeight,
-                    CachedGaps:     nil, // No more gaps to process
-                    CachedLatest:   latest,
-                    ProcessedSoFar: 0,
-                })
-            }
+            logger.Info("SchedulerWorkflow started successfully",
+                "chain_id", in.ChainID,
+                "workflow_id", childExec.ID,
+                "run_id", childExec.RunID,
+            )
         }
     }
 
     logger.Info("GapScan completed",
         "chain_id", in.ChainID,
-        "total_processed", processed,
-        "gaps_filled", len(gaps),
+        "total_gaps", len(gaps),
+        "total_blocks", totalBlocks,
     )
 
     return nil
 }
 
-func priorityKeyForHeight(latest, height uint64) int {
+
+
+// calculateBlockPriority determines priority based on block age.
+// Time-based priority calculation: blockAge = (latest - height) × 20 seconds
+// Priority levels:
+// - Ultra High (5): Live blocks from HeadScan
+// - High (4): Last 24 hours (4,320 blocks)
+// - Medium (3): 24-48 hours (4,320 blocks)
+// - Low (2): 48-72 hours (4,320 blocks)
+// - Ultra Low (1): Older than 72 hours
+func calculateBlockPriority(latest, height uint64, isLive bool) int {
+    if isLive {
+        return PriorityUltraHigh
+    }
+
     if height >= latest {
-        return highPriorityKey
+        return PriorityHigh
     }
 
-    var diff uint64
-    if latest > height {
-        diff = latest - height
-    }
+    blockAge := (latest - height) * blockTime // in seconds
+    hoursAgo := blockAge / 3600
 
-    if diff <= newBlockWindow {
-        return highPriorityKey
+    switch {
+    case hoursAgo <= 24:
+        return PriorityHigh
+    case hoursAgo <= 48:
+        return PriorityMedium
+    case hoursAgo <= 72:
+        return PriorityLow
+    default:
+        return PriorityUltraLow
     }
-
-    if diff <= recentBlockWindow {
-        return mediumPriorityKey
-    }
-
-    return lowPriorityKey
 }
 
-// scheduleHeightBatch schedules a batch of heights for indexing.
-// Uses workflow.Go() to execute activities concurrently within the workflow context.
-// This ensures activities are properly tracked and won't be orphaned when the workflow completes.
-func (wc *Context) scheduleHeightBatch(ctx workflow.Context, chainID string, start, end, latest uint64) error {
+// SchedulerWorkflow handles priority-based batch scheduling for large block ranges.
+// It groups blocks by priority and schedules them in order: High → Medium → Low → UltraLow.
+// Rate limiting: 100 workflows/sec (1s delay per 100 blocks).
+// Uses ContinueAsNew every 10k blocks to avoid workflow history limits.
+func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.SchedulerInput) error {
     logger := workflow.GetLogger(ctx)
 
-    batchSize := end - start + 1
-    logger.Debug("Scheduling height batch",
-        "chain_id", chainID,
-        "start", start,
-        "end", end,
-        "batch_size", batchSize,
+    // Local activity options for StartIndexWorkflow
+    localAo := workflow.LocalActivityOptions{
+        ScheduleToCloseTimeout: 20 * time.Second,
+        RetryPolicy: &sdktemporal.RetryPolicy{
+            InitialInterval:    500 * time.Millisecond,
+            BackoffCoefficient: 2.0,
+            MaximumInterval:    5 * time.Second,
+            MaximumAttempts:    5,
+        },
+    }
+    localCtx := workflow.WithLocalActivityOptions(ctx, localAo)
+
+    startHeight := input.StartHeight
+    endHeight := input.EndHeight
+    processed := input.ProcessedSoFar
+
+    logger.Info("SchedulerWorkflow starting",
+        "chain_id", input.ChainID,
+        "start", startHeight,
+        "end", endHeight,
+        "total", endHeight-startHeight+1,
+        "processed_so_far", processed,
     )
 
-    // Schedule all activities and collect futures
-    futures := make([]workflow.Future, 0, batchSize)
+    // Group blocks by priority
+    priorityBuckets := make(map[int][]uint64)
+    for h := startHeight; h <= endHeight; h++ {
+        priority := calculateBlockPriority(input.LatestHeight, h, false)
+        priorityBuckets[priority] = append(priorityBuckets[priority], h)
+    }
 
-    for h := start; h <= end; h++ {
-        height := h // Capture loop variable
+    // Log priority distribution
+    logger.Info("Priority distribution calculated",
+        "high_count", len(priorityBuckets[PriorityHigh]),
+        "medium_count", len(priorityBuckets[PriorityMedium]),
+        "low_count", len(priorityBuckets[PriorityLow]),
+        "ultra_low_count", len(priorityBuckets[PriorityUltraLow]),
+    )
 
-        // Execute activity and collect the future
-        future := workflow.ExecuteActivity(
-            ctx,
-            wc.ActivityContext.StartIndexWorkflow,
-            &types.IndexBlockInput{
-                ChainID:     chainID,
-                Height:      height,
-                PriorityKey: priorityKeyForHeight(latest, height),
-            },
+    // Process in priority order: High → Medium → Low → UltraLow
+    priorities := []int{PriorityHigh, PriorityMedium, PriorityLow, PriorityUltraLow}
+
+    for _, priority := range priorities {
+        blocks, exists := priorityBuckets[priority]
+        if !exists || len(blocks) == 0 {
+            continue
+        }
+
+        logger.Info("Processing priority bucket",
+            "priority", priority,
+            "count", len(blocks),
         )
 
-        futures = append(futures, future)
+        // Process blocks in batches with rate limiting
+        for i := 0; i < len(blocks); i += schedulerBatchSize {
+            end := i + schedulerBatchSize
+            if end > len(blocks) {
+                end = len(blocks)
+            }
+
+            batch := blocks[i:end]
+
+            // Schedule batch of blocks using local activities
+            for _, height := range batch {
+                var result interface{}
+                err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, &types.IndexBlockInput{
+                    ChainID:     input.ChainID,
+                    Height:      height,
+                    PriorityKey: priority,
+                }).Get(localCtx, &result)
+                if err != nil {
+                    // Log error but continue - StartIndexWorkflow handles idempotency
+                    logger.Error("Failed to schedule block", "height", height, "error", err)
+                }
+                processed++
+            }
+
+            // Rate limiting: 100 workflows/sec (1s delay per batch)
+            workflow.Sleep(ctx, schedulerBatchDelay)
+
+            // Check for ContinueAsNew threshold
+            if processed >= schedulerContinueThreshold && (i+schedulerBatchSize < len(blocks) || priority < PriorityUltraLow) {
+                logger.Info("Triggering ContinueAsNew",
+                    "processed", processed,
+                    "current_priority", priority,
+                    "remaining_in_bucket", len(blocks)-(i+schedulerBatchSize),
+                )
+
+                // Calculate next start height based on remaining blocks
+                var nextStartHeight uint64
+                if i+schedulerBatchSize < len(blocks) {
+                    // More blocks in current priority
+                    nextStartHeight = blocks[i+schedulerBatchSize]
+                } else {
+                    // Move to next priority bucket
+                    nextStartHeight = findNextPriorityStart(priorityBuckets, priority)
+                }
+
+                return workflow.NewContinueAsNewError(ctx, wc.SchedulerWorkflow, types.SchedulerInput{
+                    ChainID:        input.ChainID,
+                    StartHeight:    nextStartHeight,
+                    EndHeight:      endHeight,
+                    LatestHeight:   input.LatestHeight,
+                    ProcessedSoFar: 0, // Reset for new execution
+                })
+            }
+        }
     }
 
-    // Now wait for all futures to complete
-    for _, f := range futures {
-        // Ignore errors - StartIndexWorkflow handles idempotency and retries
-        // We just need to ensure the activity completes or fails
-        _ = f.Get(ctx, nil)
-    }
+    logger.Info("SchedulerWorkflow completed",
+        "total_processed", processed,
+        "chain_id", input.ChainID,
+    )
 
-    logger.Debug("Height batch completed",
+    return nil
+}
+
+// findNextPriorityStart finds the first block height in the next priority bucket
+func findNextPriorityStart(buckets map[int][]uint64, currentPriority int) uint64 {
+    nextPriorities := []int{PriorityMedium, PriorityLow, PriorityUltraLow}
+    for _, p := range nextPriorities {
+        if p < currentPriority {
+            if blocks, exists := buckets[p]; exists && len(blocks) > 0 {
+                return blocks[0]
+            }
+        }
+    }
+    return 0
+}
+
+// scheduleDirectly schedules small block ranges directly without SchedulerWorkflow.
+// Used for ranges < 1000 blocks. Schedules in batches of 50 with Ultra High priority.
+// Uses local activities for performance.
+func (wc *Context) scheduleDirectly(ctx workflow.Context, chainID string, start, end, latest uint64) error {
+    logger := workflow.GetLogger(ctx)
+
+    totalBlocks := end - start + 1
+    logger.Info("Scheduling blocks directly",
         "chain_id", chainID,
         "start", start,
         "end", end,
-        "batch_size", batchSize,
+        "total", totalBlocks,
+    )
+
+    // Local activity options
+    localAo := workflow.LocalActivityOptions{
+        ScheduleToCloseTimeout: 20 * time.Second,
+        RetryPolicy: &sdktemporal.RetryPolicy{
+            InitialInterval:    500 * time.Millisecond,
+            BackoffCoefficient: 2.0,
+            MaximumInterval:    5 * time.Second,
+            MaximumAttempts:    5,
+        },
+    }
+    localCtx := workflow.WithLocalActivityOptions(ctx, localAo)
+
+    // Schedule in batches
+    for currentHeight := start; currentHeight <= end; {
+        batchEnd := currentHeight + directScheduleBatchSize - 1
+        if batchEnd > end {
+            batchEnd = end
+        }
+
+        // Schedule batch with Ultra High priority (live blocks)
+        for h := currentHeight; h <= batchEnd; h++ {
+            var result interface{}
+            err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, &types.IndexBlockInput{
+                ChainID:     chainID,
+                Height:      h,
+                PriorityKey: PriorityUltraHigh,
+            }).Get(localCtx, &result)
+            if err != nil {
+                logger.Error("Failed to schedule block directly", "height", h, "error", err)
+            }
+        }
+
+        currentHeight = batchEnd + 1
+    }
+
+    logger.Info("Direct scheduling completed",
+        "chain_id", chainID,
+        "total_scheduled", totalBlocks,
     )
 
     return nil

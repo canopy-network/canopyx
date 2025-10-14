@@ -141,3 +141,45 @@ func (c *Context) StartIndexWorkflow(ctx context.Context, in *types.IndexBlockIn
     }
     return nil
 }
+
+// IsSchedulerWorkflowRunning checks if the SchedulerWorkflow is currently running for a given chain.
+// This activity uses Temporal's DescribeWorkflowExecution API to check the workflow status.
+// Returns true if the workflow is running, false otherwise.
+func (c *Context) IsSchedulerWorkflowRunning(ctx context.Context, in *types.ChainIdInput) (bool, error) {
+    logger := activity.GetLogger(ctx)
+
+    wfID := c.TemporalClient.GetSchedulerWorkflowID(in.ChainID)
+
+    // Query the workflow execution status
+    desc, err := c.TemporalClient.TClient.DescribeWorkflowExecution(ctx, wfID, "")
+    if err != nil {
+        // If workflow not found, it's not running
+        var notFound *serviceerror.NotFound
+        if errors.As(err, &notFound) {
+            return false, nil
+        }
+        logger.Warn("failed to describe scheduler workflow",
+            zap.String("chain_id", in.ChainID),
+            zap.String("workflow_id", wfID),
+            zap.Error(err),
+        )
+        return false, err
+    }
+
+    // Check if workflow is still running
+    workflowInfo := desc.WorkflowExecutionInfo
+    if workflowInfo == nil {
+        return false, nil
+    }
+
+    // Workflow is running if it doesn't have a close time
+    isRunning := workflowInfo.CloseTime == nil
+
+    logger.Debug("Scheduler workflow status checked",
+        "chain_id", in.ChainID,
+        "workflow_id", wfID,
+        "is_running", isRunning,
+    )
+
+    return isRunning, nil
+}

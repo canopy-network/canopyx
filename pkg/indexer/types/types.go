@@ -16,3 +16,13 @@ type IndexBlockInput struct {
 	PriorityKey    int             `json:"priorityKey"`
 	Reindex        bool            `json:"reindex"`
 }
+
+// SchedulerInput is the input for the SchedulerWorkflow
+type SchedulerInput struct {
+	ChainID        string   `json:"chainId"`
+	StartHeight    uint64   `json:"startHeight"`
+	EndHeight      uint64   `json:"endHeight"`
+	LatestHeight   uint64   `json:"latestHeight"`
+	ProcessedSoFar uint64   `json:"processedSoFar"` // For ContinueAsNew tracking
+	PriorityRanges []uint64 `json:"priorityRanges"` // Priority bucket boundaries for continuation
+}

@@ -33,6 +33,7 @@ type Client struct {
 
 	// Workflow IDs
 	IndexBlockWorkflowId string
+	SchedulerWorkflowID  string
 }
 
 type Health struct {
@@ -71,6 +72,7 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		GlobalReportsScheduleID: "reports:global",
 		// workflow IDs
 		IndexBlockWorkflowId: "%s:index:%d",
+		SchedulerWorkflowID:  "scheduler-%s",
 	}, nil
 }
 
@@ -120,6 +122,11 @@ func (c *Client) GetGlobalReportsScheduleID() string {
 // GetIndexBlockWorkflowId returns the workflow ID for the indexing block for the given chain and height.
 func (c *Client) GetIndexBlockWorkflowId(chainID string, height uint64) string {
 	return fmt.Sprintf(c.IndexBlockWorkflowId, chainID, height)
+}
+
+// GetSchedulerWorkflowID returns the deterministic workflow ID for the SchedulerWorkflow for a given chain.
+func (c *Client) GetSchedulerWorkflowID(chainID string) string {
+	return fmt.Sprintf(c.SchedulerWorkflowID, chainID)
 }
 
 // TenSecondSpec returns a schedule spec for ten seconds.

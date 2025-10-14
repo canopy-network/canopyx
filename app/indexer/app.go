@@ -127,10 +127,15 @@ func Initialize(ctx context.Context) *App {
         workflowContext.GapScanWorkflow,
         temporalworkflow.RegisterOptions{Name: workflow.GapScanWorkflowName},
     )
+    opsWorker.RegisterWorkflowWithOptions(
+        workflowContext.SchedulerWorkflow,
+        temporalworkflow.RegisterOptions{Name: workflow.SchedulerWorkflowName},
+    )
     opsWorker.RegisterActivity(activityContext.GetLatestHead)
     opsWorker.RegisterActivity(activityContext.GetLastIndexed)
     opsWorker.RegisterActivity(activityContext.FindGaps)
     opsWorker.RegisterActivity(activityContext.StartIndexWorkflow)
+    opsWorker.RegisterActivity(activityContext.IsSchedulerWorkflowRunning)
 
     return &App{
         Worker:         wkr,

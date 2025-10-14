@@ -77,10 +77,10 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 }
 
 func TestPriorityKeyForHeight(t *testing.T) {
-	require.Equal(t, highPriorityKey, priorityKeyForHeight(10_000, 10_000))
-	require.Equal(t, highPriorityKey, priorityKeyForHeight(10_000, 9_950))
-	require.Equal(t, mediumPriorityKey, priorityKeyForHeight(10_000, 5_500))
-	require.Equal(t, lowPriorityKey, priorityKeyForHeight(10_000, 1_000))
+	require.Equal(t, PriorityHigh, calculateBlockPriority(10_000, 10_000, false))
+	require.Equal(t, PriorityHigh, calculateBlockPriority(10_000, 9_950, false))
+	require.Equal(t, PriorityMedium, calculateBlockPriority(10_000, 5_500, false))
+	require.Equal(t, PriorityLow, calculateBlockPriority(10_000, 1_000, false))
 }
 
 type wfFakeAdminStore struct {
