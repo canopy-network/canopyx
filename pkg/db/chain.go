@@ -12,6 +12,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// Column represents a database column with its name and type information.
+type Column struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
 // ChainDB represents a database associated with a blockchain and provides methods to manage and query its data.
 // It includes a database client, a logger for capturing logs, the chain's name, and its unique identifier.
 type ChainDB struct {
@@ -190,6 +196,106 @@ func (db *ChainDB) DeleteTransactions(ctx context.Context, height uint64) error 
 func (db *ChainDB) Exec(ctx context.Context, query string, args ...any) error {
 	_, err := db.Db.ExecContext(ctx, query, args...)
 	return err
+}
+
+// QueryTransactionsRaw retrieves raw transaction data with all columns.
+// If cursor > 0, only transactions with height < cursor are returned.
+// The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
+func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int) ([]map[string]interface{}, error) {
+	conds := make([]string, 0)
+	args := make([]any, 0)
+	if cursor > 0 {
+		conds = append(conds, "height < ?")
+		args = append(args, cursor)
+	}
+
+	query := fmt.Sprintf(`SELECT height, tx_hash, msg_raw, public_key, signature, created_at FROM "%s"."txs_raw"`, db.Name)
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	query += " ORDER BY height DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.Db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query transactions raw failed: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column names
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get columns: %w", err)
+	}
+
+	// Prepare slice to hold results
+	var results []map[string]interface{}
+
+	for rows.Next() {
+		// Create a slice of interface{} to hold each value
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		// Scan the row into the value pointers
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		// Create a map for this row
+		rowMap := make(map[string]interface{})
+		for i, col := range columns {
+			// Handle nil values and convert types as needed
+			if values[i] != nil {
+				rowMap[col] = values[i]
+			} else {
+				rowMap[col] = nil
+			}
+		}
+		results = append(results, rowMap)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	return results, nil
+}
+
+// DescribeTable returns column information for a table using DESCRIBE TABLE.
+// Returns a slice of Column structs with name and type information.
+func (db *ChainDB) DescribeTable(ctx context.Context, tableName string) ([]Column, error) {
+	query := fmt.Sprintf(`DESCRIBE TABLE "%s"."%s"`, db.Name, tableName)
+
+	rows, err := db.Db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("describe table failed: %w", err)
+	}
+	defer rows.Close()
+
+	var columns []Column
+	for rows.Next() {
+		var name, dtype string
+		var defaultType, defaultExpr, comment, codecExpr, ttlExpr sql.NullString
+
+		// DESCRIBE TABLE returns: name, type, default_type, default_expression, comment, codec_expression, ttl_expression
+		if err := rows.Scan(&name, &dtype, &defaultType, &defaultExpr, &comment, &codecExpr, &ttlExpr); err != nil {
+			return nil, fmt.Errorf("failed to scan describe row: %w", err)
+		}
+
+		columns = append(columns, Column{
+			Name: name,
+			Type: dtype,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	return columns, nil
 }
 
 // Close terminates the underlying ClickHouse connection.

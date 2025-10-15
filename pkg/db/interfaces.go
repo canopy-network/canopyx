@@ -29,6 +29,8 @@ type ChainStore interface {
 	Exec(ctx context.Context, query string, args ...any) error
 	QueryBlocks(ctx context.Context, cursor uint64, limit int) ([]indexer.BlockRow, error)
 	QueryTransactions(ctx context.Context, cursor uint64, limit int) ([]indexer.TransactionRow, error)
+	QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int) ([]map[string]interface{}, error)
+	DescribeTable(ctx context.Context, tableName string) ([]Column, error)
 	Close() error
 }
 
