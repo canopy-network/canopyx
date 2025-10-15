@@ -1,4 +1,0 @@
-./helpers.go
-./gapscan_test.go
-./indexblock_test.go
-./scheduler_test.go

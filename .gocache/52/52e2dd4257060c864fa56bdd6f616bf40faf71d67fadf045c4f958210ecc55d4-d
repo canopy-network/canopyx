@@ -1,6 +1,0 @@
-./lz4_reader.go
-./lz4_writer.go
-./proto.go
-./reader.go
-./server_info.go
-./writer.go

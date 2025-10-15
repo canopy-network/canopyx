@@ -1,0 +1,3 @@
+# Bare minimum to deploy to local
+resources:
+  - ../../base

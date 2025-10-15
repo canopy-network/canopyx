@@ -1,6 +1,0 @@
-./block.go
-./chain.go
-./context.go
-./ops.go
-./transactions.go
-./activity_test.go

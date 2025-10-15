@@ -156,6 +156,29 @@ k8s_resource(
 )
 
 # ------------------------------------------
+# QUERY API (Go Backend)
+# ------------------------------------------
+
+# Build an image with query binary
+docker_build_with_restart(
+    "localhost:5001/canopyx-query",
+    ".",
+    dockerfile="./Dockerfile.query",
+    entrypoint=["/app/query"],
+    live_update=[sync("bin/query", "/app/query")],
+)
+
+k8s_yaml(kustomize("./deploy/k8s/query/overlays/local"))
+
+k8s_resource(
+    "canopyx-query",
+    port_forwards=["8082:8082"],
+    labels=['apps'],
+    resource_deps=["clickhouse-server"],
+    pod_readiness='wait',
+)
+
+# ------------------------------------------
 # ADMIN WEB (Next.js Frontend)
 # ------------------------------------------
 
@@ -164,7 +187,10 @@ docker_build(
     "localhost:5001/canopyx-admin-web",
     "./web/admin",
     dockerfile="./web/admin/Dockerfile",
-    build_args={"NEXT_PUBLIC_API_BASE": "http://localhost:3000"},
+    build_args={
+        "NEXT_PUBLIC_API_BASE": "http://localhost:3000",
+        "NEXT_PUBLIC_QUERY_SERVICE_URL": "http://localhost:8082",
+    },
     live_update=[
         # Fall back to full rebuild if dependencies change (must be first)
         fall_back_on(['./web/admin/package.json', './web/admin/pnpm-lock.yaml']),
