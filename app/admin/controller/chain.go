@@ -272,15 +272,20 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
+	// 5) Fetch queue metrics for both ops and indexer queues
 	if c.App.TemporalClient != nil {
 		for _, chn := range chains {
-			if stats, err := c.describeQueue(ctx, chn.ChainID); err == nil {
-				cs := out[chn.ChainID]
-				cs.Queue = stats
-				out[chn.ChainID] = cs
-			} else {
-				c.App.Logger.Warn("describe queue failed", zap.String("chain_id", chn.ChainID), zap.Error(err))
+			opsStats, indexerStats, err := c.describeBothQueues(ctx, chn.ChainID)
+			if err != nil {
+				c.App.Logger.Warn("describe queues failed", zap.String("chain_id", chn.ChainID), zap.Error(err))
+				continue
 			}
+			cs := out[chn.ChainID]
+			cs.OpsQueue = opsStats
+			cs.IndexerQueue = indexerStats
+			// For backward compatibility, populate deprecated Queue field with IndexerQueue
+			cs.Queue = indexerStats
+			out[chn.ChainID] = cs
 		}
 	}
 
@@ -473,6 +478,9 @@ func (c *Controller) enqueueIndexBlock(ctx context.Context, chainID string, heig
 	return err
 }
 
+// describeQueue is deprecated in favor of describeBothQueues.
+// It queries only the indexer queue for backward compatibility.
+// Prefer using describeBothQueues to get metrics for both queues.
 func (c *Controller) describeQueue(ctx context.Context, chainID string) (admintypes.QueueStatus, error) {
 	stats := admintypes.QueueStatus{}
 	client := c.App.TemporalClient
@@ -483,7 +491,7 @@ func (c *Controller) describeQueue(ctx context.Context, chainID string) (adminty
 	// Check cache first (30s TTL to reduce Temporal API rate limiting)
 	if cached, ok := c.App.QueueStatsCache.Load(chainID); ok {
 		if time.Since(cached.Fetched) < 30*time.Second {
-			return cached.Status, nil
+			return cached.IndexerQueue, nil
 		}
 	}
 
@@ -523,13 +531,119 @@ func (c *Controller) describeQueue(ctx context.Context, chainID string) (adminty
 		}
 	}
 
-	// Store in cache
-	c.App.QueueStatsCache.Store(chainID, admintypes.CachedQueueStats{
-		Status:  stats,
-		Fetched: time.Now(),
-	})
+	// Note: Cache storage is now handled by describeBothQueues.
+	// This function does not update the cache to avoid conflicts.
 
 	return stats, nil
+}
+
+// describeBothQueues fetches metrics for both the ops queue and indexer queue for a given chain.
+// It uses caching with a 30s TTL to reduce load on Temporal's API.
+// Returns (opsQueue, indexerQueue, error).
+func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (admintypes.QueueStatus, admintypes.QueueStatus, error) {
+	opsStats := admintypes.QueueStatus{}
+	indexerStats := admintypes.QueueStatus{}
+
+	client := c.App.TemporalClient
+	if client == nil {
+		return opsStats, indexerStats, fmt.Errorf("temporal client not initialized")
+	}
+
+	// Check cache first (30s TTL to reduce Temporal API rate limiting)
+	if cached, ok := c.App.QueueStatsCache.Load(chainID); ok {
+		if time.Since(cached.Fetched) < 30*time.Second {
+			return cached.OpsQueue, cached.IndexerQueue, nil
+		}
+	}
+
+	svc := client.TClient.WorkflowService()
+	if svc == nil {
+		return opsStats, indexerStats, fmt.Errorf("temporal workflow service unavailable")
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	// Helper function to query a specific queue
+	describeQueue := func(queueName string) (admintypes.QueueStatus, error) {
+		stats := admintypes.QueueStatus{}
+
+		baseReq := func(t enumspb.TaskQueueType) *workflowservicepb.DescribeTaskQueueRequest {
+			return &workflowservicepb.DescribeTaskQueueRequest{
+				Namespace:     client.Namespace,
+				TaskQueue:     &taskqueuepb.TaskQueue{Name: queueName},
+				TaskQueueType: t,
+				ReportStats:   true,
+			}
+		}
+
+		// Get workflow queue stats
+		resp, err := svc.DescribeTaskQueue(reqCtx, baseReq(enumspb.TASK_QUEUE_TYPE_WORKFLOW))
+		if err != nil {
+			return stats, err
+		}
+		if s := resp.GetStats(); s != nil {
+			stats.PendingWorkflow = s.GetApproximateBacklogCount()
+			if age := s.GetApproximateBacklogAge(); age != nil {
+				stats.BacklogAgeSecs = float64(age.Seconds) + float64(age.Nanos)/1e9
+			}
+		}
+		stats.Pollers = len(resp.GetPollers())
+
+		// Get activity queue stats (best effort, ignore errors)
+		if actResp, err := svc.DescribeTaskQueue(reqCtx, baseReq(enumspb.TASK_QUEUE_TYPE_ACTIVITY)); err == nil {
+			if s := actResp.GetStats(); s != nil {
+				stats.PendingActivity = s.GetApproximateBacklogCount()
+			}
+		}
+
+		return stats, nil
+	}
+
+	// Query both queues in parallel for better performance
+	type queueResult struct {
+		stats admintypes.QueueStatus
+		err   error
+	}
+
+	opsChannel := make(chan queueResult, 1)
+	indexerChannel := make(chan queueResult, 1)
+
+	// Query ops queue
+	go func() {
+		stats, err := describeQueue(client.GetIndexerOpsQueue(chainID))
+		opsChannel <- queueResult{stats: stats, err: err}
+	}()
+
+	// Query indexer queue
+	go func() {
+		stats, err := describeQueue(client.GetIndexerQueue(chainID))
+		indexerChannel <- queueResult{stats: stats, err: err}
+	}()
+
+	// Collect results
+	opsResult := <-opsChannel
+	indexerResult := <-indexerChannel
+
+	// If either query failed, return the error
+	if opsResult.err != nil {
+		return opsStats, indexerStats, fmt.Errorf("failed to describe ops queue: %w", opsResult.err)
+	}
+	if indexerResult.err != nil {
+		return opsStats, indexerStats, fmt.Errorf("failed to describe indexer queue: %w", indexerResult.err)
+	}
+
+	opsStats = opsResult.stats
+	indexerStats = indexerResult.stats
+
+	// Store both in cache
+	c.App.QueueStatsCache.Store(chainID, admintypes.CachedQueueStats{
+		OpsQueue:     opsStats,
+		IndexerQueue: indexerStats,
+		Fetched:      time.Now(),
+	})
+
+	return opsStats, indexerStats, nil
 }
 
 // HandleChainPatch updates a chain by ID

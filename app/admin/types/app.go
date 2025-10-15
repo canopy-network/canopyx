@@ -18,8 +18,9 @@ import (
 )
 
 type CachedQueueStats struct {
-	Status  QueueStatus
-	Fetched time.Time
+	OpsQueue     QueueStatus
+	IndexerQueue QueueStatus
+	Fetched      time.Time
 }
 
 // NewQueueStatsCache creates a new queue stats cache

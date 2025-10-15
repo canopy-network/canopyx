@@ -20,7 +20,9 @@ type ChainStatus struct {
 	MaxReplicas    uint16         `json:"max_replicas"`
 	LastIndexed    uint64         `json:"last_indexed"`
 	Head           uint64         `json:"head"`
-	Queue          QueueStatus    `json:"queue"`
+	Queue          QueueStatus    `json:"queue"`         // Deprecated: use OpsQueue/IndexerQueue instead. Currently returns IndexerQueue for backward compatibility.
+	OpsQueue       QueueStatus    `json:"ops_queue"`     // Ops queue metrics (headscan, gapscan, scheduler)
+	IndexerQueue   QueueStatus    `json:"indexer_queue"` // Indexer queue metrics (block indexing)
 	ReindexHistory []ReindexEntry `json:"reindex_history,omitempty"`
 
 	// Health Status - populated from stored chain health fields
