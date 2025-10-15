@@ -744,7 +744,7 @@ export default function DashboardPage() {
                               )}
                             </button>
                             <Link
-                              href={`/chains`}
+                              href={`/chains/${chain.chain_id}`}
                               className="btn-ghost p-1.5 text-xs"
                               title="View Details"
                             >
