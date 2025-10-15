@@ -55,15 +55,50 @@ func (db *AdminDB) InitializeDB(ctx context.Context) error {
 	return nil
 }
 
-// RecordIndexed records the height of the last indexed block for the provided chain.
-func (db *AdminDB) RecordIndexed(ctx context.Context, chainID string, height uint64) error {
-	ip := &admin.IndexProgress{
-		ChainID:   chainID,
-		Height:    height,
-		IndexedAt: time.Now().UTC(),
+// RecordIndexed records the height of the last indexed block for the provided chain along with timing metrics.
+// indexingTimeMs is the total activity execution time in milliseconds (actual processing time).
+// indexingDetail is a JSON string with the breakdown of individual activity timings.
+func (db *AdminDB) RecordIndexed(ctx context.Context, chainID string, height uint64, indexingTimeMs float64, indexingDetail string) error {
+	now := time.Now().UTC()
+
+	// indexingTime (existing field) represents time from block creation to indexing completion.
+	// We'll compute this by querying the block's timestamp from the chain database.
+	// If we can't get it, we'll set it to 0.
+	var indexingTime float64
+
+	// Attempt to get the block time to calculate end-to-end indexing latency
+	chainDb, err := NewChainDb(ctx, db.Logger, chainID)
+	if err == nil {
+		// Query the block to get its timestamp
+		var blockRow struct {
+			Time time.Time `ch:"time"`
+		}
+		queryErr := chainDb.Db.NewSelect().
+			TableExpr(fmt.Sprintf(`"%s"."blocks"`, chainDb.DatabaseName())).
+			Column("time").
+			Where("height = ?", height).
+			Limit(1).
+			Scan(ctx, &blockRow)
+
+		if queryErr == nil && !blockRow.Time.IsZero() {
+			indexingTime = now.Sub(blockRow.Time).Seconds()
+			// Handle edge case: if system clock is behind or block time is in future, set to 0
+			if indexingTime < 0 {
+				indexingTime = 0
+			}
+		}
 	}
 
-	_, err := db.Db.NewInsert().Model(ip).Exec(ctx)
+	ip := &admin.IndexProgress{
+		ChainID:        chainID,
+		Height:         height,
+		IndexedAt:      now,
+		IndexingTime:   indexingTime,   // Time from block creation to indexing completion (seconds)
+		IndexingTimeMs: indexingTimeMs, // Total activity execution time (milliseconds)
+		IndexingDetail: indexingDetail, // JSON breakdown of individual activity timings
+	}
+
+	_, err = db.Db.NewInsert().Model(ip).Exec(ctx)
 	return err
 }
 

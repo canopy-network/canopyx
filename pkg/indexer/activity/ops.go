@@ -24,32 +24,36 @@ type HeadResult struct {
 }
 
 // PrepareIndexBlock determines whether a block needs reindexing and performs cleanup if required.
-// Returns true when the caller should skip further indexing work.
-func (c *Context) PrepareIndexBlock(ctx context.Context, in types.IndexBlockInput) (bool, error) {
+// Returns output containing skip flag and execution duration in milliseconds.
+func (c *Context) PrepareIndexBlock(ctx context.Context, in types.IndexBlockInput) (types.PrepareIndexBlockOutput, error) {
+	start := time.Now()
+
 	chainDb, err := c.NewChainDb(ctx, in.ChainID)
 	if err != nil {
-		return false, sdktemporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
+		return types.PrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
 	}
 
 	exists, err := chainDb.HasBlock(ctx, in.Height)
 	if err != nil {
-		return false, sdktemporal.NewApplicationErrorWithCause("block_lookup_failed", "chain_db_error", err)
+		return types.PrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("block_lookup_failed", "chain_db_error", err)
 	}
 
 	if !in.Reindex && exists {
-		return true, nil
+		durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+		return types.PrepareIndexBlockOutput{Skip: true, DurationMs: durationMs}, nil
 	}
 
 	if in.Reindex {
 		if err := chainDb.DeleteTransactions(ctx, in.Height); err != nil {
-			return false, sdktemporal.NewApplicationErrorWithCause("delete_transactions_failed", "chain_db_error", err)
+			return types.PrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("delete_transactions_failed", "chain_db_error", err)
 		}
 		if err := chainDb.DeleteBlock(ctx, in.Height); err != nil {
-			return false, sdktemporal.NewApplicationErrorWithCause("delete_block_failed", "chain_db_error", err)
+			return types.PrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("delete_block_failed", "chain_db_error", err)
 		}
 	}
 
-	return false, nil
+	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+	return types.PrepareIndexBlockOutput{Skip: false, DurationMs: durationMs}, nil
 }
 
 // GetLastIndexed returns the last indexed block height for the given chain.

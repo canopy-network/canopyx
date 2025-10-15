@@ -59,9 +59,10 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var numTx uint32
-	require.NoError(t, future.Get(&numTx))
-	require.Equal(t, uint32(2), numTx)
+	var output types.IndexTransactionsOutput
+	require.NoError(t, future.Get(&output))
+	require.Equal(t, uint32(2), output.NumTxs)
+	require.GreaterOrEqual(t, output.DurationMs, 0.0)
 	require.Equal(t, 1, chainStore.insertTransactionCalls)
 	require.Len(t, chainStore.lastTxs, 2)
 }
@@ -103,9 +104,10 @@ func TestIndexBlockPersistsBlockWithSummary(t *testing.T) {
 	future, err := env.ExecuteActivity(ctx.IndexBlock, input)
 	require.NoError(t, err)
 
-	var indexedHeight uint64
-	require.NoError(t, future.Get(&indexedHeight))
-	require.Equal(t, uint64(42), indexedHeight)
+	var output types.IndexBlockOutput
+	require.NoError(t, future.Get(&output))
+	require.Equal(t, uint64(42), output.Height)
+	require.GreaterOrEqual(t, output.DurationMs, 0.0)
 	require.Equal(t, 1, chainStore.insertBlockCalls)
 	require.NotNil(t, chainStore.lastBlock)
 	require.Equal(t, uint32(7), chainStore.lastBlock.NumTxs)
@@ -165,11 +167,12 @@ func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
 
-	var skip bool
+	var output types.PrepareIndexBlockOutput
 	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: "chain-A", Height: 10})
 	require.NoError(t, err)
-	require.NoError(t, future.Get(&skip))
-	require.True(t, skip)
+	require.NoError(t, future.Get(&output))
+	require.True(t, output.Skip)
+	require.GreaterOrEqual(t, output.DurationMs, 0.0)
 	require.Empty(t, chainStore.deletedBlocks)
 	require.Empty(t, chainStore.deletedTransactions)
 }
@@ -192,11 +195,12 @@ func TestPrepareIndexBlockDeletesOnReindex(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
 
-	var skip bool
+	var output types.PrepareIndexBlockOutput
 	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: "chain-A", Height: 42, Reindex: true})
 	require.NoError(t, err)
-	require.NoError(t, future.Get(&skip))
-	require.False(t, skip)
+	require.NoError(t, future.Get(&output))
+	require.False(t, output.Skip)
+	require.GreaterOrEqual(t, output.DurationMs, 0.0)
 	require.Contains(t, chainStore.deletedBlocks, uint64(42))
 	require.Contains(t, chainStore.deletedTransactions, uint64(42))
 }
@@ -211,7 +215,7 @@ func (f *fakeAdminStore) GetChain(context.Context, string) (*admin.Chain, error)
 	return f.chain, nil
 }
 
-func (f *fakeAdminStore) RecordIndexed(_ context.Context, chainID string, height uint64) error {
+func (f *fakeAdminStore) RecordIndexed(_ context.Context, chainID string, height uint64, indexingTimeMs float64, indexingDetail string) error {
 	f.recordedChainID = chainID
 	f.recordedHeight = height
 	return nil

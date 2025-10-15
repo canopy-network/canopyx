@@ -94,7 +94,7 @@ func (f *wfFakeAdminStore) GetChain(context.Context, string) (*admin.Chain, erro
 	return f.chain, nil
 }
 
-func (f *wfFakeAdminStore) RecordIndexed(_ context.Context, chainID string, height uint64) error {
+func (f *wfFakeAdminStore) RecordIndexed(_ context.Context, chainID string, height uint64, indexingTimeMs float64, indexingDetail string) error {
 	f.recordedChainID = chainID
 	f.recordedHeight = height
 	return nil

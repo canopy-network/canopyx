@@ -10,7 +10,7 @@ import (
 // AdminStore exposes the subset of admin database operations used by activities and workflows.
 type AdminStore interface {
 	GetChain(ctx context.Context, id string) (*admin.Chain, error)
-	RecordIndexed(ctx context.Context, chainID string, height uint64) error
+	RecordIndexed(ctx context.Context, chainID string, height uint64, indexingTimeMs float64, indexingDetail string) error
 	ListChain(ctx context.Context) ([]admin.Chain, error)
 	LastIndexed(ctx context.Context, chainID string) (uint64, error)
 	FindGaps(ctx context.Context, chainID string) ([]Gap, error)

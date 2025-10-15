@@ -12,9 +12,14 @@ import (
 type IndexProgress struct {
 	ch.CHModel `ch:"table:index_progress,engine:MergeTree(),order_by:(chain_id,height)"`
 
-	ChainID   string    `ch:"chain_id"`
-	Height    uint64    `ch:"height"`
-	IndexedAt time.Time `ch:"indexed_at,type:DateTime64(6)"`
+	ChainID      string    `ch:"chain_id"`
+	Height       uint64    `ch:"height"`
+	IndexedAt    time.Time `ch:"indexed_at,type:DateTime64(6)"`
+	IndexingTime float64   `ch:"indexing_time,type:Float64"` // Time in seconds from block creation to indexing completion
+
+	// Workflow execution timing fields
+	IndexingTimeMs float64 `ch:"indexing_time_ms,type:Float64"` // Total indexing time in milliseconds (actual processing time)
+	IndexingDetail string  `ch:"indexing_detail,type:String"`   // JSON string with breakdown of individual activity timings
 }
 
 // InitIndexProgress initializes the index_progress table.
