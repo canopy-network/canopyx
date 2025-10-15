@@ -78,8 +78,6 @@ jobs:
             exit 1
           fi
 
-
-
   docker-build:
     name: Docker Build (no push)
     runs-on: ubuntu-latest
@@ -100,8 +98,8 @@ jobs:
       - name: Set Application Name and Version
         id: set-vars
         run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            # Extract version from the tag name on push event
+          if [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event_name }}" == "pull_request" ]; then
+            # Extract version from the ref name
             VERSION="${GITHUB_REF_NAME##*-}"
           else
             # Use inputs from workflow_dispatch event
