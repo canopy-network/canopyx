@@ -39,9 +39,9 @@ jobs:
           cache: true
 
       - name: GolangCI-Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.60.3
+          version: v2.1
           args: --timeout=5m
 
   go-fmt-check:
