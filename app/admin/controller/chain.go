@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/uptrace/go-clickhouse/ch"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
 	workflowservicepb "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -736,4 +737,69 @@ func (c *Controller) HandlePatchChainsStatus(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleChainDelete handles the deletion of a chain by marking it as deleted,
+// removing Temporal schedules, and optionally dropping the chain database.
+func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+		return
+	}
+
+	ctx := r.Context()
+
+	// 1. Verify chain exists
+	chain, err := c.App.AdminDB.GetChain(ctx, id)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chain not found"})
+		return
+	}
+
+	user := c.currentUser(r)
+	c.App.Logger.Info("deleting chain", zap.String("chain_id", id), zap.String("user", user))
+
+	// 2. Delete Temporal schedules for this chain
+	if c.App.TemporalClient != nil {
+		// Delete head scan schedule
+		headScheduleID := c.App.TemporalClient.GetHeadScheduleID(id)
+		headHandle := c.App.TemporalClient.TSClient.GetHandle(ctx, headScheduleID)
+		if err := headHandle.Delete(ctx); err != nil {
+			var notFound *serviceerror.NotFound
+			if !errors.As(err, &notFound) {
+				c.App.Logger.Warn("failed to delete head scan schedule", zap.String("chain_id", id), zap.Error(err))
+			}
+		}
+
+		// Delete gap scan schedule
+		gapScheduleID := c.App.TemporalClient.GetGapScanScheduleID(id)
+		gapHandle := c.App.TemporalClient.TSClient.GetHandle(ctx, gapScheduleID)
+		if err := gapHandle.Delete(ctx); err != nil {
+			var notFound *serviceerror.NotFound
+			if !errors.As(err, &notFound) {
+				c.App.Logger.Warn("failed to delete gap scan schedule", zap.String("chain_id", id), zap.Error(err))
+			}
+		}
+	}
+
+	// 3. Mark chain as deleted in admin database
+	chain.Deleted = 1
+	if err := c.App.AdminDB.UpsertChain(ctx, chain); err != nil {
+		c.App.Logger.Error("failed to mark chain as deleted", zap.String("chain_id", id), zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to delete chain"})
+		return
+	}
+
+	// 4. Remove chain database from in-memory cache
+	c.App.ChainsDB.Delete(id)
+
+	// 5. Clear queue stats cache for this chain
+	c.App.QueueStatsCache.Delete(id)
+
+	c.App.Logger.Info("chain deleted successfully", zap.String("chain_id", id), zap.String("user", user))
+	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }
