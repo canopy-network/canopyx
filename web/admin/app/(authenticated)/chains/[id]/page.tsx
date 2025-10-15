@@ -68,31 +68,22 @@ type ReindexPayload = {
   to?: number
 }
 
-// Mock data for Explorer tab
+// Explorer tab types
 type ExplorerTable = 'blocks' | 'txs' | 'txs_raw'
 
-const EXPLORER_SCHEMAS: Record<ExplorerTable, string[]> = {
-  blocks: ['height', 'hash', 'timestamp', 'proposer_address', 'num_txs', 'gas_used'],
-  txs: ['height', 'tx_hash', 'from_address', 'to_address', 'value', 'gas_used', 'status'],
-  txs_raw: ['height', 'tx_hash', 'raw_data', 'indexed_at'],
+type SchemaColumn = {
+  name: string
+  type: string
 }
 
-const EXPLORER_MOCK_DATA: Record<ExplorerTable, any[]> = {
-  blocks: [
-    { height: 12345, hash: '0xabc123...', timestamp: '2025-10-14 10:30:00', proposer_address: '0x1234...', num_txs: 150, gas_used: 15000000 },
-    { height: 12344, hash: '0xdef456...', timestamp: '2025-10-14 10:29:50', proposer_address: '0x5678...', num_txs: 98, gas_used: 12000000 },
-    { height: 12343, hash: '0xghi789...', timestamp: '2025-10-14 10:29:40', proposer_address: '0x9abc...', num_txs: 120, gas_used: 14500000 },
-  ],
-  txs: [
-    { height: 12345, tx_hash: '0xtx1...', from_address: '0xfrom1...', to_address: '0xto1...', value: '1.5 ETH', gas_used: 21000, status: 'success' },
-    { height: 12345, tx_hash: '0xtx2...', from_address: '0xfrom2...', to_address: '0xto2...', value: '0.5 ETH', gas_used: 45000, status: 'success' },
-    { height: 12344, tx_hash: '0xtx3...', from_address: '0xfrom3...', to_address: '0xto3...', value: '2.0 ETH', gas_used: 21000, status: 'failed' },
-  ],
-  txs_raw: [
-    { height: 12345, tx_hash: '0xtx1...', raw_data: '0x60806040...', indexed_at: '2025-10-14 10:30:05' },
-    { height: 12345, tx_hash: '0xtx2...', raw_data: '0x60806040...', indexed_at: '2025-10-14 10:30:05' },
-    { height: 12344, tx_hash: '0xtx3...', raw_data: '0x60806040...', indexed_at: '2025-10-14 10:29:55' },
-  ],
+type SchemaResponse = {
+  columns: SchemaColumn[]
+}
+
+type PaginatedResponse<T> = {
+  data: T[]
+  limit: number
+  next_cursor: number | null
 }
 
 // Utility functions
@@ -762,31 +753,132 @@ function QueuesTab({
 // Explorer Tab Component
 function ExplorerTab({ chainId }: { chainId: string }) {
   const [selectedTable, setSelectedTable] = useState<ExplorerTable>('blocks')
-  const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 10
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string>('')
+  const [schema, setSchema] = useState<string[]>([])
+  const [data, setData] = useState<any[]>([])
+  const [nextCursor, setNextCursor] = useState<number | null>(null)
+  const [cursors, setCursors] = useState<(number | null)[]>([null]) // Stack of cursors for navigation
+  const [currentPageIndex, setCurrentPageIndex] = useState(0)
 
-  const schema = EXPLORER_SCHEMAS[selectedTable]
-  const data = EXPLORER_MOCK_DATA[selectedTable]
+  const QUERY_SERVICE_URL = process.env.NEXT_PUBLIC_QUERY_SERVICE_URL || 'http://localhost:8082'
+  const ITEMS_PER_PAGE = 50
+
+  // Map UI table names to API table names
+  const TABLE_NAME_MAP: Record<ExplorerTable, string> = {
+    blocks: 'blocks',
+    txs: 'transactions',
+    txs_raw: 'transactions_raw',
+  }
+
+  // Fetch schema when table changes
+  useEffect(() => {
+    const fetchSchema = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const tableName = TABLE_NAME_MAP[selectedTable]
+        const response = await fetch(
+          `${QUERY_SERVICE_URL}/chains/${chainId}/schema?table=${tableName}`
+        )
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch schema: ${response.statusText}`)
+        }
+
+        const schemaData: SchemaResponse = await response.json()
+        const columnNames = schemaData.columns.map((col) => col.name)
+        setSchema(columnNames)
+      } catch (err: any) {
+        console.error('Schema fetch error:', err)
+        setError(err.message || 'Failed to load schema')
+        setSchema([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchSchema()
+  }, [chainId, selectedTable, QUERY_SERVICE_URL])
+
+  // Fetch data when table or page changes
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const tableName = TABLE_NAME_MAP[selectedTable]
+        const cursor = cursors[currentPageIndex]
+        const cursorParam = cursor !== null ? `&cursor=${cursor}` : ''
+
+        const response = await fetch(
+          `${QUERY_SERVICE_URL}/chains/${chainId}/${tableName}?limit=${ITEMS_PER_PAGE}${cursorParam}`
+        )
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch data: ${response.statusText}`)
+        }
+
+        const result: PaginatedResponse<any> = await response.json()
+        setData(result.data || [])
+        setNextCursor(result.next_cursor ?? null)
+      } catch (err: any) {
+        console.error('Data fetch error:', err)
+        setError(err.message || 'Failed to load data')
+        setData([])
+        setNextCursor(null)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (schema.length > 0) {
+      fetchData()
+    }
+  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, QUERY_SERVICE_URL])
+
+  const handleTableChange = (newTable: ExplorerTable) => {
+    setSelectedTable(newTable)
+    setCursors([null])
+    setCurrentPageIndex(0)
+    setData([])
+    setNextCursor(null)
+    setError('')
+  }
+
+  const handleNextPage = () => {
+    if (nextCursor !== null) {
+      const newCursors = [...cursors.slice(0, currentPageIndex + 1), nextCursor]
+      setCursors(newCursors)
+      setCurrentPageIndex(currentPageIndex + 1)
+    }
+  }
+
+  const handlePreviousPage = () => {
+    if (currentPageIndex > 0) {
+      setCurrentPageIndex(currentPageIndex - 1)
+    }
+  }
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4 text-amber-200">
-        <div className="flex items-start gap-3">
-          <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <div>
-            <p className="font-semibold">Mock Data - Backend APIs Required</p>
-            <p className="mt-1 text-sm text-amber-300">
-              This tab displays mock data. The following backend APIs need to be implemented:
-            </p>
-            <ul className="mt-2 list-inside list-disc text-xs text-amber-300">
-              <li>GET /api/chains/{'{id}'}/explorer/schema?table={'{table}'}</li>
-              <li>GET /api/chains/{'{id}'}/explorer/data?table={'{table}'}&amp;limit={'{limit}'}&amp;offset={'{offset}'}</li>
-            </ul>
+      {/* Error Banner */}
+      {error && (
+        <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-rose-200">
+          <div className="flex items-start gap-3">
+            <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="font-semibold">Error Loading Explorer Data</p>
+              <p className="mt-1 text-sm text-rose-300">{error}</p>
+              <p className="mt-2 text-xs text-rose-300">
+                Make sure the query service is running at {QUERY_SERVICE_URL}
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Table Selector */}
       <div className="flex items-center justify-between">
@@ -794,58 +886,115 @@ function ExplorerTab({ chainId }: { chainId: string }) {
           <label className="text-sm font-medium text-slate-300">Select Table:</label>
           <select
             value={selectedTable}
-            onChange={(e) => {
-              setSelectedTable(e.target.value as ExplorerTable)
-              setCurrentPage(1)
-            }}
+            onChange={(e) => handleTableChange(e.target.value as ExplorerTable)}
             className="input w-auto"
+            disabled={loading}
           >
             <option value="blocks">Blocks</option>
             <option value="txs">Transactions</option>
             <option value="txs_raw">Transactions Raw</option>
           </select>
         </div>
+
+        {/* Pagination Controls */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePreviousPage}
+            disabled={currentPageIndex === 0 || loading}
+            className="btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Previous
+          </button>
+          <span className="text-sm text-slate-400">
+            Page {currentPageIndex + 1}
+          </span>
+          <button
+            onClick={handleNextPage}
+            disabled={nextCursor === null || loading}
+            className="btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Next
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Schema Display */}
-      <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">Schema: {selectedTable}</h3>
+      {schema.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">Schema: {selectedTable}</h3>
+            <span className="text-xs text-slate-500">{schema.length} columns</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {schema.map((col) => (
+              <span key={col} className="badge-neutral">
+                {col}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {schema.map((col) => (
-            <span key={col} className="badge-neutral">
-              {col}
-            </span>
-          ))}
-        </div>
-      </div>
+      )}
 
       {/* Data Table */}
       <div className="card overflow-hidden p-0">
-        <div className="overflow-x-auto">
-          <table className="table">
-            <thead>
-              <tr>
-                {schema.map((col) => (
-                  <th key={col}>{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((row, idx) => (
-                <tr key={idx}>
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-700 border-t-indigo-500"></div>
+              <p className="text-slate-400">Loading data...</p>
+            </div>
+          </div>
+        ) : data.length === 0 ? (
+          <div className="flex items-center justify-center py-12 text-slate-500">
+            <div className="text-center">
+              <svg className="mx-auto h-16 w-16 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+              </svg>
+              <p className="mt-4 text-sm">No data available</p>
+              <p className="mt-1 text-xs text-slate-600">This table may be empty or not yet indexed</p>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
                   {schema.map((col) => (
-                    <td key={col} className="font-mono text-xs">
-                      {row[col] ?? '—'}
-                    </td>
+                    <th key={col}>{col}</th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {data.map((row, idx) => (
+                  <tr key={idx}>
+                    {schema.map((col) => (
+                      <td key={col} className="font-mono text-xs">
+                        {row[col] !== null && row[col] !== undefined
+                          ? String(row[col])
+                          : '—'}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
+
+      {/* Results Info */}
+      {data.length > 0 && (
+        <div className="text-center text-xs text-slate-500">
+          Showing {data.length} {data.length === 1 ? 'row' : 'rows'}
+          {nextCursor !== null && ' • More results available'}
+        </div>
+      )}
     </div>
   )
 }
