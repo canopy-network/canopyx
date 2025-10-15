@@ -1,11 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import * as Dialog from '@radix-ui/react-dialog'
 import { apiFetch } from '../../../lib/api'
 import { useToast } from '../../../components/ToastProvider'
+import IndexingProgressChart from './IndexingProgressChart'
 
 // Types
 type QueueStatus = {
@@ -26,6 +27,8 @@ type ReindexEntry = {
   status: string
   requested_by: string
   requested_at: string
+  workflow_id: string
+  run_id: string
 }
 
 type ChainConfig = {
@@ -69,7 +72,7 @@ type ReindexPayload = {
 }
 
 // Explorer tab types
-type ExplorerTable = 'blocks' | 'txs' | 'txs_raw'
+type ExplorerTable = 'blocks' | 'block_summaries' | 'txs' | 'txs_raw'
 
 type SchemaColumn = {
   name: string
@@ -155,14 +158,29 @@ function formatTimestamp(timestamp?: string): string {
 export default function ChainDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const chainId = params.id as string
   const { notify } = useToast()
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'queues' | 'explorer' | 'settings'>('overview')
+  // Get initial tab from URL, default to 'overview'
+  const tabFromUrl = searchParams.get('tab') as 'overview' | 'queues' | 'explorer' | 'settings' | null
+  const [activeTab, setActiveTab] = useState<'overview' | 'queues' | 'explorer' | 'settings'>(
+    tabFromUrl && ['overview', 'queues', 'explorer', 'settings'].includes(tabFromUrl)
+      ? tabFromUrl
+      : 'overview'
+  )
   const [config, setConfig] = useState<ChainConfig | null>(null)
   const [status, setStatus] = useState<ChainStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
+
+  // Update URL when tab changes
+  const handleTabChange = (tab: 'overview' | 'queues' | 'explorer' | 'settings') => {
+    setActiveTab(tab)
+    const url = new URL(window.location.href)
+    url.searchParams.set('tab', tab)
+    router.push(url.pathname + url.search, { scroll: false })
+  }
 
   // Load chain configuration and status
   const loadChainData = useCallback(async () => {
@@ -304,6 +322,32 @@ export default function ChainDetailPage() {
             )}
           </div>
           <p className="mt-2 text-sm text-slate-400">{config.chain_id}</p>
+
+          {/* Index Progress Indicator */}
+          {status && (
+            <div className="mt-4 flex items-center gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Last Indexed:</span>
+                <span className="font-mono font-semibold text-white">{formatNumber(status.last_indexed)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Head:</span>
+                <span className="font-mono font-semibold text-white">{formatNumber(status.head)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Progress:</span>
+                <span className="font-mono font-semibold text-indigo-400">{progress.toFixed(2)}%</span>
+              </div>
+              {status.head > status.last_indexed && (
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500">Lag:</span>
+                  <span className="font-mono font-semibold text-amber-400">
+                    {formatNumber(status.head - status.last_indexed)} blocks
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Quick Actions */}
@@ -345,7 +389,7 @@ export default function ChainDetailPage() {
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => handleTabChange(tab.id as any)}
               className={`border-b-2 px-1 py-3 text-sm font-medium transition-colors ${
                 activeTab === tab.id
                   ? 'border-indigo-500 text-white'
@@ -510,21 +554,8 @@ function OverviewTab({
         </div>
       </div>
 
-      {/* Progress Visualization Placeholder */}
-      <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">Indexing Progress</h3>
-        </div>
-        <div className="flex items-center justify-center py-12 text-slate-500">
-          <div className="text-center">
-            <svg className="mx-auto h-16 w-16 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            <p className="mt-4 text-sm">Chart visualization coming soon</p>
-            <p className="mt-1 text-xs text-slate-600">Historical progress tracking</p>
-          </div>
-        </div>
-      </div>
+      {/* Indexing Progress Chart */}
+      <IndexingProgressChart chainId={config.chain_id} />
 
       {/* Reindex History */}
       {status?.reindex_history && status.reindex_history.length > 0 && (
@@ -540,6 +571,8 @@ function OverviewTab({
                   <th>Status</th>
                   <th>Requested By</th>
                   <th>Requested At</th>
+                  <th>Workflow ID</th>
+                  <th>Run ID</th>
                 </tr>
               </thead>
               <tbody>
@@ -553,6 +586,20 @@ function OverviewTab({
                     </td>
                     <td>{entry.requested_by}</td>
                     <td className="text-slate-400">{formatTimestamp(entry.requested_at)}</td>
+                    <td className="font-mono text-xs text-slate-400">
+                      {entry.workflow_id ? (
+                        <span title={entry.workflow_id}>{entry.workflow_id.slice(0, 20)}...</span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="font-mono text-xs text-slate-400">
+                      {entry.run_id ? (
+                        <span title={entry.run_id}>{entry.run_id.slice(0, 20)}...</span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -761,12 +808,13 @@ function ExplorerTab({ chainId }: { chainId: string }) {
   const [cursors, setCursors] = useState<(number | null)[]>([null]) // Stack of cursors for navigation
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
 
-  const QUERY_SERVICE_URL = process.env.NEXT_PUBLIC_QUERY_SERVICE_URL || 'http://localhost:8082'
+  const QUERY_SERVICE_URL = process.env.NEXT_PUBLIC_QUERY_SERVICE_URL || 'http://localhost:3001'
   const ITEMS_PER_PAGE = 50
 
   // Map UI table names to API table names
   const TABLE_NAME_MAP: Record<ExplorerTable, string> = {
     blocks: 'blocks',
+    block_summaries: 'block_summaries',
     txs: 'transactions',
     txs_raw: 'transactions_raw',
   }
@@ -891,6 +939,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
             disabled={loading}
           >
             <option value="blocks">Blocks</option>
+            <option value="block_summaries">Block Summaries</option>
             <option value="txs">Transactions</option>
             <option value="txs_raw">Transactions Raw</option>
           </select>

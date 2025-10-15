@@ -107,6 +107,7 @@ func Initialize(ctx context.Context) *App {
 	wkr.RegisterActivity(activityContext.PrepareIndexBlock)
 	wkr.RegisterActivity(activityContext.IndexBlock)
 	wkr.RegisterActivity(activityContext.IndexTransactions)
+	wkr.RegisterActivity(activityContext.SaveBlockSummary)
 	wkr.RegisterActivity(activityContext.RecordIndexed)
 
 	opsWorker := worker.New(

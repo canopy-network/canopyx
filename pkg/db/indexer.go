@@ -270,6 +270,13 @@ func (db *AdminDB) PatchChains(ctx context.Context, patches []admin.Chain) error
 	return nil
 }
 
+// ReindexWorkflowInfo contains workflow execution information for a reindex request.
+type ReindexWorkflowInfo struct {
+	Height     uint64
+	WorkflowID string
+	RunID      string
+}
+
 // RecordReindexRequests logs a set of reindex requests for auditing purposes.
 func (db *AdminDB) RecordReindexRequests(ctx context.Context, chainID, requestedBy string, heights []uint64) error {
 	if len(heights) == 0 {
@@ -282,6 +289,26 @@ func (db *AdminDB) RecordReindexRequests(ctx context.Context, chainID, requested
 			Height:      h,
 			RequestedBy: requestedBy,
 			Status:      "queued",
+		})
+	}
+	_, err := db.Db.NewInsert().Model(&rows).Exec(ctx)
+	return err
+}
+
+// RecordReindexRequestsWithWorkflow logs reindex requests with workflow execution information.
+func (db *AdminDB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainID, requestedBy string, infos []ReindexWorkflowInfo) error {
+	if len(infos) == 0 {
+		return nil
+	}
+	rows := make([]*admin.ReindexRequest, 0, len(infos))
+	for _, info := range infos {
+		rows = append(rows, &admin.ReindexRequest{
+			ChainID:     chainID,
+			Height:      info.Height,
+			RequestedBy: requestedBy,
+			Status:      "queued",
+			WorkflowID:  info.WorkflowID,
+			RunID:       info.RunID,
 		})
 	}
 	_, err := db.Db.NewInsert().Model(&rows).Exec(ctx)

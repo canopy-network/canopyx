@@ -60,19 +60,26 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 
 	env.RegisterWorkflow(wfCtx.IndexBlockWorkflow)
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
-	env.RegisterActivity(activityCtx.IndexTransactions)
 	env.RegisterActivity(activityCtx.IndexBlock)
+	env.RegisterActivity(activityCtx.IndexTransactions)
+	env.RegisterActivity(activityCtx.SaveBlockSummary)
 	env.RegisterActivity(activityCtx.RecordIndexed)
 
 	input := types.IndexBlockInput{ChainID: "chain-A", Height: 21}
 	env.ExecuteWorkflow(wfCtx.IndexBlockWorkflow, input)
 
 	require.NoError(t, env.GetWorkflowError())
-	require.Equal(t, 1, chainStore.insertTransactionCalls)
-	require.Equal(t, 1, chainStore.insertBlockCalls)
+	require.Equal(t, 1, chainStore.insertBlockCalls, "IndexBlock should be called once")
+	require.Equal(t, 1, chainStore.insertTransactionCalls, "IndexTransactions should be called once")
+	require.Equal(t, 1, chainStore.insertBlockSummaryCalls, "SaveBlockSummary should be called once")
 	require.NotNil(t, chainStore.lastBlock)
 	require.Equal(t, uint64(21), chainStore.lastBlock.Height)
-	require.Equal(t, uint32(1), chainStore.lastBlock.NumTxs)
+	// Block should NOT have NumTxs set - that's in the summary now
+	require.Equal(t, uint32(0), chainStore.lastBlock.NumTxs)
+	// Check summary was saved correctly
+	require.NotNil(t, chainStore.lastBlockSummary)
+	require.Equal(t, uint64(21), chainStore.lastBlockSummary.Height)
+	require.Equal(t, uint32(1), chainStore.lastBlockSummary.NumTxs)
 	require.Equal(t, "chain-A", adminStore.recordedChainID)
 	require.Equal(t, uint64(21), adminStore.recordedHeight)
 }
@@ -120,14 +127,16 @@ func (f *wfFakeAdminStore) UpdateRPCHealth(context.Context, string, string, stri
 }
 
 type wfFakeChainStore struct {
-	chainID                string
-	databaseName           string
-	insertBlockCalls       int
-	insertTransactionCalls int
-	lastBlock              *indexermodels.Block
-	hasBlock               bool
-	deletedBlocks          []uint64
-	deletedTransactions    []uint64
+	chainID                 string
+	databaseName            string
+	insertBlockCalls        int
+	insertTransactionCalls  int
+	insertBlockSummaryCalls int
+	lastBlock               *indexermodels.Block
+	lastBlockSummary        *indexermodels.BlockSummary
+	hasBlock                bool
+	deletedBlocks           []uint64
+	deletedTransactions     []uint64
 }
 
 func (f *wfFakeChainStore) DatabaseName() string { return f.databaseName }
@@ -142,6 +151,22 @@ func (f *wfFakeChainStore) InsertBlock(_ context.Context, block *indexermodels.B
 func (f *wfFakeChainStore) InsertTransactions(_ context.Context, _ []*indexermodels.Transaction, _ []*indexermodels.TransactionRaw) error {
 	f.insertTransactionCalls++
 	return nil
+}
+
+func (f *wfFakeChainStore) InsertBlockSummary(_ context.Context, height uint64, numTxs uint32) error {
+	f.insertBlockSummaryCalls++
+	f.lastBlockSummary = &indexermodels.BlockSummary{
+		Height: height,
+		NumTxs: numTxs,
+	}
+	return nil
+}
+
+func (f *wfFakeChainStore) GetBlockSummary(_ context.Context, height uint64) (*indexermodels.BlockSummary, error) {
+	if f.lastBlockSummary != nil && f.lastBlockSummary.Height == height {
+		return f.lastBlockSummary, nil
+	}
+	return nil, nil
 }
 
 func (f *wfFakeChainStore) HasBlock(_ context.Context, _ uint64) (bool, error) {
@@ -166,6 +191,14 @@ func (*wfFakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermod
 }
 
 func (*wfFakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.TransactionRow, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryTransactionsRaw(context.Context, uint64, int) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) DescribeTable(context.Context, string) ([]db.Column, error) {
 	return nil, nil
 }
 

@@ -52,27 +52,41 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		return workflow.ExecuteActivity(ctx, wc.ActivityContext.RecordIndexed, recordInput).Get(ctx, nil)
 	}
 
-	// 2. IndexTransactions - fetch and index transactions
-	var txOut types.IndexTransactionsOutput
-	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, in).Get(ctx, &txOut); err != nil {
-		return err
-	}
-	timings["index_transactions_ms"] = txOut.DurationMs
-
-	// Pass transaction count to block summary
-	in.BlockSummaries = &types.BlockSummaries{NumTxs: txOut.NumTxs}
-
-	// 3. IndexBlock - fetch and store block metadata
-	// Store the block as the last step to prevent having partial blocks indexed into the database.
-	// Pass the values that we need to "summarize" into the block, like the number of txs.
-	// This will minimize the reads and small updates on to the block record.
+	// 2. IndexBlock - fetch and store block metadata
+	// This MUST come before entity indexing to ensure the block exists on-chain
 	var blockOut types.IndexBlockOutput
 	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexBlock, in).Get(ctx, &blockOut); err != nil {
 		return err
 	}
 	timings["index_block_ms"] = blockOut.DurationMs
 
-	// TODO: keep adding here more entities to index
+	// 3. IndexTransactions - fetch and index transactions
+	// Now safe to index entities since block existence is confirmed
+	var txOut types.IndexTransactionsOutput
+	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, in).Get(ctx, &txOut); err != nil {
+		return err
+	}
+	timings["index_transactions_ms"] = txOut.DurationMs
+
+	// TODO: Add more entity indexing activities here (events, logs, etc.)
+	// Each activity should return a summary output with DurationMs and entity counts
+
+	// Collect all summaries for aggregation
+	summaries := types.BlockSummaries{
+		NumTxs: txOut.NumTxs,
+	}
+
+	// 4. SaveBlockSummary - aggregate and save all entity summaries
+	saveInput := types.SaveBlockSummaryInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		Summaries: summaries,
+	}
+	var saveSummaryOut types.SaveBlockSummaryOutput
+	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlockSummary, saveInput).Get(ctx, &saveSummaryOut); err != nil {
+		return err
+	}
+	timings["save_block_summary_ms"] = saveSummaryOut.DurationMs
 
 	// Calculate total indexing time (sum of all activity durations)
 	var totalMs float64
@@ -87,7 +101,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		detailBytes = []byte("{}")
 	}
 
-	// 4. RecordIndexed - persist indexing progress with timing metrics
+	// 5. RecordIndexed - persist indexing progress with timing metrics
 	recordInput := types.RecordIndexedInput{
 		ChainID:        in.ChainID,
 		Height:         in.Height,

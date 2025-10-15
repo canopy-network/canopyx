@@ -12,7 +12,6 @@ import (
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/require"
-	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.uber.org/zap/zaptest"
 )
@@ -67,7 +66,7 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 	require.Len(t, chainStore.lastTxs, 2)
 }
 
-func TestIndexBlockPersistsBlockWithSummary(t *testing.T) {
+func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
@@ -95,9 +94,6 @@ func TestIndexBlockPersistsBlockWithSummary(t *testing.T) {
 	input := types.IndexBlockInput{
 		ChainID: "chain-A",
 		Height:  42,
-		BlockSummaries: &types.BlockSummaries{
-			NumTxs: 7,
-		},
 	}
 
 	env.RegisterActivity(ctx.IndexBlock)
@@ -110,10 +106,11 @@ func TestIndexBlockPersistsBlockWithSummary(t *testing.T) {
 	require.GreaterOrEqual(t, output.DurationMs, 0.0)
 	require.Equal(t, 1, chainStore.insertBlockCalls)
 	require.NotNil(t, chainStore.lastBlock)
-	require.Equal(t, uint32(7), chainStore.lastBlock.NumTxs)
+	// Block should NOT have NumTxs set - that's stored separately in block_summaries now
+	require.Equal(t, uint32(0), chainStore.lastBlock.NumTxs)
 }
 
-func TestIndexBlockFailsOnMissingBlockSummaries(t *testing.T) {
+func TestSaveBlockSummary(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
@@ -125,28 +122,35 @@ func TestIndexBlockFailsOnMissingBlockSummaries(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", chainStore)
 
-	rpcClient := &fakeRPCClient{
-		block: &indexermodels.Block{Height: 42},
-	}
 	ctx := &Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
-		RPCFactory: &fakeRPCFactory{client: rpcClient},
+		RPCFactory: &fakeRPCFactory{client: &fakeRPCClient{}},
 	}
 
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestActivityEnvironment()
 
-	env.RegisterActivity(ctx.IndexBlock)
-	_, err := env.ExecuteActivity(ctx.IndexBlock, types.IndexBlockInput{
+	input := types.SaveBlockSummaryInput{
 		ChainID: "chain-A",
 		Height:  42,
-	})
-	require.Error(t, err)
-	appErr := &temporal.ApplicationError{}
-	require.ErrorAs(t, err, &appErr)
-	require.Equal(t, "block_summaries_not_found", appErr.Type())
+		Summaries: types.BlockSummaries{
+			NumTxs: 7,
+		},
+	}
+
+	env.RegisterActivity(ctx.SaveBlockSummary)
+	future, err := env.ExecuteActivity(ctx.SaveBlockSummary, input)
+	require.NoError(t, err)
+
+	var output types.SaveBlockSummaryOutput
+	require.NoError(t, future.Get(&output))
+	require.GreaterOrEqual(t, output.DurationMs, 0.0)
+	require.Equal(t, 1, chainStore.insertBlockSummaryCalls)
+	require.NotNil(t, chainStore.lastBlockSummary)
+	require.Equal(t, uint64(42), chainStore.lastBlockSummary.Height)
+	require.Equal(t, uint32(7), chainStore.lastBlockSummary.NumTxs)
 }
 
 func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
@@ -241,17 +245,19 @@ func (f *fakeAdminStore) UpdateRPCHealth(context.Context, string, string, string
 }
 
 type fakeChainStore struct {
-	chainID                string
-	databaseName           string
-	insertBlockCalls       int
-	insertTransactionCalls int
-	lastBlock              *indexermodels.Block
-	lastTxs                []*indexermodels.Transaction
-	lastRaws               []*indexermodels.TransactionRaw
-	execCalls              []string
-	hasBlock               bool
-	deletedBlocks          []uint64
-	deletedTransactions    []uint64
+	chainID                 string
+	databaseName            string
+	insertBlockCalls        int
+	insertTransactionCalls  int
+	insertBlockSummaryCalls int
+	lastBlock               *indexermodels.Block
+	lastBlockSummary        *indexermodels.BlockSummary
+	lastTxs                 []*indexermodels.Transaction
+	lastRaws                []*indexermodels.TransactionRaw
+	execCalls               []string
+	hasBlock                bool
+	deletedBlocks           []uint64
+	deletedTransactions     []uint64
 }
 
 func (f *fakeChainStore) DatabaseName() string { return f.databaseName }
@@ -268,6 +274,22 @@ func (f *fakeChainStore) InsertTransactions(_ context.Context, txs []*indexermod
 	f.lastTxs = txs
 	f.lastRaws = raws
 	return nil
+}
+
+func (f *fakeChainStore) InsertBlockSummary(_ context.Context, height uint64, numTxs uint32) error {
+	f.insertBlockSummaryCalls++
+	f.lastBlockSummary = &indexermodels.BlockSummary{
+		Height: height,
+		NumTxs: numTxs,
+	}
+	return nil
+}
+
+func (f *fakeChainStore) GetBlockSummary(_ context.Context, height uint64) (*indexermodels.BlockSummary, error) {
+	if f.lastBlockSummary != nil && f.lastBlockSummary.Height == height {
+		return f.lastBlockSummary, nil
+	}
+	return nil, nil
 }
 
 func (f *fakeChainStore) HasBlock(_ context.Context, _ uint64) (bool, error) {
@@ -295,6 +317,14 @@ func (*fakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodel
 }
 
 func (*fakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.TransactionRow, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) QueryTransactionsRaw(context.Context, uint64, int) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) DescribeTable(context.Context, string) ([]db.Column, error) {
 	return nil, nil
 }
 

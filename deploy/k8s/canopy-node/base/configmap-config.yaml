@@ -14,7 +14,7 @@ data:
           "url": "http://localhost:50002"
         }
       ],
-      "runVDF": true,
+      "runVDF": false,
       "headless": false,
       "autoUpdate": false,
       "level": 0,

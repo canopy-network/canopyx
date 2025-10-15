@@ -14,6 +14,8 @@ type ReindexRequest struct {
 	Height      uint64    `ch:"height"`
 	RequestedBy string    `ch:"requested_by"`
 	Status      string    `ch:"status,default:'queued'"`
+	WorkflowID  string    `ch:"workflow_id"`
+	RunID       string    `ch:"run_id"`
 	RequestedAt time.Time `ch:"requested_at,default:now()"`
 }
 

@@ -44,4 +44,6 @@ type ReindexEntry struct {
 	Status      string    `json:"status"`
 	RequestedBy string    `json:"requested_by"`
 	RequestedAt time.Time `json:"requested_at"`
+	WorkflowID  string    `json:"workflow_id"`
+	RunID       string    `json:"run_id"`
 }

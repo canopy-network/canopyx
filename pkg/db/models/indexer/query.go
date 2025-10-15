@@ -1,26 +1,6 @@
 package indexer
 
-import "time"
-
-// BlockRow represents a block record returned from query operations.
-// This is separate from Block to avoid coupling query results to ClickHouse-specific types.
-type BlockRow struct {
-	Height          uint64
-	Hash            string
-	Time            time.Time
-	ProposerAddress string
-	NumTxs          uint32
-}
-
-// TransactionRow represents a transaction record returned from query operations.
-// This is separate from Transaction to avoid coupling query results to ClickHouse-specific types.
-type TransactionRow struct {
-	Height       uint64
-	TxHash       string
-	Time         time.Time
-	MessageType  string
-	Counterparty *string
-	Signer       string
-	Amount       *uint64
-	Fee          uint64
-}
+// This file previously contained BlockRow and TransactionRow types which were
+// intermediate representations used by query methods. These have been removed
+// as part of a refactoring to eliminate code duplication - the database models
+// (Block, Transaction, etc.) now have JSON tags and are used directly in API responses.

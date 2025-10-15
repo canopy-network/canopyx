@@ -30,3 +30,8 @@ bin/*
 .claude
 AGENTS.md
 
+# Cache
+.cache
+.gocache
+.pnpm-store
+

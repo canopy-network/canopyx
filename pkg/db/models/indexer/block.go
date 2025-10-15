@@ -10,13 +10,12 @@ import (
 type Block struct {
 	ch.CHModel `ch:"table:blocks"`
 
-	Height          uint64    `ch:"height,pk"`
-	Hash            string    `ch:"hash"`
-	Time            time.Time `ch:"time,type:DateTime64(6)"` // stored as a Unix timestamp
-	LastBlockHash   string    `ch:"parent_hash"`
-	ProposerAddress string    `ch:"proposer_address"`
-	Size            int       `ch:"size"`
-	NumTxs          uint32    `ch:"num_txs,default:0"`
+	Height          uint64    `ch:"height,pk" json:"height"`
+	Hash            string    `ch:"hash" json:"hash"`
+	Time            time.Time `ch:"time,type:DateTime64(6)" json:"time"` // stored as a Unix timestamp
+	LastBlockHash   string    `ch:"parent_hash" json:"parent_hash"`
+	ProposerAddress string    `ch:"proposer_address" json:"proposer_address"`
+	Size            int       `ch:"size" json:"size"`
 }
 
 // InitBlocks initializes the blocks table.

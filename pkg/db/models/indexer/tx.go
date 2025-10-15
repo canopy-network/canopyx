@@ -17,28 +17,28 @@ type Transaction struct {
 	ch.CHModel `ch:"table:txs,engine:MergeTree(),order_by:(height,tx_hash)"`
 
 	// Position
-	Height uint64 `ch:"height"`
-	TxHash string `ch:"tx_hash"`
+	Height uint64 `ch:"height" json:"height"`
+	TxHash string `ch:"tx_hash" json:"tx_hash"`
 
 	// Time
-	Time time.Time `ch:"time,type:DateTime64(6)"`
+	Time time.Time `ch:"time,type:DateTime64(6)" json:"time"`
 
 	// Classification
-	MessageType string `ch:"message_type,lc"` // LowCardinality(String)
+	MessageType string `ch:"message_type,lc" json:"message_type"` // LowCardinality(String)
 
-	// Counterparty It’s the “other address involved in the tx,” i.e., who the signer interacted with:
+	// Counterparty It's the "other address involved in the tx," i.e., who the signer interacted with:
 	// 1. send: the recipient (toAddress / recipient)
 	// 2. delegate/undelegate/stake etc.: typically a validator address (if/when present)
 	// 3. contract calls or system txs: may be unknown → nil
-	Counterparty *string `ch:"counterparty"` // nullable
+	Counterparty *string `ch:"counterparty" json:"counterparty,omitempty"` // nullable
 
 	// Actor
-	Signer string `ch:"signer"`
+	Signer string `ch:"signer" json:"signer"`
 
 	// Value / fees (nullable)
-	Amount        *uint64 `ch:"amount"`
-	Fee           uint64  `ch:"fee"`
-	CreatedHeight uint64  `ch:"created_height"`
+	Amount        *uint64 `ch:"amount" json:"amount,omitempty"`
+	Fee           uint64  `ch:"fee" json:"fee"`
+	CreatedHeight uint64  `ch:"created_height" json:"created_height"`
 }
 
 // TransactionRaw (heavy fields; TTL 30 days)

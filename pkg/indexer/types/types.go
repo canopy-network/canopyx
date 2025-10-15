@@ -47,6 +47,18 @@ type IndexTransactionsOutput struct {
 	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
 }
 
+// SaveBlockSummaryInput contains the parameters for saving block summaries.
+type SaveBlockSummaryInput struct {
+	ChainID   string          `json:"chainId"`
+	Height    uint64          `json:"height"`
+	Summaries BlockSummaries  `json:"summaries"`
+}
+
+// SaveBlockSummaryOutput contains the result of saving block summaries along with execution duration.
+type SaveBlockSummaryOutput struct {
+	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
+}
+
 // RecordIndexedInput contains the parameters for recording indexing progress with timing data.
 type RecordIndexedInput struct {
 	ChainID        string  `json:"chainId"`

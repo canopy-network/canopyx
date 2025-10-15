@@ -33,6 +33,11 @@ func (db *ChainDB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
+	db.Logger.Debug("Initialize block_summaries model", zap.String("name", db.Name))
+	if err := indexer.InitBlockSummaries(ctx, db.Db); err != nil {
+		return err
+	}
+
 	db.Logger.Debug("Initialize transactions model", zap.String("name", db.Name))
 	if err := indexer.InitTransactions(ctx, db.Db, db.Name); err != nil {
 		return err
@@ -62,18 +67,25 @@ func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transa
 	return indexer.InsertTransactions(ctx, db.Db, txs, raws)
 }
 
+// InsertBlockSummary persists block summary data (entity counts) into the chain database.
+func (db *ChainDB) InsertBlockSummary(ctx context.Context, height uint64, numTxs uint32) error {
+	summary := &indexer.BlockSummary{
+		Height: height,
+		NumTxs: numTxs,
+	}
+	_, err := db.Db.NewInsert().Model(summary).Exec(ctx)
+	return err
+}
+
+// GetBlockSummary retrieves the block summary for a given height.
+func (db *ChainDB) GetBlockSummary(ctx context.Context, height uint64) (*indexer.BlockSummary, error) {
+	return indexer.GetBlockSummary(ctx, db.Db, height)
+}
+
 // QueryBlocks retrieves a paginated list of blocks ordered by height descending.
 // If cursor > 0, only blocks with height < cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
-func (db *ChainDB) QueryBlocks(ctx context.Context, cursor uint64, limit int) ([]indexer.BlockRow, error) {
-	type rowInternal struct {
-		Height          uint64    `ch:"height"`
-		Hash            string    `ch:"hash"`
-		Time            time.Time `ch:"time"`
-		ProposerAddress string    `ch:"proposer_address"`
-		NumTxs          uint32    `ch:"num_txs"`
-	}
-
+func (db *ChainDB) QueryBlocks(ctx context.Context, cursor uint64, limit int) ([]indexer.Block, error) {
 	conds := make([]string, 0)
 	args := make([]any, 0)
 	if cursor > 0 {
@@ -81,48 +93,51 @@ func (db *ChainDB) QueryBlocks(ctx context.Context, cursor uint64, limit int) ([
 		args = append(args, cursor)
 	}
 
-	query := fmt.Sprintf(`SELECT height, hash, time, proposer_address, num_txs FROM "%s"."blocks"`, db.Name)
+	query := fmt.Sprintf(`SELECT height, hash, parent_hash, time, proposer_address, size FROM "%s"."blocks"`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
 	query += " ORDER BY height DESC LIMIT ?"
 	args = append(args, limit)
 
-	rows := make([]rowInternal, 0, limit)
-	if err := db.Db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+	var blocks []indexer.Block
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &blocks); err != nil {
 		return nil, fmt.Errorf("query blocks failed: %w", err)
 	}
 
-	// Convert to BlockRow to decouple from ClickHouse-specific tags
-	result := make([]indexer.BlockRow, len(rows))
-	for i, row := range rows {
-		result[i] = indexer.BlockRow{
-			Height:          row.Height,
-			Hash:            row.Hash,
-			Time:            row.Time,
-			ProposerAddress: row.ProposerAddress,
-			NumTxs:          row.NumTxs,
-		}
+	return blocks, nil
+}
+
+// QueryBlockSummaries retrieves a paginated list of block summaries ordered by height descending.
+// If cursor > 0, only summaries with height < cursor are returned.
+// The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
+func (db *ChainDB) QueryBlockSummaries(ctx context.Context, cursor uint64, limit int) ([]indexer.BlockSummary, error) {
+	conds := make([]string, 0)
+	args := make([]any, 0)
+	if cursor > 0 {
+		conds = append(conds, "height < ?")
+		args = append(args, cursor)
 	}
 
-	return result, nil
+	query := fmt.Sprintf(`SELECT height, num_txs FROM "%s"."block_summaries" FINAL`, db.Name)
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	query += " ORDER BY height DESC LIMIT ?"
+	args = append(args, limit)
+
+	var rows []indexer.BlockSummary
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("query block summaries failed: %w", err)
+	}
+
+	return rows, nil
 }
 
 // QueryTransactions retrieves a paginated list of transactions ordered by height descending.
 // If cursor > 0, only transactions with height < cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
-func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit int) ([]indexer.TransactionRow, error) {
-	type rowInternal struct {
-		Height       uint64    `ch:"height"`
-		TxHash       string    `ch:"tx_hash"`
-		Time         time.Time `ch:"time"`
-		MessageType  string    `ch:"message_type"`
-		Counterparty *string   `ch:"counterparty"`
-		Signer       string    `ch:"signer"`
-		Amount       *uint64   `ch:"amount"`
-		Fee          uint64    `ch:"fee"`
-	}
-
+func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit int) ([]indexer.Transaction, error) {
 	conds := make([]string, 0)
 	args := make([]any, 0)
 	if cursor > 0 {
@@ -130,34 +145,19 @@ func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit i
 		args = append(args, cursor)
 	}
 
-	query := fmt.Sprintf(`SELECT height, tx_hash, time, message_type, counterparty, signer, amount, fee FROM "%s"."txs"`, db.Name)
+	query := fmt.Sprintf(`SELECT height, tx_hash, time, message_type, counterparty, signer, amount, fee, created_height FROM "%s"."txs"`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
 	query += " ORDER BY height DESC LIMIT ?"
 	args = append(args, limit)
 
-	rows := make([]rowInternal, 0, limit)
-	if err := db.Db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
+	var txs []indexer.Transaction
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &txs); err != nil {
 		return nil, fmt.Errorf("query transactions failed: %w", err)
 	}
 
-	// Convert to TransactionRow to decouple from ClickHouse-specific tags
-	result := make([]indexer.TransactionRow, len(rows))
-	for i, row := range rows {
-		result[i] = indexer.TransactionRow{
-			Height:       row.Height,
-			TxHash:       row.TxHash,
-			Time:         row.Time,
-			MessageType:  row.MessageType,
-			Counterparty: row.Counterparty,
-			Signer:       row.Signer,
-			Amount:       row.Amount,
-			Fee:          row.Fee,
-		}
-	}
-
-	return result, nil
+	return txs, nil
 }
 
 // HasBlock reports whether a block exists at the specified height.
@@ -202,6 +202,15 @@ func (db *ChainDB) Exec(ctx context.Context, query string, args ...any) error {
 // If cursor > 0, only transactions with height < cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
 func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int) ([]map[string]interface{}, error) {
+	type rowInternal struct {
+		Height    uint64  `ch:"height"`
+		TxHash    string  `ch:"tx_hash"`
+		MsgRaw    *string `ch:"msg_raw"`
+		PublicKey *string `ch:"public_key"`
+		Signature *string `ch:"signature"`
+		CreatedAt time.Time `ch:"created_at"`
+	}
+
 	conds := make([]string, 0)
 	args := make([]any, 0)
 	if cursor > 0 {
@@ -216,49 +225,22 @@ func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limi
 	query += " ORDER BY height DESC LIMIT ?"
 	args = append(args, limit)
 
-	rows, err := db.Db.QueryContext(ctx, query, args...)
-	if err != nil {
+	rows := make([]rowInternal, 0, limit)
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("query transactions raw failed: %w", err)
 	}
-	defer rows.Close()
 
-	// Get column names
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get columns: %w", err)
-	}
-
-	// Prepare slice to hold results
-	var results []map[string]interface{}
-
-	for rows.Next() {
-		// Create a slice of interface{} to hold each value
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
+	// Convert to map[string]interface{} for flexible JSON response
+	results := make([]map[string]interface{}, len(rows))
+	for i, row := range rows {
+		results[i] = map[string]interface{}{
+			"height":     row.Height,
+			"tx_hash":    row.TxHash,
+			"msg_raw":    row.MsgRaw,
+			"public_key": row.PublicKey,
+			"signature":  row.Signature,
+			"created_at": row.CreatedAt.UTC().Format(time.RFC3339),
 		}
-
-		// Scan the row into the value pointers
-		if err := rows.Scan(valuePtrs...); err != nil {
-			return nil, fmt.Errorf("failed to scan row: %w", err)
-		}
-
-		// Create a map for this row
-		rowMap := make(map[string]interface{})
-		for i, col := range columns {
-			// Handle nil values and convert types as needed
-			if values[i] != nil {
-				rowMap[col] = values[i]
-			} else {
-				rowMap[col] = nil
-			}
-		}
-		results = append(results, rowMap)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows iteration error: %w", err)
 	}
 
 	return results, nil
@@ -277,18 +259,16 @@ func (db *ChainDB) DescribeTable(ctx context.Context, tableName string) ([]Colum
 
 	var columns []Column
 	for rows.Next() {
-		var name, dtype string
-		var defaultType, defaultExpr, comment, codecExpr, ttlExpr sql.NullString
-
+		// We only need name and type, ignore the rest of the columns
 		// DESCRIBE TABLE returns: name, type, default_type, default_expression, comment, codec_expression, ttl_expression
-		if err := rows.Scan(&name, &dtype, &defaultType, &defaultExpr, &comment, &codecExpr, &ttlExpr); err != nil {
+		var col Column
+		var dummy1, dummy2, dummy3, dummy4, dummy5 string
+
+		if err := rows.Scan(&col.Name, &col.Type, &dummy1, &dummy2, &dummy3, &dummy4, &dummy5); err != nil {
 			return nil, fmt.Errorf("failed to scan describe row: %w", err)
 		}
 
-		columns = append(columns, Column{
-			Name: name,
-			Type: dtype,
-		})
+		columns = append(columns, col)
 	}
 
 	if err := rows.Err(); err != nil {

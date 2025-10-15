@@ -31,23 +31,24 @@ func (c *Controller) HandleSchema(w http.ResponseWriter, r *http.Request) {
 	// Validate table name to prevent SQL injection
 	validTables := map[string]string{
 		"blocks":           "blocks",
+		"block_summaries":  "block_summaries",
 		"transactions":     "txs",
 		"transactions_raw": "txs_raw",
 	}
 
 	actualTable, ok := validTables[tableName]
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid table name. Must be one of: blocks, transactions, transactions_raw")
-		return
-	}
-
-	store, ok := c.App.ChainsDB.Load(chainID)
-	if !ok {
-		writeError(w, http.StatusNotFound, "chain not indexed")
+		writeError(w, http.StatusBadRequest, "invalid table name. Must be one of: blocks, block_summaries, transactions, transactions_raw")
 		return
 	}
 
 	ctx := context.Background()
+
+	store, ok := c.App.LoadChainStore(ctx, chainID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "chain not indexed")
+		return
+	}
 
 	// Get column information using DESCRIBE TABLE
 	columns, err := store.DescribeTable(ctx, actualTable)

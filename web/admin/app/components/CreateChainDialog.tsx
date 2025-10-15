@@ -28,8 +28,8 @@ export default function CreateChainDialog({
 }: CreateChainDialogProps) {
   const [chainId, setChainId] = useState('')
   const [chainName, setChainName] = useState('')
-  const [image, setImage] = useState('')
-  const [rpcEndpoints, setRpcEndpoints] = useState('')
+  const [image, setImage] = useState('localhost:5001/canopyx-indexer:dev')
+  const [rpcEndpoints, setRpcEndpoints] = useState('https://node1.canopy.us.nodefleet.net/rpc')
   const [minReplicas, setMinReplicas] = useState(1)
   const [maxReplicas, setMaxReplicas] = useState(3)
   const [notes, setNotes] = useState('')

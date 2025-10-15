@@ -6,6 +6,7 @@ import (
 
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
 	"go.temporal.io/sdk/temporal"
+	"go.uber.org/zap"
 )
 
 // IndexTransactions indexes transactions for a given block.
@@ -31,6 +32,10 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexBlockInpu
 	}
 
 	numTxs := uint32(len(txs))
+	c.Logger.Debug("IndexTransactions fetched from RPC",
+		zap.Uint64("height", in.Height),
+		zap.Uint32("numTxs", numTxs),
+		zap.Int("txsRaw_len", len(txsRaw)))
 
 	if err := chainDb.InsertTransactions(ctx, txs, txsRaw); err != nil {
 		return types.IndexTransactionsOutput{}, err

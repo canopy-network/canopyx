@@ -19,7 +19,7 @@ spec:
             # Logging
             - { name: LOG_LEVEL, value: "debug" }
             # Query server
-            - { name: ADDR, value: ":8082" }
+            - { name: ADDR, value: ":3001" }
             # ClickHouse connection
             - { name: CLICKHOUSE_ADDR, value: "clickhouse://clickhouse-hdx-oss-v2-clickhouse.default.svc.cluster.local:9000?sslmode=disable" }
             # CHDEBUG=1 logs failed queries
@@ -30,20 +30,20 @@ spec:
             - { name: REPORTS_DB, value: "canopyx_reports" }
           ports:
             - name: http
-              containerPort: 8082
+              containerPort: 3001
           readinessProbe:
             httpGet:
               path: /health
-              port: 8082
-            initialDelaySeconds: 5
+              port: 3001
+            initialDelaySeconds: 10
             periodSeconds: 5
-            timeoutSeconds: 3
+            timeoutSeconds: 5
             successThreshold: 1
-            failureThreshold: 3
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /health
-              port: 8082
+              port: 3001
             initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 3

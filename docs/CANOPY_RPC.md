@@ -1,4 +1,3 @@
-
 Mention by @Andrew that these are probably the most important RPCs to index
 
 Docs: https://github.com/canopy-network/canopy/blob/main/cmd/rpc/README.md

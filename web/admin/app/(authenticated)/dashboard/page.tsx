@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, useMemo } from 'react'
+import { useCallback, useEffect, useState, useMemo, Fragment } from 'react'
 import Link from 'next/link'
 import { apiFetch } from '../../lib/api'
 import { useToast } from '../../components/ToastProvider'
@@ -612,9 +612,8 @@ export default function DashboardPage() {
                   const progress = chain.head > 0 ? (chain.last_indexed / chain.head) * 100 : 0
 
                   return (
-                    <>
+                    <Fragment key={chain.chain_id}>
                       <tr
-                        key={chain.chain_id}
                         onClick={() =>
                           setExpandedRow(isExpanded ? null : chain.chain_id)
                         }
@@ -934,7 +933,7 @@ export default function DashboardPage() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   )
                 })}
               </tbody>

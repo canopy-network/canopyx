@@ -1,0 +1,1050 @@
+openapi: 3.0.3
+info:
+  title: CanopyX API
+  description: |
+    CanopyX provides three main API components:
+    - **Admin API**: Chain management and monitoring (requires authentication)
+    - **Query API**: Public blockchain data query interface
+
+    All APIs use JSON for request/response bodies.
+  version: 1.0.0
+  contact:
+    name: Canopy Network
+    url: https://canopy.network
+
+servers:
+  - url: http://localhost:3000
+    description: Admin API (local development)
+  - url: http://localhost:3001
+    description: Query API (local development)
+
+tags:
+  - name: Admin - Health
+    description: Health check endpoints
+  - name: Admin - Auth
+    description: Authentication and session management
+  - name: Admin - Chains
+    description: Chain configuration and management
+  - name: Admin - Monitoring
+    description: Chain monitoring and indexing progress
+  - name: Admin - Operations
+    description: Indexing operations (headscan, gapscan, reindex)
+  - name: Query - Health
+    description: Health check endpoints
+  - name: Query - Blocks
+    description: Query blockchain blocks
+  - name: Query - Transactions
+    description: Query blockchain transactions
+  - name: Query - Stats
+    description: Chain statistics and metrics
+  - name: Query - Schema
+    description: Database schema information
+
+paths:
+  # ============================================================================
+  # ADMIN API
+  # ============================================================================
+
+  /api/health:
+    get:
+      tags:
+        - Admin - Health
+      summary: Health check
+      description: Returns the health status of the admin service
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /auth/login:
+    post:
+      tags:
+        - Admin - Auth
+      summary: Login
+      description: Authenticate and receive a session token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  format: password
+                  example: admin
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              description: Session cookie
+              schema:
+                type: string
+                example: session=abc123; Path=/; HttpOnly
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: login successful
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags:
+        - Admin - Auth
+      summary: Logout
+      description: Invalidate the current session
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: logout successful
+
+  /api/chains:
+    get:
+      tags:
+        - Admin - Chains
+      summary: List all chains
+      description: Get a list of all configured blockchain chains
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      responses:
+        '200':
+          description: List of chains
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Chain'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags:
+        - Admin - Chains
+      summary: Create or update a chain
+      description: Upsert a blockchain chain configuration
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChainInput'
+      responses:
+        '200':
+          description: Chain created/updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chain'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/chains/status:
+    get:
+      tags:
+        - Admin - Chains
+      summary: Get chain statuses
+      description: Get indexing status for all chains
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Chain statuses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChainStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    patch:
+      tags:
+        - Admin - Chains
+      summary: Bulk update chain statuses
+      description: Pause/unpause or delete multiple chains
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required:
+                  - chain_id
+                properties:
+                  chain_id:
+                    type: string
+                  paused:
+                    type: integer
+                    enum: [0, 1]
+                  deleted:
+                    type: integer
+                    enum: [0, 1]
+      responses:
+        '200':
+          description: Chains updated successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/chains/{id}:
+    get:
+      tags:
+        - Admin - Chains
+      summary: Get chain details
+      description: Get detailed information about a specific chain
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: Chain details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Chain'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    patch:
+      tags:
+        - Admin - Chains
+      summary: Update chain
+      description: Partially update a chain configuration
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paused:
+                  type: integer
+                  enum: [0, 1]
+                deleted:
+                  type: integer
+                  enum: [0, 1]
+                rpc_endpoints:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Chain updated successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags:
+        - Admin - Chains
+      summary: Delete chain
+      description: Mark a chain as deleted (soft delete)
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: Chain deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/chains/{id}/progress:
+    get:
+      tags:
+        - Admin - Monitoring
+      summary: Get indexing progress
+      description: Get current indexing progress for a chain
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: Indexing progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexingProgress'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/chains/{id}/gaps:
+    get:
+      tags:
+        - Admin - Monitoring
+      summary: Get indexing gaps
+      description: Get gaps in indexed blocks for a chain
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: List of gaps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Gap'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/chains/{id}/progress-history:
+    get:
+      tags:
+        - Admin - Monitoring
+      summary: Get indexing progress history
+      description: Get historical indexing progress metrics for charting
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - name: hours
+          in: query
+          description: Time window in hours (1-168)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 168
+            default: 24
+      responses:
+        '200':
+          description: Progress history data points
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProgressHistoryPoint'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/chains/{id}/headscan:
+    post:
+      tags:
+        - Admin - Operations
+      summary: Trigger head scan
+      description: Manually trigger a head scan to index recent blocks
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: Head scan triggered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: head scan triggered
+                  workflow_id:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/chains/{id}/gapscan:
+    post:
+      tags:
+        - Admin - Operations
+      summary: Trigger gap scan
+      description: Manually trigger a gap scan to identify and fill missing blocks
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: Gap scan triggered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: gap scan triggered
+                  workflow_id:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/chains/{id}/reindex:
+    post:
+      tags:
+        - Admin - Operations
+      summary: Trigger reindex
+      description: Reindex specific blocks for a chain
+      security:
+        - bearerAuth: []
+        - sessionAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - heights
+              properties:
+                heights:
+                  type: array
+                  items:
+                    type: integer
+                    format: uint64
+                  description: List of block heights to reindex
+                  example: [100, 101, 102]
+      responses:
+        '200':
+          description: Reindex triggered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: reindex triggered for 3 blocks
+                  count:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================================================
+  # QUERY API
+  # ============================================================================
+
+  /health:
+    get:
+      tags:
+        - Query - Health
+      summary: Health check
+      description: Returns the health status of the query service
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /chains/{id}/blocks:
+    get:
+      tags:
+        - Query - Blocks
+      summary: Query blocks
+      description: Get paginated list of blocks for a chain
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Paginated blocks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Block'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chains/{id}/transactions:
+    get:
+      tags:
+        - Query - Transactions
+      summary: Query transactions
+      description: Get paginated list of transactions for a chain
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Paginated transactions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Transaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chains/{id}/transactions_raw:
+    get:
+      tags:
+        - Query - Transactions
+      summary: Query raw transactions
+      description: Get paginated list of raw transaction data with all fields
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Paginated raw transactions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TransactionRaw'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chains/{id}/stats/hour:
+    get:
+      tags:
+        - Query - Stats
+      summary: Hourly statistics
+      description: Get transaction statistics grouped by hour
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: Hourly stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HourlyStats'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chains/{id}/stats/day:
+    get:
+      tags:
+        - Query - Stats
+      summary: Daily statistics
+      description: Get transaction statistics grouped by day
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: Daily stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DailyStats'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chains/{id}/stats/24h:
+    get:
+      tags:
+        - Query - Stats
+      summary: 24-hour rolling statistics
+      description: Get transaction statistics for the last 24 hours
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: 24-hour rolling stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Rolling24hStats'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /chains/{id}/schema:
+    get:
+      tags:
+        - Query - Schema
+      summary: Get database schema
+      description: Get schema information for a specific table
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - name: table
+          in: query
+          required: true
+          description: Table name to get schema for
+          schema:
+            type: string
+            enum: [blocks, transactions, transactions_raw]
+          example: blocks
+      responses:
+        '200':
+          description: Schema information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  columns:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ColumnInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Token
+      description: |
+        Admin token authentication for API access.
+        Use the ADMIN_TOKEN environment variable value.
+
+        Example: `Authorization: Bearer your-admin-token`
+
+        This is the recommended authentication method for API consumers and CLI tools.
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: cx_session
+      description: |
+        Session-based authentication using JWT stored in HTTP-only cookie.
+        Obtained from /auth/login endpoint.
+
+        This is used by the web UI. API consumers should use bearerAuth instead.
+
+  parameters:
+    ChainId:
+      name: id
+      in: path
+      required: true
+      description: Chain identifier
+      schema:
+        type: string
+      example: example-chain
+
+    Cursor:
+      name: cursor
+      in: query
+      description: Pagination cursor (block height)
+      schema:
+        type: integer
+        format: uint64
+        minimum: 0
+      example: 12345
+
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of results to return
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      example: 20
+
+  schemas:
+    Chain:
+      type: object
+      properties:
+        chain_id:
+          type: string
+          example: example-chain
+        chain_name:
+          type: string
+          example: Example Blockchain Network
+        rpc_endpoints:
+          type: array
+          items:
+            type: string
+          example: ["https://rpc.example.com"]
+        image:
+          type: string
+          description: Docker image for the indexer
+          example: canopy-indexer:latest
+        min_replicas:
+          type: integer
+          minimum: 1
+          default: 1
+        max_replicas:
+          type: integer
+          minimum: 1
+          default: 1
+        paused:
+          type: integer
+          enum: [0, 1]
+          description: Whether indexing is paused
+        deleted:
+          type: integer
+          enum: [0, 1]
+          description: Whether chain is soft-deleted
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ChainInput:
+      type: object
+      required:
+        - chain_id
+        - chain_name
+        - rpc_endpoints
+      properties:
+        chain_id:
+          type: string
+        chain_name:
+          type: string
+        rpc_endpoints:
+          type: array
+          items:
+            type: string
+          minItems: 1
+        image:
+          type: string
+        min_replicas:
+          type: integer
+          minimum: 1
+        max_replicas:
+          type: integer
+          minimum: 1
+
+    ChainStatus:
+      type: object
+      properties:
+        chain_id:
+          type: string
+        paused:
+          type: integer
+          enum: [0, 1]
+        deleted:
+          type: integer
+          enum: [0, 1]
+        last_indexed:
+          type: integer
+          format: uint64
+        latest_head:
+          type: integer
+          format: uint64
+
+    IndexingProgress:
+      type: object
+      properties:
+        chain_id:
+          type: string
+        last_indexed_height:
+          type: integer
+          format: uint64
+        latest_chain_height:
+          type: integer
+          format: uint64
+        blocks_behind:
+          type: integer
+        percentage_complete:
+          type: number
+          format: float
+
+    Gap:
+      type: object
+      properties:
+        from_h:
+          type: integer
+          format: uint64
+          description: Start of gap range (inclusive)
+        to_h:
+          type: integer
+          format: uint64
+          description: End of gap range (inclusive)
+      example:
+        from_h: 100
+        to_h: 105
+
+    ProgressHistoryPoint:
+      type: object
+      properties:
+        time:
+          type: string
+          format: date-time
+          description: Timestamp of this data point
+        height:
+          type: integer
+          format: uint64
+          description: Block height at this time
+        avg_latency:
+          type: number
+          format: float
+          description: Average indexing latency in seconds
+        avg_processing_time:
+          type: number
+          format: float
+          description: Average processing time in milliseconds
+        blocks_indexed:
+          type: integer
+          description: Number of blocks indexed in this time bucket
+        velocity:
+          type: number
+          format: float
+          description: Indexing velocity in blocks per minute
+
+    Block:
+      type: object
+      properties:
+        height:
+          type: integer
+          format: uint64
+        hash:
+          type: string
+        time:
+          type: string
+          format: date-time
+        proposer:
+          type: string
+          description: Block proposer address
+        tx_count:
+          type: integer
+          description: Number of transactions in block
+
+    Transaction:
+      type: object
+      properties:
+        height:
+          type: integer
+          format: uint64
+        hash:
+          type: string
+        time:
+          type: string
+          format: date-time
+        message_type:
+          type: string
+        signer:
+          type: string
+        counterparty:
+          type: string
+          nullable: true
+        amount:
+          type: integer
+          format: uint64
+          nullable: true
+        fee:
+          type: integer
+          format: uint64
+
+    TransactionRaw:
+      type: object
+      properties:
+        height:
+          type: integer
+          format: uint64
+        tx_hash:
+          type: string
+        msg_raw:
+          type: string
+          nullable: true
+          description: Raw message JSON
+        public_key:
+          type: string
+          nullable: true
+        signature:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    HourlyStats:
+      type: object
+      properties:
+        hour:
+          type: string
+          format: date-time
+          description: Hour timestamp
+        tx_count:
+          type: integer
+          description: Transaction count for this hour
+        unique_signers:
+          type: integer
+          description: Unique signer count for this hour
+
+    DailyStats:
+      type: object
+      properties:
+        day:
+          type: string
+          format: date
+          description: Day timestamp
+        tx_count:
+          type: integer
+          description: Transaction count for this day
+        unique_signers:
+          type: integer
+          description: Unique signer count for this day
+
+    Rolling24hStats:
+      type: object
+      properties:
+        tx_count:
+          type: integer
+          description: Transaction count in last 24 hours
+        unique_signers:
+          type: integer
+          description: Unique signer count in last 24 hours
+        time:
+          type: string
+          format: date-time
+          description: Current timestamp
+
+    ColumnInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+
+    PagedResponse:
+      type: object
+      properties:
+        limit:
+          type: integer
+        next_cursor:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Cursor for next page, null if no more pages
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

@@ -483,3 +483,130 @@ func TestConcurrentRecordIndexed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, expectedLast, lastHeight, "Expected all heights to be recorded")
 }
+
+// TestSaveBlockSummary tests inserting and retrieving block summaries
+func TestSaveBlockSummary(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-summary"
+
+	// Create test chain and chain DB
+	chain := integration.CreateTestChain(chainID, "Test Chain Summary")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	chainDb, err := integration.NewChainDb(ctx, chainID)
+	require.NoError(t, err, "Failed to create chain DB")
+	defer chainDb.Close()
+
+	tests := []struct {
+		name   string
+		height uint64
+		numTxs uint32
+	}{
+		{
+			name:   "save summary with no transactions",
+			height: 1,
+			numTxs: 0,
+		},
+		{
+			name:   "save summary with transactions",
+			height: 2,
+			numTxs: 10,
+		},
+		{
+			name:   "save summary with many transactions",
+			height: 3,
+			numTxs: 1000,
+		},
+		{
+			name:   "update existing summary (ReplacingMergeTree)",
+			height: 2,
+			numTxs: 15, // Update height 2 with new count
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := chainDb.InsertBlockSummary(ctx, tt.height, tt.numTxs)
+			require.NoError(t, err, "Failed to insert block summary")
+
+			// Verify the summary was inserted
+			summary, err := chainDb.GetBlockSummary(ctx, tt.height)
+			require.NoError(t, err, "Failed to get block summary")
+			assert.Equal(t, tt.height, summary.Height, "Unexpected height")
+			assert.Equal(t, tt.numTxs, summary.NumTxs, "Unexpected numTxs")
+		})
+	}
+}
+
+// TestBlockSummaryIsolation tests that block summaries are isolated per chain
+func TestBlockSummaryIsolation(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+
+	// Create two test chains
+	chain1 := integration.CreateTestChain("chain-1", "Chain 1")
+	chain2 := integration.CreateTestChain("chain-2", "Chain 2")
+	integration.SeedData(t, integration.WithChains(chain1, chain2))
+
+	// Create chain DBs
+	chainDb1, err := integration.NewChainDb(ctx, "chain-1")
+	require.NoError(t, err)
+	defer chainDb1.Close()
+
+	chainDb2, err := integration.NewChainDb(ctx, "chain-2")
+	require.NoError(t, err)
+	defer chainDb2.Close()
+
+	// Insert summaries for chain 1
+	err = chainDb1.InsertBlockSummary(ctx, 100, 50)
+	require.NoError(t, err)
+
+	// Insert summaries for chain 2 (same height, different data)
+	err = chainDb2.InsertBlockSummary(ctx, 100, 75)
+	require.NoError(t, err)
+
+	// Verify isolation - chain 1 should have its own data
+	summary1, err := chainDb1.GetBlockSummary(ctx, 100)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(50), summary1.NumTxs, "Chain 1 should have 50 txs")
+
+	// Verify isolation - chain 2 should have its own data
+	summary2, err := chainDb2.GetBlockSummary(ctx, 100)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(75), summary2.NumTxs, "Chain 2 should have 75 txs")
+}
+
+// TestBlockSummaryReplacingMergeTree tests that ReplacingMergeTree deduplicates correctly
+func TestBlockSummaryReplacingMergeTree(t *testing.T) {
+	integration.CleanDB(t)
+
+	ctx := context.Background()
+	chainID := "test-chain-rmt-summary"
+
+	// Create test chain and chain DB
+	chain := integration.CreateTestChain(chainID, "Test Chain RMT Summary")
+	integration.SeedData(t, integration.WithChains(chain))
+
+	chainDb, err := integration.NewChainDb(ctx, chainID)
+	require.NoError(t, err)
+	defer chainDb.Close()
+
+	// Insert initial summary
+	err = chainDb.InsertBlockSummary(ctx, 100, 10)
+	require.NoError(t, err)
+
+	// Insert updated summary for same height (simulating correction)
+	err = chainDb.InsertBlockSummary(ctx, 100, 15)
+	require.NoError(t, err)
+
+	// Wait a moment for ClickHouse to merge
+	time.Sleep(500 * time.Millisecond)
+
+	// Should get the latest value
+	summary, err := chainDb.GetBlockSummary(ctx, 100)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(15), summary.NumTxs, "Expected latest value from ReplacingMergeTree")
+}

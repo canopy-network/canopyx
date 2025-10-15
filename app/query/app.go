@@ -22,6 +22,11 @@ func Initialize(ctx context.Context) *types.App {
 		logger.Fatal("Unable to initialize basic databases", zap.Error(basicDbsErr))
 	}
 
+	// Initialize admin database tables (chains, index_progress, etc.)
+	if err := indexerDb.InitializeDB(ctx); err != nil {
+		logger.Fatal("Unable to initialize admin database tables", zap.Error(err))
+	}
+
 	chainsDb, chainsDbErr := indexerDb.EnsureChainsDbs(ctx)
 	if chainsDbErr != nil {
 		logger.Fatal("Unable to initialize chains database", zap.Error(chainsDbErr))

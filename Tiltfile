@@ -172,7 +172,7 @@ k8s_yaml(kustomize("./deploy/k8s/query/overlays/local"))
 
 k8s_resource(
     "canopyx-query",
-    port_forwards=["8082:8082"],
+    port_forwards=["3001:3001"],
     labels=['apps'],
     resource_deps=["clickhouse-server"],
     pod_readiness='wait',
@@ -189,7 +189,7 @@ docker_build(
     dockerfile="./web/admin/Dockerfile",
     build_args={
         "NEXT_PUBLIC_API_BASE": "http://localhost:3000",
-        "NEXT_PUBLIC_QUERY_SERVICE_URL": "http://localhost:8082",
+        "NEXT_PUBLIC_QUERY_SERVICE_URL": "http://localhost:3001",
     },
     live_update=[
         # Fall back to full rebuild if dependencies change (must be first)

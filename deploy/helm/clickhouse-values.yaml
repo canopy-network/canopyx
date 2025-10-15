@@ -1,2 +1,10 @@
 global:
   storageClassName: "standard"
+clickhouse:
+  config:
+    users:
+      # added this here since the latest jdbc driver does not support connect with authentication
+      otelUserName: "canopyx"
+      otelUserPassword: "canopyx"
+    clusterCidrs:
+      - "0.0.0.0/0"

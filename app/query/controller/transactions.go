@@ -2,19 +2,14 @@ package controller
 
 import (
     "context"
-    "net/http"
-
     "github.com/canopy-network/canopyx/pkg/db/models/indexer"
     "github.com/gorilla/mux"
+    "go.uber.org/zap"
+    "net/http"
 )
 
-type pagedResponse[T any] struct {
-    Data       []T     `json:"data"`
-    Limit      int     `json:"limit"`
-    NextCursor *uint64 `json:"next_cursor,omitempty"`
-}
-
-func (c *Controller) HandleBlocks(w http.ResponseWriter, r *http.Request) {
+// HandleTransactions returns transaction data
+func (c *Controller) HandleTransactions(w http.ResponseWriter, r *http.Request) {
     chainID := mux.Vars(r)["id"]
     if chainID == "" {
         writeError(w, http.StatusBadRequest, "missing chain id")
@@ -36,7 +31,7 @@ func (c *Controller) HandleBlocks(w http.ResponseWriter, r *http.Request) {
     }
 
     // Query with limit+1 to detect if there are more pages
-    rows, err := store.QueryBlocks(ctx, page.Cursor, page.Limit+1)
+    rows, err := store.QueryTransactions(ctx, page.Cursor, page.Limit+1)
     if err != nil {
         writeError(w, http.StatusInternalServerError, "query failed")
         return
@@ -49,15 +44,15 @@ func (c *Controller) HandleBlocks(w http.ResponseWriter, r *http.Request) {
         nextCursor = &cursor
     }
 
-    writeJSON(w, http.StatusOK, pagedResponse[indexer.Block]{
+    writeJSON(w, http.StatusOK, pagedResponse[indexer.Transaction]{
         Data:       rows,
         Limit:      page.Limit,
         NextCursor: nextCursor,
     })
 }
 
-// HandleBlockSummaries returns block summary data
-func (c *Controller) HandleBlockSummaries(w http.ResponseWriter, r *http.Request) {
+// HandleTransactionsRaw returns raw transaction data with all columns
+func (c *Controller) HandleTransactionsRaw(w http.ResponseWriter, r *http.Request) {
     chainID := mux.Vars(r)["id"]
     if chainID == "" {
         writeError(w, http.StatusBadRequest, "missing chain id")
@@ -79,8 +74,9 @@ func (c *Controller) HandleBlockSummaries(w http.ResponseWriter, r *http.Request
     }
 
     // Query with limit+1 to detect if there are more pages
-    rows, err := store.QueryBlockSummaries(ctx, page.Cursor, page.Limit+1)
+    rows, err := store.QueryTransactionsRaw(ctx, page.Cursor, page.Limit+1)
     if err != nil {
+        c.App.Logger.Error("QueryTransactionsRaw failed", zap.Error(err), zap.String("chainID", chainID))
         writeError(w, http.StatusInternalServerError, "query failed")
         return
     }
@@ -88,11 +84,11 @@ func (c *Controller) HandleBlockSummaries(w http.ResponseWriter, r *http.Request
     nextCursor := (*uint64)(nil)
     if len(rows) > page.Limit {
         rows = rows[:page.Limit]
-        cursor := rows[len(rows)-1].Height
+        cursor := rows[len(rows)-1]["height"].(uint64)
         nextCursor = &cursor
     }
 
-    writeJSON(w, http.StatusOK, pagedResponse[indexer.BlockSummary]{
+    writeJSON(w, http.StatusOK, pagedResponse[map[string]interface{}]{
         Data:       rows,
         Limit:      page.Limit,
         NextCursor: nextCursor,
