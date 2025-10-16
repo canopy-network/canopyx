@@ -30,10 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.24.x'
           cache: true
@@ -49,10 +49,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.24.x'
           cache: true
@@ -79,18 +79,18 @@ jobs:
           fi
 
   docker-build:
-    name: Docker Build (no push)
+    name: Docker Build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         image:
-          - { name: admin,      file: Dockerfile.admin,      build-args: "" }
-          - { name: admin-web,  file: web/admin/Dockerfile,  build-args: "" }
-          - { name: indexer,    file: Dockerfile.indexer,    build-args: "" }
-          - { name: controller, file: Dockerfile.controller, build-args: "" }
-          - { name: query,      file: Dockerfile.query,      build-args: "" }
-          - { name: reporter,   file: Dockerfile.reporter,   build-args: "" }
+          - { name: admin,      file: Dockerfile.admin,      context: ".",           build-args: "" }
+          - { name: admin-web,  file: web/admin/Dockerfile,  context: "./web/admin", build-args: "" }
+          - { name: indexer,    file: Dockerfile.indexer,    context: ".",           build-args: "" }
+          - { name: controller, file: Dockerfile.controller, context: ".",           build-args: "" }
+          - { name: query,      file: Dockerfile.query,      context: ".",           build-args: "" }
+          - { name: reporter,   file: Dockerfile.reporter,   context: ".",           build-args: "" }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -144,7 +144,7 @@ jobs:
       - name: Build ${{ matrix.image.name }}
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.image.context }}
           file: ${{ matrix.image.file }}
           push: ${{ github.event_name == 'push' && github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' && inputs.PUSH }}
           tags: ${{ steps.meta.outputs.tags }}

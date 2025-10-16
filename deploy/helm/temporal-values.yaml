@@ -6,24 +6,25 @@ server:
       namespace:
         - name: canopyx
           retention: 1d
-    # Increase RPC rate limits to handle high query volumes
-    # Default limits are too low for our use case (controller + admin polling every 15-30s)
+    # Increase RPC rate limits to handle high concurrency (700k+ workflows)
+    # Tuned for massive parallel block indexing workloads
     limits:
       maxIDLengthLimit: 255
       # Frontend service RPC rate limits (handles client requests)
       frontend:
-        rps: 4000                    # Requests per second (default: 1200)
-        namespaceReplicationInducingAPIsRPS: 100  # default: 20
-      # History service rate limits
+        rps: 10000                   # Requests per second (default: 1200, was: 4000)
+        namespaceReplicationInducingAPIsRPS: 500   # default: 20, was: 100
+      # History service rate limits (workflow execution history)
       history:
-        rps: 9000                    # default: 9000
-      # Matching service rate limits (task queue operations)
+        rps: 20000                   # default: 9000
+      # Matching service rate limits (task queue operations - critical for high throughput)
       matching:
-        rps: 4000                    # default: 1200
+        rps: 15000                   # default: 1200, was: 4000 - CRITICAL for queue operations
       # Worker service rate limits
       worker:
-        rps: 1000                    # default: 1000
+        rps: 5000                    # default: 1000
     # Configure persistence to use PostgreSQL instead of Cassandra
+    # Increased connection pools for high-concurrency workloads (700k+ workflows)
     persistence:
       default:
         driver: "sql"
@@ -34,8 +35,8 @@ server:
           database: "temporal"
           user: "temporal"
           password: "temporal"
-          maxConns: 20
-          maxIdleConns: 20
+          maxConns: 200              # Increased from 20 to support high concurrency
+          maxIdleConns: 100          # Increased from 20 to reduce connection churn
           maxConnLifetime: "1h"
       visibility:
         driver: "sql"
@@ -46,8 +47,8 @@ server:
           database: "temporal_visibility"
           user: "temporal"
           password: "temporal"
-          maxConns: 10
-          maxIdleConns: 10
+          maxConns: 100              # Increased from 10 to support high query load
+          maxIdleConns: 50           # Increased from 10 to reduce connection churn
           maxConnLifetime: "1h"
 
 prometheus:

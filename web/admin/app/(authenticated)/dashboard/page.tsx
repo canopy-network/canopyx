@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useMemo, Fragment } from 'react'
 import Link from 'next/link'
 import { apiFetch } from '../../lib/api'
 import { useToast } from '../../components/ToastProvider'
+import CreateChainDialog from '../../components/CreateChainDialog'
 
 // Updated types to match new API response
 type QueueStatus = {
@@ -127,6 +128,8 @@ export default function DashboardPage() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
   const [currentPage, setCurrentPage] = useState(1)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
   const { notify } = useToast()
 
   const ITEMS_PER_PAGE = 50
@@ -324,6 +327,24 @@ export default function DashboardPage() {
     }
   }
 
+  const handleCreateChain = async (payload: any) => {
+    setSaving(true)
+    try {
+      const res = await apiFetch('/api/chains', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error('Failed to create chain')
+      notify('Chain created successfully')
+      setCreateDialogOpen(false)
+      await loadStatus()
+    } catch (err) {
+      notify('Failed to create chain', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (loading && chains.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -353,22 +374,35 @@ export default function DashboardPage() {
             Monitor your blockchain indexer infrastructure
           </p>
         </div>
-        <button onClick={loadStatus} className="btn-secondary" disabled={loading}>
-          <svg
-            className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-          Refresh
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setCreateDialogOpen(true)} className="btn">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            Add Chain
+          </button>
+          <button onClick={loadStatus} className="btn-secondary" disabled={loading}>
+            <svg
+              className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Stats Grid - 6 cards */}
@@ -459,9 +493,9 @@ export default function DashboardPage() {
             </svg>
             <h3 className="mt-4 text-lg font-semibold text-slate-300">No chains configured</h3>
             <p className="mt-2 text-sm text-slate-500">Get started by adding your first chain</p>
-            <Link href="/chains" className="btn mt-6">
+            <button onClick={() => setCreateDialogOpen(true)} className="btn mt-6">
               Add Chain
-            </Link>
+            </button>
           </div>
         </div>
       ) : paginatedChains.length === 0 ? (
@@ -966,6 +1000,13 @@ export default function DashboardPage() {
           )}
         </div>
       )}
+
+      <CreateChainDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onSubmit={handleCreateChain}
+        saving={saving}
+      />
     </div>
   )
 }

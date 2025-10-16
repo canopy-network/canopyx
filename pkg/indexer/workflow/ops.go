@@ -16,29 +16,28 @@ const (
 	IndexBlockWorkflowName = "IndexBlockWorkflow"
 	SchedulerWorkflowName  = "SchedulerWorkflow"
 
-	// Priority levels (time-based calculation)
+	// --- Priority levels (time-based calculation)
+
 	PriorityUltraHigh = 5 // Live blocks from HeadScan
 	PriorityHigh      = 4 // Last 24 hours
 	PriorityMedium    = 3 // 24-48 hours
 	PriorityLow       = 2 // 48-72 hours
 	PriorityUltraLow  = 1 // Older than 72 hours
 
-	// Thresholds
+	// --- Thresholds
+
 	catchupThreshold        = 1000 // Switch to SchedulerWorkflow at this many blocks
 	directScheduleBatchSize = 50   // Batch size for direct scheduling
 
-	// SchedulerWorkflow settings
-	schedulerBatchSize         = 100             // Schedule 100 workflows at a time
+	// --- SchedulerWorkflow settings
+
+	schedulerBatchSize         = 500             // Schedule 100 workflows at a time
 	schedulerBatchDelay        = 1 * time.Second // 1s between batches = 100 wf/sec
 	schedulerContinueThreshold = 10000           // ContinueAsNew after 10k blocks
 
-	// Block timing
-	blockTime = 20 // seconds per block
+	// --- Block timing
 
-	// Legacy batching constants (for HeadScan/GapScan)
-	activityBatchSize        = 100  // Schedule 100 heights per batch
-	continueAsNewThreshold   = 5000 // Continue as new after processing 5000 heights
-	maxWorkflowHistoryEvents = 30000
+	blockTime = 20 // seconds per block
 )
 
 // HeadScanInput extends ChainIdInput with continuation support for large ranges
@@ -167,8 +166,10 @@ func (wc *Context) HeadScan(ctx workflow.Context, in HeadScanInput) (*activity.H
 
 			wfID := wc.TemporalClient.GetSchedulerWorkflowID(in.ChainID)
 			wfOptions := workflow.ChildWorkflowOptions{
-				WorkflowID: wfID,
-				TaskQueue:  wc.TemporalClient.GetIndexerOpsQueue(in.ChainID),
+				WorkflowID:               wfID,
+				TaskQueue:                wc.TemporalClient.GetIndexerOpsQueue(in.ChainID),
+				WorkflowExecutionTimeout: 0,                // No timeout - workflow can run indefinitely
+				WorkflowTaskTimeout:      10 * time.Minute, // 10 minute task timeout to prevent heartbeat errors
 			}
 			childCtx := workflow.WithChildOptions(ctx, wfOptions)
 
@@ -344,8 +345,10 @@ func (wc *Context) GapScanWorkflow(ctx workflow.Context, in GapScanInput) error 
 
 			wfID := wc.TemporalClient.GetSchedulerWorkflowID(in.ChainID)
 			wfOptions := workflow.ChildWorkflowOptions{
-				WorkflowID: wfID,
-				TaskQueue:  wc.TemporalClient.GetIndexerOpsQueue(in.ChainID),
+				WorkflowID:               wfID,
+				TaskQueue:                wc.TemporalClient.GetIndexerOpsQueue(in.ChainID),
+				WorkflowExecutionTimeout: 0,                // No timeout - workflow can run indefinitely
+				WorkflowTaskTimeout:      10 * time.Minute, // 10 minute task timeout to prevent heartbeat errors
 			}
 			childCtx := workflow.WithChildOptions(ctx, wfOptions)
 
@@ -411,8 +414,9 @@ func CalculateBlockPriority(latest, height uint64, isLive bool) int {
 	}
 }
 
-// SchedulerWorkflow handles priority-based batch scheduling for large block ranges.
-// It groups blocks by priority and schedules them in order: High → Medium → Low → UltraLow.
+// SchedulerWorkflow handles batch scheduling for large block ranges (e.g., 700k blocks).
+// Instead of building huge priority buckets in memory, it processes blocks sequentially
+// in chunks, calculating priority dynamically for each chunk.
 // Rate limiting: 100 workflows/sec (1s delay per 100 blocks).
 // Uses ContinueAsNew every 10k blocks to avoid workflow history limits.
 func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.SchedulerInput) error {
@@ -442,88 +446,58 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.Scheduler
 		"processed_so_far", processed,
 	)
 
-	// Group blocks by priority
-	priorityBuckets := make(map[int][]uint64)
-	for h := startHeight; h <= endHeight; h++ {
-		priority := CalculateBlockPriority(input.LatestHeight, h, false)
-		priorityBuckets[priority] = append(priorityBuckets[priority], h)
-	}
+	// Process blocks sequentially in chunks instead of building huge priority buckets
+	// This avoids memory issues with large ranges (e.g., 700k blocks)
+	currentHeight := startHeight
 
-	// Log priority distribution
-	logger.Info("Priority distribution calculated",
-		"high_count", len(priorityBuckets[PriorityHigh]),
-		"medium_count", len(priorityBuckets[PriorityMedium]),
-		"low_count", len(priorityBuckets[PriorityLow]),
-		"ultra_low_count", len(priorityBuckets[PriorityUltraLow]),
-	)
+	for currentHeight <= endHeight {
+		// Calculate priority for current chunk
+		priority := CalculateBlockPriority(input.LatestHeight, currentHeight, false)
 
-	// Process in priority order: High → Medium → Low → UltraLow
-	priorities := []int{PriorityHigh, PriorityMedium, PriorityLow, PriorityUltraLow}
-
-	for _, priority := range priorities {
-		blocks, exists := priorityBuckets[priority]
-		if !exists || len(blocks) == 0 {
-			continue
+		// Process batch of blocks with same priority
+		batchEnd := currentHeight + schedulerBatchSize - 1
+		if batchEnd > endHeight {
+			batchEnd = endHeight
 		}
 
-		logger.Info("Processing priority bucket",
-			"priority", priority,
-			"count", len(blocks),
-		)
-
-		// Process blocks in batches with rate limiting
-		for i := 0; i < len(blocks); i += schedulerBatchSize {
-			end := i + schedulerBatchSize
-			if end > len(blocks) {
-				end = len(blocks)
+		// Schedule batch of blocks using local activities
+		for height := currentHeight; height <= batchEnd; height++ {
+			var result interface{}
+			err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, &types.IndexBlockInput{
+				ChainID:     input.ChainID,
+				Height:      height,
+				PriorityKey: priority,
+			}).Get(localCtx, &result)
+			if err != nil {
+				// Log error but continue - StartIndexWorkflow handles idempotency
+				logger.Error("Failed to schedule block", "height", height, "error", err)
 			}
+			processed++
+		}
 
-			batch := blocks[i:end]
+		currentHeight = batchEnd + 1
 
-			// Schedule batch of blocks using local activities
-			for _, height := range batch {
-				var result interface{}
-				err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, &types.IndexBlockInput{
-					ChainID:     input.ChainID,
-					Height:      height,
-					PriorityKey: priority,
-				}).Get(localCtx, &result)
-				if err != nil {
-					// Log error but continue - StartIndexWorkflow handles idempotency
-					logger.Error("Failed to schedule block", "height", height, "error", err)
-				}
-				processed++
-			}
+		// Rate limiting: 100 workflows/sec (1s delay per batch)
+		err := workflow.Sleep(ctx, schedulerBatchDelay)
+		if err != nil {
+			logger.Error("Failed to sleep", "error", err)
+		}
 
-			// Rate limiting: 100 workflows/sec (1s delay per batch)
-			workflow.Sleep(ctx, schedulerBatchDelay)
+		// Check for ContinueAsNew threshold
+		if processed >= schedulerContinueThreshold && currentHeight <= endHeight {
+			logger.Info("Triggering ContinueAsNew",
+				"processed", processed,
+				"next_height", currentHeight,
+				"remaining", endHeight-currentHeight+1,
+			)
 
-			// Check for ContinueAsNew threshold
-			if processed >= schedulerContinueThreshold && (i+schedulerBatchSize < len(blocks) || priority < PriorityUltraLow) {
-				logger.Info("Triggering ContinueAsNew",
-					"processed", processed,
-					"current_priority", priority,
-					"remaining_in_bucket", len(blocks)-(i+schedulerBatchSize),
-				)
-
-				// Calculate next start height based on remaining blocks
-				var nextStartHeight uint64
-				if i+schedulerBatchSize < len(blocks) {
-					// More blocks in current priority
-					nextStartHeight = blocks[i+schedulerBatchSize]
-				} else {
-					// Move to next priority bucket
-					nextStartHeight = findNextPriorityStart(priorityBuckets, priority)
-				}
-
-				return workflow.NewContinueAsNewError(ctx, wc.SchedulerWorkflow, types.SchedulerInput{
-					ChainID:        input.ChainID,
-					StartHeight:    nextStartHeight,
-					EndHeight:      endHeight,
-					LatestHeight:   input.LatestHeight,
-					ProcessedSoFar: 0, // Reset for new execution
-				})
-			}
+			return workflow.NewContinueAsNewError(ctx, wc.SchedulerWorkflow, types.SchedulerInput{
+				ChainID:        input.ChainID,
+				StartHeight:    currentHeight,
+				EndHeight:      endHeight,
+				LatestHeight:   input.LatestHeight,
+				ProcessedSoFar: 0, // Reset for new execution
+			})
 		}
 	}
 
@@ -535,23 +509,10 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.Scheduler
 	return nil
 }
 
-// findNextPriorityStart finds the first block height in the next priority bucket
-func findNextPriorityStart(buckets map[int][]uint64, currentPriority int) uint64 {
-	nextPriorities := []int{PriorityMedium, PriorityLow, PriorityUltraLow}
-	for _, p := range nextPriorities {
-		if p < currentPriority {
-			if blocks, exists := buckets[p]; exists && len(blocks) > 0 {
-				return blocks[0]
-			}
-		}
-	}
-	return 0
-}
-
 // scheduleDirectly schedules small block ranges directly without SchedulerWorkflow.
 // Used for ranges < 1000 blocks. Schedules in batches of 50 with Ultra High priority.
 // Uses local activities for performance.
-func (wc *Context) scheduleDirectly(ctx workflow.Context, chainID string, start, end, latest uint64) error {
+func (wc *Context) scheduleDirectly(ctx workflow.Context, chainID string, start, end uint64) error {
 	logger := workflow.GetLogger(ctx)
 
 	totalBlocks := end - start + 1

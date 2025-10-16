@@ -174,7 +174,7 @@ func (a *App) EnsureHeadSchedule(ctx context.Context, chainID string) error {
 		_, scheduleErr := a.TemporalClient.TSClient.Create(
 			ctx, client.ScheduleOptions{
 				ID:   id,
-				Spec: a.TemporalClient.TenSecondSpec(),
+				Spec: a.TemporalClient.TwoSecondSpec(),
 				Action: &client.ScheduleWorkflowAction{
 					Workflow:  indexerworkflow.HeadScanWorkflowName,
 					Args:      []interface{}{indexerworkflow.HeadScanInput{ChainID: chainID}},

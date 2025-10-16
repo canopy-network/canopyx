@@ -5,6 +5,7 @@ package indexer
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -169,17 +170,17 @@ func testChainUpsertAllFields(t *testing.T, ctx context.Context) {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		// Health fields
-		RPCHealthStatus:            "healthy",
-		RPCHealthMessage:           "All endpoints responding",
-		RPCHealthUpdatedAt:         now,
-		QueueHealthStatus:          "warning",
-		QueueHealthMessage:         "Queue backlog at 1000 items",
-		QueueHealthUpdatedAt:       now,
-		DeploymentHealthStatus:     "degraded",
-		DeploymentHealthMessage:    "2 of 5 pods running",
-		DeploymentHealthUpdatedAt:  now,
-		OverallHealthStatus:        "degraded",
-		OverallHealthUpdatedAt:     now,
+		RPCHealthStatus:           "healthy",
+		RPCHealthMessage:          "All endpoints responding",
+		RPCHealthUpdatedAt:        now,
+		QueueHealthStatus:         "warning",
+		QueueHealthMessage:        "Queue backlog at 1000 items",
+		QueueHealthUpdatedAt:      now,
+		DeploymentHealthStatus:    "degraded",
+		DeploymentHealthMessage:   "2 of 5 pods running",
+		DeploymentHealthUpdatedAt: now,
+		OverallHealthStatus:       "degraded",
+		OverallHealthUpdatedAt:    now,
 	}
 
 	err := testDB.UpsertChain(ctx, chain)
@@ -746,7 +747,7 @@ func testIndexProgressFindGaps(t *testing.T, ctx context.Context) {
 	// Heights: 1, 2, 3, [gap: 4-6], 7, 8, [gap: 9-14], 15, 16, 17, [gap: 18-19], 20
 	heightsToRecord := []uint64{
 		1, 2, 3, // Continuous
-		7, 8,    // Gap before: 4-6
+		7, 8, // Gap before: 4-6
 		15, 16, 17, // Gap before: 9-14
 		20, // Gap before: 18-19
 	}

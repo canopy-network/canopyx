@@ -71,7 +71,9 @@ func Initialize(ctx context.Context) *App {
 		logger.Fatal("CHAIN_ID environment variable is required")
 	}
 
-	rpcOpts := rpc.Opts{RPS: 20, Burst: 40, BreakerFailures: 3, BreakerCooldown: 5 * time.Second}
+	// RPC rate limiting: Configured for high-throughput parallel block indexing (700k+ blocks)
+	// RPS: Requests per second, Burst: Burst capacity for short spikes
+	rpcOpts := rpc.Opts{RPS: 1000, Burst: 2000, BreakerFailures: 10, BreakerCooldown: 30 * time.Second}
 	activityContext := &activity.Context{
 		Logger:         logger,
 		IndexerDB:      indexerDb,
@@ -86,13 +88,19 @@ func Initialize(ctx context.Context) *App {
 	}
 
 	// Turn on the temporal worker to listen on chain id task queue (chain-specific workflow/activity)
+	// Configured for high-throughput parallel processing of 700k+ blocks
 	wkr := worker.New(
 		temporalClient.TClient,
 		temporalClient.GetIndexerQueue(chainID),
 		worker.Options{
-			MaxConcurrentWorkflowTaskPollers: 10,
-			MaxConcurrentActivityTaskPollers: 10,
-			WorkerStopTimeout:                1 * time.Minute,
+			// Pollers: Number of goroutines polling for tasks from Temporal server
+			MaxConcurrentWorkflowTaskPollers: 50,
+			MaxConcurrentActivityTaskPollers: 50,
+			// Executors: Maximum number of concurrent workflow/activity executions
+			// High limits to allow massive parallelism when processing large backlogs
+			MaxConcurrentWorkflowTaskExecutionSize: 2000, // Allow 2000 concurrent workflow executions
+			MaxConcurrentActivityExecutionSize:     5000, // Allow 5000 concurrent activity executions
+			WorkerStopTimeout:                      1 * time.Minute,
 		},
 	)
 

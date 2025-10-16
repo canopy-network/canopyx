@@ -74,10 +74,10 @@ func TestLastIndexed(t *testing.T) {
 	integration.SeedData(t, integration.WithChains(chain))
 
 	tests := []struct {
-		name           string
-		heights        []uint64
-		expectedLast   uint64
-		waitForMV      bool
+		name         string
+		heights      []uint64
+		expectedLast uint64
+		waitForMV    bool
 	}{
 		{
 			name:         "no heights indexed",
@@ -199,23 +199,23 @@ func TestFindGaps(t *testing.T) {
 			expectedGaps: []integration.GapExpectation{},
 		},
 		{
-			name:         "single gap",
-			heights:      []uint64{1, 2, 3, 7, 8, 9},
+			name:    "single gap",
+			heights: []uint64{1, 2, 3, 7, 8, 9},
 			expectedGaps: []integration.GapExpectation{
 				integration.Gap(4, 6),
 			},
 		},
 		{
-			name:         "multiple gaps",
-			heights:      []uint64{1, 2, 5, 6, 10, 11},
+			name:    "multiple gaps",
+			heights: []uint64{1, 2, 5, 6, 10, 11},
 			expectedGaps: []integration.GapExpectation{
 				integration.Gap(3, 4),
 				integration.Gap(7, 9),
 			},
 		},
 		{
-			name:         "large gap",
-			heights:      []uint64{1, 2, 3, 1000, 1001},
+			name:    "large gap",
+			heights: []uint64{1, 2, 3, 1000, 1001},
 			expectedGaps: []integration.GapExpectation{
 				integration.Gap(4, 999),
 			},
@@ -226,8 +226,8 @@ func TestFindGaps(t *testing.T) {
 			expectedGaps: []integration.GapExpectation{},
 		},
 		{
-			name:    "no heights",
-			heights: []uint64{},
+			name:         "no heights",
+			heights:      []uint64{},
 			expectedGaps: []integration.GapExpectation{},
 		},
 		{
@@ -236,15 +236,15 @@ func TestFindGaps(t *testing.T) {
 			expectedGaps: []integration.GapExpectation{},
 		},
 		{
-			name:         "two heights with gap",
-			heights:      []uint64{1, 10},
+			name:    "two heights with gap",
+			heights: []uint64{1, 10},
 			expectedGaps: []integration.GapExpectation{
 				integration.Gap(2, 9),
 			},
 		},
 		{
-			name:         "multiple small gaps",
-			heights:      []uint64{1, 3, 5, 7, 9},
+			name:    "multiple small gaps",
+			heights: []uint64{1, 3, 5, 7, 9},
 			expectedGaps: []integration.GapExpectation{
 				integration.Gap(2, 2),
 				integration.Gap(4, 4),
@@ -253,8 +253,8 @@ func TestFindGaps(t *testing.T) {
 			},
 		},
 		{
-			name:         "complex gap pattern",
-			heights:      []uint64{1, 2, 3, 10, 11, 12, 20, 21, 100},
+			name:    "complex gap pattern",
+			heights: []uint64{1, 2, 3, 10, 11, 12, 20, 21, 100},
 			expectedGaps: []integration.GapExpectation{
 				integration.Gap(4, 9),
 				integration.Gap(13, 19),

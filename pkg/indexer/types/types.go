@@ -49,9 +49,9 @@ type IndexTransactionsOutput struct {
 
 // SaveBlockSummaryInput contains the parameters for saving block summaries.
 type SaveBlockSummaryInput struct {
-	ChainID   string          `json:"chainId"`
-	Height    uint64          `json:"height"`
-	Summaries BlockSummaries  `json:"summaries"`
+	ChainID   string         `json:"chainId"`
+	Height    uint64         `json:"height"`
+	Summaries BlockSummaries `json:"summaries"`
 }
 
 // SaveBlockSummaryOutput contains the result of saving block summaries along with execution duration.
