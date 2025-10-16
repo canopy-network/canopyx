@@ -1,0 +1,18 @@
+# PostgreSQL configuration for Temporal
+# Bitnami PostgreSQL chart values
+# Using defaults for now - will optimize once stable
+
+auth:
+  username: temporal
+  password: temporal
+  database: temporal
+
+primary:
+  persistence:
+    enabled: true
+    size: 10Gi
+
+  persistentVolumeClaimRetentionPolicy:
+    enabled: true
+    whenDeleted: Delete
+    whenScaled: Retain

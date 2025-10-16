@@ -66,6 +66,81 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 	require.Len(t, chainStore.lastTxs, 2)
 }
 
+func TestFetchBlockFromRPC(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	adminStore := &fakeAdminStore{
+		chain: &admin.Chain{
+			ChainID:      "chain-A",
+			RPCEndpoints: []string{"http://rpc.local"},
+		},
+	}
+	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap.Store("chain-A", &fakeChainStore{chainID: "chain-A", databaseName: "chain_a"})
+
+	rpcClient := &fakeRPCClient{
+		block: &indexermodels.Block{Height: 42, Hash: "abc123"},
+	}
+	activityCtx := &Context{
+		Logger:     logger,
+		IndexerDB:  adminStore,
+		ChainsDB:   chainsMap,
+		RPCFactory: &fakeRPCFactory{client: rpcClient},
+	}
+
+	// Call the activity directly (not through Temporal test framework)
+	// This avoids serialization issues with interface{} types
+	input := types.IndexBlockInput{
+		ChainID: "chain-A",
+		Height:  42,
+	}
+
+	output, err := activityCtx.FetchBlockFromRPC(context.Background(), input)
+	require.NoError(t, err)
+	require.NotNil(t, output.Block)
+	require.GreaterOrEqual(t, output.DurationMs, 0.0)
+
+	// Verify the block has correct values
+	require.Equal(t, uint64(42), output.Block.Height)
+	require.Equal(t, "abc123", output.Block.Hash)
+}
+
+func TestSaveBlock(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	adminStore := &fakeAdminStore{
+		chain: &admin.Chain{
+			ChainID:      "chain-A",
+			RPCEndpoints: []string{"http://rpc.local"},
+		},
+	}
+	chainStore := &fakeChainStore{chainID: "chain-A", databaseName: "chain_a"}
+	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap.Store("chain-A", chainStore)
+
+	activityCtx := &Context{
+		Logger:     logger,
+		IndexerDB:  adminStore,
+		ChainsDB:   chainsMap,
+		RPCFactory: &fakeRPCFactory{client: &fakeRPCClient{}},
+	}
+
+	// Call the activity directly (not through Temporal test framework)
+	block := &indexermodels.Block{Height: 42, Hash: "xyz789"}
+	input := types.SaveBlockInput{
+		ChainID: "chain-A",
+		Height:  42,
+		Block:   block, // Now using concrete type *indexermodels.Block
+	}
+
+	output, err := activityCtx.SaveBlock(context.Background(), input)
+	require.NoError(t, err)
+	require.Equal(t, uint64(42), output.Height)
+	require.GreaterOrEqual(t, output.DurationMs, 0.0)
+	require.Equal(t, 1, chainStore.insertBlockCalls)
+	require.NotNil(t, chainStore.lastBlock)
+	require.Equal(t, uint64(42), chainStore.lastBlock.Height)
+	require.Equal(t, "xyz789", chainStore.lastBlock.Hash)
+}
+
 func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	adminStore := &fakeAdminStore{

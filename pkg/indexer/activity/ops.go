@@ -110,12 +110,13 @@ func (c *Context) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (ui
 }
 
 // FindGaps identifies and retrieves missing height ranges (gaps) in the indexing progress for a chain.
-func (c *Context) FindGaps(ctx context.Context, in types.ChainIdInput) ([]db.Gap, error) {
+func (c *Context) FindGaps(ctx context.Context, in *types.ChainIdInput) ([]db.Gap, error) {
 	return c.IndexerDB.FindGaps(ctx, in.ChainID)
 }
 
 // StartIndexWorkflow starts (or resumes) a top-level indexing workflow for a given height.
-func (c *Context) StartIndexWorkflow(ctx context.Context, in *types.IndexBlockInput) error {
+// NOTE: This is a local activity, so it accepts a value type (not pointer) for proper serialization.
+func (c *Context) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInput) error {
 	logger := activity.GetLogger(ctx)
 	// TODO: ensure chain exists before triggering workflows.
 

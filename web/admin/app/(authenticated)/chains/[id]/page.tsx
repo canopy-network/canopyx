@@ -723,7 +723,7 @@ function QueuesTab({
             </div>
 
             <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-400">Pollers</span>
+              <span className="text-sm text-slate-400">Worker Instances</span>
               <span className="font-mono text-xl font-semibold text-slate-300">
                 {status?.ops_queue?.pollers ?? 0}
               </span>
@@ -773,7 +773,7 @@ function QueuesTab({
             </div>
 
             <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-400">Pollers</span>
+              <span className="text-sm text-slate-400">Worker Instances</span>
               <span className="font-mono text-xl font-semibold text-slate-300">
                 {status?.indexer_queue?.pollers ?? 0}
               </span>
@@ -808,7 +808,6 @@ function ExplorerTab({ chainId }: { chainId: string }) {
   const [cursors, setCursors] = useState<(number | null)[]>([null]) // Stack of cursors for navigation
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
 
-  const QUERY_SERVICE_URL = process.env.NEXT_PUBLIC_QUERY_SERVICE_URL || 'http://localhost:3001'
   const ITEMS_PER_PAGE = 50
 
   // Map UI table names to API table names
@@ -827,7 +826,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
       try {
         const tableName = TABLE_NAME_MAP[selectedTable]
         const response = await fetch(
-          `${QUERY_SERVICE_URL}/chains/${chainId}/schema?table=${tableName}`
+          `/api/query/chains/${chainId}/schema?table=${tableName}`
         )
 
         if (!response.ok) {
@@ -847,7 +846,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     }
 
     fetchSchema()
-  }, [chainId, selectedTable, QUERY_SERVICE_URL])
+  }, [chainId, selectedTable])
 
   // Fetch data when table or page changes
   useEffect(() => {
@@ -860,7 +859,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
         const cursorParam = cursor !== null ? `&cursor=${cursor}` : ''
 
         const response = await fetch(
-          `${QUERY_SERVICE_URL}/chains/${chainId}/${tableName}?limit=${ITEMS_PER_PAGE}${cursorParam}`
+          `/api/query/chains/${chainId}/${tableName}?limit=${ITEMS_PER_PAGE}${cursorParam}`
         )
 
         if (!response.ok) {
@@ -883,7 +882,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     if (schema.length > 0) {
       fetchData()
     }
-  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, QUERY_SERVICE_URL])
+  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length])
 
   const handleTableChange = (newTable: ExplorerTable) => {
     setSelectedTable(newTable)
@@ -920,9 +919,6 @@ function ExplorerTab({ chainId }: { chainId: string }) {
             <div>
               <p className="font-semibold">Error Loading Explorer Data</p>
               <p className="mt-1 text-sm text-rose-300">{error}</p>
-              <p className="mt-2 text-xs text-rose-300">
-                Make sure the query service is running at {QUERY_SERVICE_URL}
-              </p>
             </div>
           </div>
         </div>

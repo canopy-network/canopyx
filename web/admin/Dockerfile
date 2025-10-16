@@ -28,13 +28,6 @@ RUN pnpm install --frozen-lockfile
 # Copy source files
 COPY . .
 
-# Build arguments for API URLs
-ARG NEXT_PUBLIC_API_BASE="http://localhost:3000"
-ENV NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE}
-
-ARG NEXT_PUBLIC_QUERY_SERVICE_URL="http://localhost:3001"
-ENV NEXT_PUBLIC_QUERY_SERVICE_URL=${NEXT_PUBLIC_QUERY_SERVICE_URL}
-
 # Build the Next.js application
 RUN pnpm build
 

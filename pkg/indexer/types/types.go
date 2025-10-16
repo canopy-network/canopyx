@@ -1,5 +1,9 @@
 package types
 
+import (
+	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+)
+
 type ChainIdInput struct {
 	ChainID string `json:"chainId"`
 }
@@ -33,6 +37,20 @@ type SchedulerInput struct {
 type PrepareIndexBlockOutput struct {
 	Skip       bool    `json:"skip"`       // True if the block should be skipped
 	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
+}
+
+// FetchBlockOutput contains the fetched block data along with execution duration.
+// This is used by the FetchBlockFromRPC local activity.
+type FetchBlockOutput struct {
+	Block      *indexer.Block `json:"block"`      // The fetched block
+	DurationMs float64        `json:"durationMs"` // Execution time in milliseconds
+}
+
+// SaveBlockInput contains the parameters for saving a block to the database.
+type SaveBlockInput struct {
+	ChainID string         `json:"chainId"`
+	Height  uint64         `json:"height"`
+	Block   *indexer.Block `json:"block"` // The block to save
 }
 
 // IndexBlockOutput contains the indexed block height along with execution duration.

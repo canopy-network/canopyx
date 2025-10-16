@@ -113,6 +113,8 @@ func Initialize(ctx context.Context) *App {
 	)
 	// Register all the activities
 	wkr.RegisterActivity(activityContext.PrepareIndexBlock)
+	wkr.RegisterActivity(activityContext.FetchBlockFromRPC)
+	wkr.RegisterActivity(activityContext.SaveBlock)
 	wkr.RegisterActivity(activityContext.IndexBlock)
 	wkr.RegisterActivity(activityContext.IndexTransactions)
 	wkr.RegisterActivity(activityContext.SaveBlockSummary)

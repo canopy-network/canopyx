@@ -606,7 +606,7 @@ func (c *Controller) enqueueIndexBlock(ctx context.Context, chainID string, heig
 }
 
 // describeBothQueues fetches metrics for both the ops queue and indexer queue for a given chain.
-// It uses caching with a 5s TTL for near-real-time stats (reduced from 30s).
+// It uses caching with a 30s TTL to reduce load on Temporal API.
 // Returns (opsQueue, indexerQueue, error).
 func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (admintypes.QueueStatus, admintypes.QueueStatus, error) {
 	opsStats := admintypes.QueueStatus{}
@@ -618,10 +618,10 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 		return opsStats, indexerStats, fmt.Errorf("temporal temporalClient not initialized")
 	}
 
-	// Check cache first (5s TTL for near-real-time stats, reduced from 30s)
+	// Check cache first (30s TTL to reduce Temporal API load)
 	if cached, ok := c.App.QueueStatsCache.Load(chainID); ok {
 		cacheAge := time.Since(cached.Fetched)
-		if cacheAge < 5*time.Second {
+		if cacheAge < 30*time.Second {
 			c.App.Logger.Debug("using cached queue stats",
 				zap.String("chain_id", chainID),
 				zap.Duration("cache_age", cacheAge),

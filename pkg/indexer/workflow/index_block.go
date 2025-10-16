@@ -15,10 +15,10 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	// TODO: add checks for chainId and height values at `in` param, also verify database exists (it should)
 	//  check if the current options are good enough for indexing the block
 	retry := &temporal.RetryPolicy{
-		InitialInterval:    time.Second,
-		BackoffCoefficient: 1.2,
-		MaximumInterval:    5 * time.Second, // we need it fast since blocks are the 20s apart
-		MaximumAttempts:    0,               // zero means unlimited - we want it keeps trying to index a block until it succeeds
+		InitialInterval:    200 * time.Millisecond, // Start quickly for block propagation delays
+		BackoffCoefficient: 1.5,                    // Grow moderately (200ms, 300ms, 450ms, 675ms, 1s...)
+		MaximumInterval:    2 * time.Second,        // Cap at 2s for faster retries when block isn't ready
+		MaximumAttempts:    0,                      // zero means unlimited - we want it keeps trying to index a block until it succeeds
 	}
 	ao := workflow.ActivityOptions{
 		// NOTE: this should never reach 2 minutes to index a block, but WHO knows...
@@ -52,15 +52,33 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		return workflow.ExecuteActivity(ctx, wc.ActivityContext.RecordIndexed, recordInput).Get(ctx, nil)
 	}
 
-	// 2. IndexBlock - fetch and store block metadata
-	// This MUST come before entity indexing to ensure the block exists on-chain
-	var blockOut types.IndexBlockOutput
-	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexBlock, in).Get(ctx, &blockOut); err != nil {
+	// 2. FetchBlock - fetch block from RPC (local activity for fast retries)
+	// This uses a local activity to retry quickly when waiting for block propagation
+	var fetchOut types.FetchBlockOutput
+	localActivityOpts := workflow.LocalActivityOptions{
+		ScheduleToCloseTimeout: 30 * time.Second, // Max time for all retries
+		RetryPolicy:            retry,            // Use same fast retry policy
+	}
+	localCtx := workflow.WithLocalActivityOptions(ctx, localActivityOpts)
+	if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.FetchBlockFromRPC, in).Get(localCtx, &fetchOut); err != nil {
 		return err
 	}
-	timings["index_block_ms"] = blockOut.DurationMs
+	timings["fetch_block_ms"] = fetchOut.DurationMs
 
-	// 3. IndexTransactions - fetch and index transactions
+	// 3. SaveBlock - store block metadata to database (regular activity)
+	// This MUST come before entity indexing to ensure the block exists on-chain
+	saveBlockInput := types.SaveBlockInput{
+		ChainID: in.ChainID,
+		Height:  in.Height,
+		Block:   fetchOut.Block,
+	}
+	var saveBlockOut types.IndexBlockOutput
+	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlock, saveBlockInput).Get(ctx, &saveBlockOut); err != nil {
+		return err
+	}
+	timings["save_block_ms"] = saveBlockOut.DurationMs
+
+	// 4. IndexTransactions - fetch and index transactions
 	// Now safe to index entities since block existence is confirmed
 	var txOut types.IndexTransactionsOutput
 	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, in).Get(ctx, &txOut); err != nil {
@@ -76,7 +94,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		NumTxs: txOut.NumTxs,
 	}
 
-	// 4. SaveBlockSummary - aggregate and save all entity summaries
+	// 5. SaveBlockSummary - aggregate and save all entity summaries
 	saveInput := types.SaveBlockSummaryInput{
 		ChainID:   in.ChainID,
 		Height:    in.Height,

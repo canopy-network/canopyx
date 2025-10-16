@@ -26,7 +26,6 @@ helm_repo(
   resource_name='helm-repo-bitnami'
 )
 
-# Add postgresql helm release
 helm_resource(
   name='clickhouse',
   chart='hyperdx/hdx-oss-v2',
@@ -69,30 +68,12 @@ helm_resource(
   chart='bitnami/postgresql',
   release_name='temporal-postgresql',
   flags=[
-    '--set', 'auth.username=temporal',
-    '--set', 'auth.password=temporal',
-    '--set', 'auth.database=temporal',
-    '--set', 'primary.persistence.enabled=true',
-    '--set', 'primary.persistence.size=10Gi',
-    '--set', 'primary.persistentVolumeClaimRetentionPolicy.enabled=true',
-    '--set', 'primary.persistentVolumeClaimRetentionPolicy.whenDeleted=Delete',
-    '--set', 'primary.persistentVolumeClaimRetentionPolicy.whenScaled=Retain',
-    '--set', 'resources.limits.memory=512Mi',
-    '--set', 'resources.limits.cpu=500m',
-    '--set', 'resources.requests.memory=256Mi',
-    '--set', 'resources.requests.cpu=250m',
+    '--values=./deploy/helm/postgresql-values.yaml'
   ],
+  port_forwards=["5432:5432"],
   pod_readiness='wait',
-  labels=['database'],
+  labels=['temporal'],
   resource_deps=['helm-repo-bitnami']
-)
-
-k8s_attach(
-    name="temporal-postgresql-server",
-    obj="statefulset/temporal-postgresql",
-    port_forwards=["5432:5432"],
-    resource_deps=["temporal-postgresql"],
-    labels=['database'],
 )
 
 # Add temporal helm release
@@ -174,7 +155,7 @@ k8s_resource(
     "canopyx-query",
     port_forwards=["3001:3001"],
     labels=['apps'],
-    resource_deps=["clickhouse-server"],
+    resource_deps=["clickhouse-server", "canopyx-admin"],
     pod_readiness='wait',
 )
 
@@ -183,14 +164,11 @@ k8s_resource(
 # ------------------------------------------
 
 # Build the admin web frontend image with hot reload support
+# No build args needed - backend URLs are configured via runtime env vars in k8s deployment
 docker_build(
     "localhost:5001/canopyx-admin-web",
     "./web/admin",
     dockerfile="./web/admin/Dockerfile",
-    build_args={
-        "NEXT_PUBLIC_API_BASE": "http://localhost:3000",
-        "NEXT_PUBLIC_QUERY_SERVICE_URL": "http://localhost:3001",
-    },
     live_update=[
         # Fall back to full rebuild if dependencies change (must be first)
         fall_back_on(['./web/admin/package.json', './web/admin/pnpm-lock.yaml']),
@@ -208,6 +186,7 @@ k8s_resource(
     port_forwards=["3003:3003"],
     labels=['apps'],
     resource_deps=["canopyx-admin"],
+    pod_readiness='wait',  # Wait for readiness probe to pass
 )
 
 # ------------------------------------------
@@ -312,12 +291,7 @@ if os.path.exists(canopy_path):
         name="add-canopy-local",
         cmd="""
         for i in {1..30}; do
-          #if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["http://canopy-node.default.svc.cluster.local:50002"], "image":"localhost:5001/canopyx-indexer:dev"}' 2>/dev/null; then
-          #  echo "Successfully registered canopy_local chain"
-          #  exit 0
-          #fi
-          # NOTE: TURN ON/OFF THIS TO TRY/TEST A LOT OF BLOCKS BEHIND
-          if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["https://node1.canopy.us.nodefleet.net/rpc"], "image":"localhost:5001/canopyx-indexer:dev"}' 2>/dev/null; then
+          if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["http://canopy-node.default.svc.cluster.local:50002"], "image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":3}' 2>/dev/null; then
             echo "Successfully registered canopy_local chain"
             exit 0
           fi

@@ -16,9 +16,14 @@ spec:
         - name: admin-web
           image: localhost:5001/canopyx-admin-web
           env:
-            # API endpoint - points to the admin Go service
-            - name: NEXT_PUBLIC_API_BASE
+            # Backend API endpoints for server-side proxy routes
+            # These are used by /app/api/admin/[...path]/route.ts
+            - name: ADMIN_API_BASE
               value: "http://canopyx-admin.default.svc.cluster.local:3000"
+            # Query service endpoint for server-side proxy routes
+            # These are used by /app/api/query/[...path]/route.ts
+            - name: QUERY_SERVICE_URL
+              value: "http://canopyx-query.default.svc.cluster.local:3001"
             - name: NODE_ENV
               value: "production"
             - name: PORT

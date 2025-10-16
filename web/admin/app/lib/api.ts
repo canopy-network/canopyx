@@ -1,18 +1,16 @@
 // Minimal fetch wrapper for our admin API:
-// - reads base from NEXT_PUBLIC_API_BASE (used in dev)
+// - routes through Next.js API proxy at /api/admin which forwards to backend
 // - always sends cookies (credentials: 'include')
-//
-// In static export (served by Go), keep NEXT_PUBLIC_API_BASE empty so
-// all calls are relative (same-origin).
-
-export const API_BASE =
-    (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_BASE) || ''
+// - backend URL is configured via ADMIN_API_BASE env var at runtime
 
 export async function apiFetch(path: string, init: RequestInit = {}) {
     const headers = new Headers(init.headers || {})
     if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
 
-    const res = await fetch(`${API_BASE}${path}`, {
+    // Route through Next.js proxy - /api/chains becomes /api/admin/chains
+    const proxyPath = path.startsWith('/api/') ? path.replace('/api/', '/api/admin/') : `/api/admin${path}`
+
+    const res = await fetch(proxyPath, {
         credentials: 'include',
         ...init,
         headers,

@@ -24,7 +24,8 @@ server:
       worker:
         rps: 5000                    # default: 1000
     # Configure persistence to use PostgreSQL instead of Cassandra
-    # Increased connection pools for high-concurrency workloads (700k+ workflows)
+    # Using conservative connection pools to stay within PostgreSQL defaults (max_connections=100)
+    # TODO: Increase once we tune PostgreSQL for production
     persistence:
       default:
         driver: "sql"
@@ -35,8 +36,8 @@ server:
           database: "temporal"
           user: "temporal"
           password: "temporal"
-          maxConns: 200              # Increased from 20 to support high concurrency
-          maxIdleConns: 100          # Increased from 20 to reduce connection churn
+          maxConns: 10               # Conservative for default PostgreSQL config
+          maxIdleConns: 5
           maxConnLifetime: "1h"
       visibility:
         driver: "sql"
@@ -47,8 +48,8 @@ server:
           database: "temporal_visibility"
           user: "temporal"
           password: "temporal"
-          maxConns: 100              # Increased from 10 to support high query load
-          maxIdleConns: 50           # Increased from 10 to reduce connection churn
+          maxConns: 5                # Conservative for default PostgreSQL config
+          maxIdleConns: 2
           maxConnLifetime: "1h"
 
 prometheus:

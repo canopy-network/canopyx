@@ -463,7 +463,7 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.Scheduler
 		// Schedule batch of blocks using local activities
 		for height := currentHeight; height <= batchEnd; height++ {
 			var result interface{}
-			err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, &types.IndexBlockInput{
+			err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, types.IndexBlockInput{
 				ChainID:     input.ChainID,
 				Height:      height,
 				PriorityKey: priority,
@@ -545,7 +545,7 @@ func (wc *Context) scheduleDirectly(ctx workflow.Context, chainID string, start,
 		// Schedule batch with Ultra High priority (live blocks)
 		for h := currentHeight; h <= batchEnd; h++ {
 			var result interface{}
-			err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, &types.IndexBlockInput{
+			err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, types.IndexBlockInput{
 				ChainID:     chainID,
 				Height:      h,
 				PriorityKey: PriorityUltraHigh,

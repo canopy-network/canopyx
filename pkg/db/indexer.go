@@ -197,7 +197,7 @@ func (db *AdminDB) UpsertChain(ctx context.Context, c *admin.Chain) error {
 		c.MinReplicas = 1
 	}
 	if c.MaxReplicas == 0 {
-		c.MaxReplicas = c.MinReplicas
+		c.MaxReplicas = 3 // Default to 3 as per schema
 	}
 	if c.MaxReplicas < c.MinReplicas {
 		return fmt.Errorf("max_replicas (%d) must be >= min_replicas (%d)", c.MaxReplicas, c.MinReplicas)
