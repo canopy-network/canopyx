@@ -568,69 +568,68 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 }
 
 func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
-	min := ch.MinReplicas
-	max := ch.MaxReplicas
-	if max < min {
-		max = min
+	minReplicas := ch.MinReplicas
+	maxReplicas := ch.MaxReplicas
+	if maxReplicas < minReplicas {
+		maxReplicas = minReplicas
 	}
 
-	if min <= 0 {
-		min = 1
+	if minReplicas <= 0 {
+		minReplicas = 1
 	}
-	if max <= 0 {
-		max = min
+	if maxReplicas <= 0 {
+		maxReplicas = minReplicas
 	}
 
 	prevDecision := ch.Hysteresis.LastDecisionReplicas
-	if max == min {
+	if maxReplicas == minReplicas {
 		now := time.Now()
 		if prevDecision == 0 {
-			ch.Hysteresis.LastDecisionReplicas = min
+			ch.Hysteresis.LastDecisionReplicas = minReplicas
 			ch.Hysteresis.LastChangeTime = now
 		}
 		a.Logger.Debug("replica decision",
 			zap.String("chain_id", ch.ID),
-			zap.Int32("min_replicas", min),
-			zap.Int32("max_replicas", max),
+			zap.Int32("min_replicas", minReplicas),
+			zap.Int32("max_replicas", maxReplicas),
 			zap.Int32("previous_replicas", prevDecision),
-			zap.Int32("calculated_replicas", min),
-			zap.Int32("desired_replicas", min),
+			zap.Int32("calculated_replicas", minReplicas),
+			zap.Int32("desired_replicas", minReplicas),
 			zap.Int64("pending_workflow_tasks", stats.PendingWorkflowTasks),
 			zap.Int64("pending_activity_tasks", stats.PendingActivityTasks),
 			zap.Int64("queue_backlog_total", stats.PendingWorkflowTasks+stats.PendingActivityTasks),
 			zap.Float64("backlog_ratio", 0),
 			zap.Bool("cooldown_active", false),
 		)
-		return min
+		return minReplicas
 	}
 
 	backlog := stats.PendingWorkflowTasks + stats.PendingActivityTasks
-	desired := min
-	calculated := min
+	var desired, calculated int32
 	ratio := 0.0
 	switch {
 	case backlog >= backlogHighWatermark:
-		desired = max
+		desired = maxReplicas
 	case backlog <= backlogLowWatermark:
-		desired = min
+		desired = minReplicas
 	default:
-		span := float64(max - min)
+		span := float64(maxReplicas - minReplicas)
 		ratio = float64(backlog-backlogLowWatermark) / float64(backlogHighWatermark-backlogLowWatermark)
 		if ratio < 0 {
 			ratio = 0
 		} else if ratio > 1 {
 			ratio = 1
 		}
-		desired = min + int32(math.Ceil(ratio*span))
+		desired = minReplicas + int32(math.Ceil(ratio*span))
 	}
 
 	calculated = desired
 
-	if desired < min {
-		desired = min
+	if desired < minReplicas {
+		desired = minReplicas
 	}
-	if desired > max {
-		desired = max
+	if desired > maxReplicas {
+		desired = maxReplicas
 	}
 
 	now := time.Now()
@@ -650,8 +649,8 @@ func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
 
 	a.Logger.Debug("replica decision",
 		zap.String("chain_id", ch.ID),
-		zap.Int32("min_replicas", min),
-		zap.Int32("max_replicas", max),
+		zap.Int32("min_replicas", minReplicas),
+		zap.Int32("max_replicas", maxReplicas),
 		zap.Int32("previous_replicas", prevDecision),
 		zap.Int32("calculated_replicas", calculated),
 		zap.Int32("desired_replicas", desired),

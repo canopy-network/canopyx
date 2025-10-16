@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,15 +9,14 @@ import (
 
 	"github.com/go-jose/go-jose/v4/json"
 	"github.com/gorilla/mux"
-	"github.com/uptrace/go-clickhouse/ch"
 	"go.uber.org/zap"
 )
 
 // Table names allowed for explorer queries
 const (
-	ExplorerTableBlocks  = "blocks"
-	ExplorerTableTxs     = "txs"
-	ExplorerTableTxsRaw  = "txs_raw"
+	ExplorerTableBlocks = "blocks"
+	ExplorerTableTxs    = "txs"
+	ExplorerTableTxsRaw = "txs_raw"
 )
 
 // Default and maximum limits for data queries
@@ -76,32 +73,6 @@ func (s *explorerService) validateTableName(tableName string) error {
 	}
 }
 
-// getChainDB retrieves the chain database for the given chainID
-func (s *explorerService) getChainDB(ctx context.Context, chainID string) (*ch.DB, string, error) {
-	// First check if the chain exists in admin DB
-	_, err := s.controller.App.AdminDB.GetChain(ctx, chainID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, "", fmt.Errorf("chain not found: %s", chainID)
-		}
-		return nil, "", fmt.Errorf("error fetching chain: %w", err)
-	}
-
-	// Get or create the chain database connection
-	chainDB, err := s.controller.App.NewChainDb(ctx, chainID)
-	if err != nil {
-		return nil, "", fmt.Errorf("error accessing chain database: %w", err)
-	}
-
-	// ChainDB implements ChainStore interface, not *ch.DB directly
-	// We need to access the database name from the ChainStore interface
-	dbName := chainDB.DatabaseName()
-
-	// Use the AdminDB connection with the chain's database name
-	// This is safe because all databases are on the same ClickHouse server
-	return s.controller.App.AdminDB.Db, dbName, nil
-}
-
 // GetTableSchema retrieves the schema for a given table
 func (s *explorerService) GetTableSchema(ctx context.Context, chainID, tableName string) ([]ColumnInfo, error) {
 	// Validate table name
@@ -132,7 +103,11 @@ func (s *explorerService) GetTableSchema(ctx context.Context, chainID, tableName
 	if err != nil {
 		return nil, fmt.Errorf("error querying schema: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			s.logger.Warn("failed to close rows", zap.Error(closeErr))
+		}
+	}()
 
 	var columns []ColumnInfo
 	for rows.Next() {
@@ -229,7 +204,11 @@ func (s *explorerService) GetTableData(ctx context.Context, chainID, tableName s
 	if err != nil {
 		return nil, fmt.Errorf("error querying data: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			s.logger.Warn("failed to close rows", zap.Error(closeErr))
+		}
+	}()
 
 	// Get column names from the result set
 	columns, err := rows.Columns()

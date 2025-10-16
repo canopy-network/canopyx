@@ -54,7 +54,9 @@ func (f *reporterFakeAdminStore) GetChain(context.Context, string) (*admin.Chain
 	return &f.chains[0], nil
 }
 
-func (f *reporterFakeAdminStore) RecordIndexed(context.Context, string, uint64) error { return nil }
+func (f *reporterFakeAdminStore) RecordIndexed(context.Context, string, uint64, float64, string) error {
+	return nil
+}
 
 func (f *reporterFakeAdminStore) ListChain(context.Context) ([]admin.Chain, error) {
 	return f.chains, nil
@@ -106,11 +108,31 @@ func (f *reporterFakeChainStore) Exec(_ context.Context, query string, _ ...any)
 	return nil
 }
 
-func (*reporterFakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.BlockRow, error) {
+func (*reporterFakeChainStore) InsertBlockSummary(context.Context, uint64, uint32) error {
+	return nil
+}
+
+func (*reporterFakeChainStore) GetBlockSummary(context.Context, uint64) (*indexermodels.BlockSummary, error) {
 	return nil, nil
 }
 
-func (*reporterFakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.TransactionRow, error) {
+func (*reporterFakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.Block, error) {
+	return nil, nil
+}
+
+func (*reporterFakeChainStore) QueryBlockSummaries(context.Context, uint64, int) ([]indexermodels.BlockSummary, error) {
+	return nil, nil
+}
+
+func (*reporterFakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.Transaction, error) {
+	return nil, nil
+}
+
+func (*reporterFakeChainStore) QueryTransactionsRaw(context.Context, uint64, int) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+func (*reporterFakeChainStore) DescribeTable(context.Context, string) ([]db.Column, error) {
 	return nil, nil
 }
 

@@ -74,8 +74,6 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 	require.Equal(t, 1, chainStore.insertBlockSummaryCalls, "SaveBlockSummary should be called once")
 	require.NotNil(t, chainStore.lastBlock)
 	require.Equal(t, uint64(21), chainStore.lastBlock.Height)
-	// Block should NOT have NumTxs set - that's in the summary now
-	require.Equal(t, uint32(0), chainStore.lastBlock.NumTxs)
 	// Check summary was saved correctly
 	require.NotNil(t, chainStore.lastBlockSummary)
 	require.Equal(t, uint64(21), chainStore.lastBlockSummary.Height)
@@ -186,11 +184,15 @@ func (f *wfFakeChainStore) DeleteTransactions(_ context.Context, height uint64) 
 
 func (*wfFakeChainStore) Exec(context.Context, string, ...any) error { return nil }
 
-func (*wfFakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.BlockRow, error) {
+func (*wfFakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.Block, error) {
 	return nil, nil
 }
 
-func (*wfFakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.TransactionRow, error) {
+func (*wfFakeChainStore) QueryBlockSummaries(context.Context, uint64, int) ([]indexermodels.BlockSummary, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.Transaction, error) {
 	return nil, nil
 }
 

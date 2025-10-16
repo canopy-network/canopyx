@@ -33,9 +33,6 @@ type mockSchedulerActivities struct {
 	failureCount map[string]int
 
 	// Rate limiting verification
-	lastScheduleTime time.Time
-	maxRate          float64 // max calls per second observed
-	rateViolations   int
 }
 
 type scheduledBlock struct {

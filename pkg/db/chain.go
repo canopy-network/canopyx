@@ -203,11 +203,11 @@ func (db *ChainDB) Exec(ctx context.Context, query string, args ...any) error {
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
 func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int) ([]map[string]interface{}, error) {
 	type rowInternal struct {
-		Height    uint64  `ch:"height"`
-		TxHash    string  `ch:"tx_hash"`
-		MsgRaw    *string `ch:"msg_raw"`
-		PublicKey *string `ch:"public_key"`
-		Signature *string `ch:"signature"`
+		Height    uint64    `ch:"height"`
+		TxHash    string    `ch:"tx_hash"`
+		MsgRaw    *string   `ch:"msg_raw"`
+		PublicKey *string   `ch:"public_key"`
+		Signature *string   `ch:"signature"`
 		CreatedAt time.Time `ch:"created_at"`
 	}
 
@@ -255,7 +255,11 @@ func (db *ChainDB) DescribeTable(ctx context.Context, tableName string) ([]Colum
 	if err != nil {
 		return nil, fmt.Errorf("describe table failed: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			db.Logger.Warn("failed to close rows", zap.Error(closeErr))
+		}
+	}()
 
 	var columns []Column
 	for rows.Next() {

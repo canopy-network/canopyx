@@ -50,7 +50,7 @@ func (c *Controller) HandleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 </body>
 </html>`
 
-	w.Write([]byte(html))
+	_, _ = w.Write([]byte(html))
 }
 
 // HandleOpenAPISpec serves the OpenAPI YAML specification file
@@ -62,5 +62,5 @@ func (c *Controller) HandleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/yaml")
-	w.Write(content)
+	_, _ = w.Write(content)
 }

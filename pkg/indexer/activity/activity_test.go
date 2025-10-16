@@ -106,8 +106,6 @@ func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	require.GreaterOrEqual(t, output.DurationMs, 0.0)
 	require.Equal(t, 1, chainStore.insertBlockCalls)
 	require.NotNil(t, chainStore.lastBlock)
-	// Block should NOT have NumTxs set - that's stored separately in block_summaries now
-	require.Equal(t, uint32(0), chainStore.lastBlock.NumTxs)
 }
 
 func TestSaveBlockSummary(t *testing.T) {
@@ -312,11 +310,15 @@ func (f *fakeChainStore) Exec(_ context.Context, query string, args ...any) erro
 	return nil
 }
 
-func (*fakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.BlockRow, error) {
+func (*fakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.Block, error) {
 	return nil, nil
 }
 
-func (*fakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.TransactionRow, error) {
+func (*fakeChainStore) QueryBlockSummaries(context.Context, uint64, int) ([]indexermodels.BlockSummary, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.Transaction, error) {
 	return nil, nil
 }
 
