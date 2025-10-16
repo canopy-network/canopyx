@@ -130,7 +130,7 @@ func (wc *Context) HeadScan(ctx workflow.Context, in HeadScanInput) (*activity.H
 			"chain_id", in.ChainID,
 			"total_blocks", totalToProcess,
 		)
-		if err := wc.scheduleDirectly(ctx, in.ChainID, rangeStart, rangeEnd, latest); err != nil {
+		if err := wc.scheduleDirectly(ctx, in.ChainID, rangeStart, rangeEnd); err != nil {
 			return nil, err
 		}
 	} else {
@@ -244,7 +244,7 @@ func (wc *Context) GapScanWorkflow(ctx workflow.Context, in GapScanInput) error 
 	}
 	regularCtx := workflow.WithActivityOptions(ctx, ao)
 
-	// Query for gaps and latest head
+	// Query for gaps and the latest head
 	var latest uint64
 	if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.GetLatestHead, &types.ChainIdInput{ChainID: in.ChainID}).Get(localCtx, &latest); err != nil {
 		return err
@@ -271,7 +271,7 @@ func (wc *Context) GapScanWorkflow(ctx workflow.Context, in GapScanInput) error 
 	// Calculate total blocks across all gaps
 	var totalBlocks uint64
 	for _, gap := range gaps {
-		totalBlocks += (gap.To - gap.From + 1)
+		totalBlocks += gap.To - gap.From + 1
 	}
 
 	logger.Info("Gap analysis complete",
@@ -296,7 +296,7 @@ func (wc *Context) GapScanWorkflow(ctx workflow.Context, in GapScanInput) error 
 				"count", gap.To-gap.From+1,
 			)
 
-			if err := wc.scheduleDirectly(ctx, in.ChainID, gap.From, gap.To, latest); err != nil {
+			if err := wc.scheduleDirectly(ctx, in.ChainID, gap.From, gap.To); err != nil {
 				return err
 			}
 		}
