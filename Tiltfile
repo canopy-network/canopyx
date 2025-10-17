@@ -558,8 +558,7 @@ k8s_resource(
 
 # Get configured Canopy source path
 canopy_path = paths_cfg.get('canopy_source', '../canopy')
-# Expand ~ to home directory
-canopy_path = os.path.expanduser(canopy_path)
+# Note: Tilt/Starlark doesn't have os.path.expanduser, so use absolute paths in config or relative paths
 
 if components.get('canopy_node', False):
     if os.path.exists(canopy_path):
