@@ -306,11 +306,32 @@ monitoring:
     - docs/grafana/dashboards/my-custom-dashboard.json
 ```
 
-## Next Steps
+## Implementation Status
 
-TODO: Complete implementation
-- [ ] Wrap monitoring in conditional
-- [ ] Inject Grafana dashboards from config
-- [ ] Enhance Prometheus with all service monitoring
-- [ ] Use port configuration throughout Tiltfile
-- [ ] Apply resource limits from profile
+✅ **Completed** (2025-10-17)
+
+All core features have been implemented:
+
+- [x] Configuration loading and validation
+- [x] Profile selection (minimal, development, production)
+- [x] Component toggles (monitoring, canopy_node, query, admin_web)
+- [x] Monitoring wrapped in conditional
+- [x] Grafana dashboard injection from config files
+- [x] Enhanced Prometheus with all service monitoring
+  - Temporal services (frontend, history, matching, worker)
+  - ClickHouse
+  - Cassandra (Temporal persistence)
+  - Elasticsearch (Temporal visibility)
+  - CanopyX services via Kubernetes service discovery
+  - Kubernetes pods with prometheus.io annotations
+- [x] Port configuration applied throughout Tiltfile
+- [x] Optional service conditionals (query, admin_web)
+- [x] Canopy source path configuration with expansion
+- [x] Development settings (auto_register_chain, indexer_tag, indexer_build_mode)
+
+### Pending Work
+
+- [ ] Apply resource limits from profile configuration
+  - This will require updating Helm values and K8s manifests
+  - Resource limits are defined in config but not yet applied
+  - Future enhancement: dynamically set replica counts and resource limits
