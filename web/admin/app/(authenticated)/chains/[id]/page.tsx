@@ -7,6 +7,8 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { apiFetch } from '../../../lib/api'
 import { useToast } from '../../../components/ToastProvider'
 import IndexingProgressChart from './IndexingProgressChart'
+import { LiveSyncStatus } from '../../../components/LiveSyncStatus'
+import { GapRangesDisplay } from '../../../components/GapRangesDisplay'
 
 // Types
 type QueueStatus = {
@@ -63,6 +65,12 @@ type ChainStatus = {
   rpc_health: HealthInfo
   queue_health: HealthInfo
   deployment_health: HealthInfo
+  // live sync and gap tracking
+  missing_blocks_count?: number
+  gap_ranges_count?: number
+  largest_gap_start?: number
+  largest_gap_end?: number
+  is_live_sync?: boolean
 }
 
 type ReindexPayload = {
@@ -459,6 +467,31 @@ function OverviewTab({
 
   return (
     <div className="space-y-6">
+      {/* Live Sync Status - NEW */}
+      {status && (
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">Sync Status</h3>
+          </div>
+          <LiveSyncStatus
+            last_indexed={status.last_indexed}
+            head={status.head}
+            missing_blocks_count={status.missing_blocks_count}
+            is_live_sync={status.is_live_sync}
+          />
+        </div>
+      )}
+
+      {/* Gap Ranges Display - NEW */}
+      {status && status.gap_ranges_count !== undefined && (
+        <GapRangesDisplay
+          gap_ranges_count={status.gap_ranges_count}
+          largest_gap_start={status.largest_gap_start}
+          largest_gap_end={status.largest_gap_end}
+          missing_blocks_count={status.missing_blocks_count}
+        />
+      )}
+
       {/* Health Status Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <HealthCard

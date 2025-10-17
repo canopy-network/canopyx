@@ -49,6 +49,12 @@ type ChainStatus = {
   queue_health?: HealthStatus
   deployment_health?: HealthStatus
   reindex_history?: ReindexEntry[]
+  // live sync and gap tracking
+  missing_blocks_count?: number
+  gap_ranges_count?: number
+  largest_gap_start?: number
+  largest_gap_end?: number
+  is_live_sync?: boolean
 }
 
 type ChainStatusMap = Record<string, ChainStatus>
@@ -473,6 +479,34 @@ export default function ChainsPage() {
                       </svg>
                     </button>
                   </div>
+
+                  {/* Live Sync Status Badge */}
+                  {st && (
+                    <div className="mt-3 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+                      <div className="flex items-center gap-2">
+                        {st.is_live_sync ? (
+                          <>
+                            <span className="badge-success text-xs">Live Sync</span>
+                            <span className="text-xs text-slate-400">
+                              At block {formatNumber(st.last_indexed)}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="badge-warning text-xs">Catching Up</span>
+                            <span className="text-xs text-slate-400">
+                              {formatNumber(st.last_indexed)} / {formatNumber(st.head)}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      {st.missing_blocks_count !== undefined && st.missing_blocks_count > 0 && (
+                        <span className="text-xs text-amber-400" title="Historical backlog">
+                          {formatNumber(st.missing_blocks_count)} missing
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Stats */}
                   <div className="mt-4 grid grid-cols-3 gap-4">
