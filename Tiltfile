@@ -2,7 +2,43 @@ load('ext://helm_resource', 'helm_resource', 'helm_repo')
 load('ext://k8s_attach', 'k8s_attach')
 load('ext://restart_process', 'docker_build_with_restart')
 
-# Add bitnami repo
+# ------------------------------------------
+# CONFIGURATION SYSTEM
+# ------------------------------------------
+
+# Load YAML configuration
+config_file = './tilt-config.yaml'
+default_config_file = './tilt-config.default.yaml'
+
+# Create default config if it doesn't exist
+if not os.path.exists(config_file):
+    print("No tilt-config.yaml found - creating default configuration")
+    if os.path.exists(default_config_file):
+        local('cp %s %s' % (default_config_file, config_file))
+    else:
+        fail("tilt-config.default.yaml not found - cannot create default configuration")
+
+# Load configuration
+cfg = read_yaml(config_file)
+profile = cfg.get('profile', 'development')
+components = cfg.get('components', {})
+resources_cfg = cfg.get('resources', {}).get(profile, {})
+monitoring_cfg = cfg.get('monitoring', {})
+ports = cfg.get('ports', {})
+paths_cfg = cfg.get('paths', {})
+dev_cfg = cfg.get('dev', {})
+
+print("Tilt Profile: %s" % profile)
+print("Components enabled: %s" % ', '.join([k for k, v in components.items() if v]))
+
+# Helper function to get port from config with default fallback
+def get_port(service, default):
+    return ports.get(service, default)
+
+# ------------------------------------------
+# HELM REPOSITORIES
+# ------------------------------------------
+
 helm_repo(
   name='hyperdx',
   url='https://hyperdxio.github.io/helm-charts',
@@ -10,7 +46,6 @@ helm_repo(
   resource_name='helm-repo-hyperdx'
 )
 
-# Add temporal repo
 helm_repo(
   name='temporal',
   url='https://go.temporal.io/helm-charts',
@@ -18,7 +53,6 @@ helm_repo(
   resource_name='helm-repo-temporal'
 )
 
-# Add bitnami repo for PostgreSQL
 helm_repo(
   name='bitnami',
   url='https://charts.bitnami.com/bitnami',
@@ -26,6 +60,10 @@ helm_repo(
   resource_name='helm-repo-bitnami'
 )
 
+# ------------------------------------------
+# CLICKHOUSE (Always Required)
+# ------------------------------------------
+# ClickHouse is always deployed - resource limits controlled via profile configuration
 helm_resource(
   name='clickhouse',
   chart='hyperdx/hdx-oss-v2',
@@ -38,17 +76,16 @@ helm_resource(
 )
 
 # Patch ClickHouse ConfigMap with increased limits after Helm install
-# This is required because HyperDX chart uses hardcoded config.xml from data/ directory
 local_resource(
   'clickhouse-config-patch',
   cmd='''
     echo "Patching ClickHouse ConfigMap with increased concurrency limits..."
-    kubectl get configmap clickhouse-hdx-oss-v2-clickhouse-config -o yaml | \
-      sed 's/<max_concurrent_queries>100<\\/max_concurrent_queries>/<max_concurrent_queries>2000<\\/max_concurrent_queries>/' | \
-      sed 's/<max_connections>4096<\\/max_connections>/<max_connections>3000<\\/max_connections>/' | \
-      kubectl apply -f - && \
-    echo "Restarting ClickHouse pod to apply new configuration..." && \
-    kubectl delete pod -l app.kubernetes.io/name=clickhouse --wait && \
+    kubectl get configmap clickhouse-hdx-oss-v2-clickhouse-config -o yaml | \\
+      sed 's/<max_concurrent_queries>100<\\/max_concurrent_queries>/<max_concurrent_queries>2000<\\/max_concurrent_queries>/' | \\
+      sed 's/<max_connections>4096<\\/max_connections>/<max_connections>3000<\\/max_connections>/' | \\
+      kubectl apply -f - && \\
+    echo "Restarting ClickHouse pod to apply new configuration..." && \\
+    kubectl delete pod -l app.kubernetes.io/name=clickhouse --wait && \\
     echo "ClickHouse configuration updated successfully!"
   ''',
   resource_deps=['clickhouse'],
@@ -58,7 +95,7 @@ local_resource(
 k8s_attach(
     name="clickhouse-web",
     obj="deployment/clickhouse-hdx-oss-v2-app",
-    port_forwards=["8081:3000"],
+    port_forwards=["%s:3000" % get_port('clickhouse_web', 8081)],
     resource_deps=["clickhouse"],
     labels=['clickhouse'],
 )
@@ -66,7 +103,7 @@ k8s_attach(
 k8s_attach(
     name="clickhouse-server",
     obj="deployment/clickhouse-hdx-oss-v2-clickhouse",
-    port_forwards=["8123:8123", "9000:9000"],
+    port_forwards=["%s:8123" % get_port('clickhouse_server', 8123), "%s:9000" % get_port('clickhouse_native', 9000)],
     resource_deps=["clickhouse"],
     labels=['clickhouse'],
 )
@@ -79,8 +116,10 @@ k8s_attach(
     labels=['clickhouse'],
 )
 
-# Add temporal helm release with Cassandra + Elasticsearch
-# (PostgreSQL removed - using Cassandra to eliminate WAL write bottleneck)
+# ------------------------------------------
+# TEMPORAL (Always Required)
+# ------------------------------------------
+# Temporal is always deployed - resource limits controlled via profile configuration
 helm_resource(
   name='temporal',
   chart='temporal/temporal',
@@ -96,7 +135,7 @@ helm_resource(
 k8s_attach(
     name="temporal-web",
     obj="deployment/temporal-web",
-    port_forwards=["8080"],
+    port_forwards=["%s" % get_port('temporal_web', 8080)],
     resource_deps=["temporal"],
     labels=['temporal'],
 )
@@ -104,7 +143,7 @@ k8s_attach(
 k8s_attach(
     name="temporal-frontend",
     obj="deployment/temporal-frontend",
-    port_forwards=["7233"],
+    port_forwards=["%s" % get_port('temporal_frontend', 7233)],
     resource_deps=["temporal"],
     labels=['temporal'],
 )
@@ -112,17 +151,23 @@ k8s_attach(
 k8s_attach(
     name="temporal-worker",
     obj="deployment/temporal-worker",
-    port_forwards=["7239", "6939"],
+    port_forwards=["%s" % get_port('temporal_worker', 7239), "6939"],
     resource_deps=["temporal"],
     labels=['temporal'],
 )
 
 # ------------------------------------------
-# MONITORING (Prometheus + Grafana)
+# MONITORING (Optional - Prometheus + Grafana)
 # ------------------------------------------
 
-# Prometheus - monitoring and metrics
-k8s_yaml(blob('''
+if components.get('monitoring', False):
+    print("Monitoring enabled - deploying Prometheus and Grafana")
+
+    # Build Prometheus scrape configs
+    scrape_interval = monitoring_cfg.get('prometheus', {}).get('scrape_interval', '15s')
+    retention = monitoring_cfg.get('prometheus', {}).get('retention', '2d')
+
+    prometheus_config = '''
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -130,8 +175,8 @@ metadata:
 data:
   prometheus.yml: |
     global:
-      scrape_interval: 15s
-      evaluation_interval: 15s
+      scrape_interval: %s
+      evaluation_interval: %s
 
     scrape_configs:
       # Scrape Temporal services
@@ -160,6 +205,29 @@ data:
         static_configs:
           - targets: ['clickhouse-hdx-oss-v2-clickhouse:9363']
         metrics_path: '/metrics'
+
+      # Scrape Cassandra (Temporal's persistence)
+      - job_name: 'cassandra'
+        static_configs:
+          - targets: ['temporal-cassandra:8080']
+        metrics_path: '/metrics'
+
+      # Scrape Elasticsearch (Temporal's visibility)
+      - job_name: 'elasticsearch'
+        static_configs:
+          - targets: ['temporal-elasticsearch-master:9114']
+        metrics_path: '/metrics'
+
+      # Scrape CanopyX services via Kubernetes service discovery
+      - job_name: 'canopyx-services'
+        kubernetes_sd_configs:
+          - role: service
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_app]
+            action: keep
+            regex: 'canopyx.*'
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
 
       # Scrape Kubernetes pods with prometheus.io annotations
       - job_name: 'kubernetes-pods'
@@ -193,7 +261,7 @@ spec:
     args:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=2d'
+      - '--storage.tsdb.retention.time=%s'
     ports:
     - containerPort: 9090
     volumeMounts:
@@ -251,16 +319,41 @@ subjects:
 - kind: ServiceAccount
   name: prometheus
   namespace: default
-'''))
+''' % (scrape_interval, scrape_interval, retention)
 
-k8s_resource(
-  'prometheus',
-  port_forwards='9090:9090',
-  labels=['monitoring'],
-)
+    k8s_yaml(blob(prometheus_config))
 
-# Grafana - visualization and dashboards
-k8s_yaml(blob('''
+    k8s_resource(
+      'prometheus',
+      port_forwards='%s:9090' % get_port('prometheus', 9090),
+      labels=['monitoring'],
+    )
+
+    # Grafana - build dashboard ConfigMap from files
+    dashboard_files = monitoring_cfg.get('dashboards', [])
+    dashboards_configmap = ''
+
+    if dashboard_files:
+        # Read all dashboard files and create ConfigMap
+        dashboards_configmap = '''
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+data:
+'''
+        for dashboard_path in dashboard_files:
+            if os.path.exists(dashboard_path):
+                dashboard_name = os.path.basename(dashboard_path)
+                print("Loading Grafana dashboard: %s" % dashboard_path)
+                dashboard_content = read_file(dashboard_path)
+                # Properly indent dashboard JSON in YAML (2 spaces for key, content indented by 4)
+                dashboards_configmap += '  %s: |\n' % dashboard_name
+                for line in dashboard_content.split('\n'):
+                    dashboards_configmap += '    %s\n' % line
+
+    grafana_config = '''
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -293,6 +386,7 @@ data:
         allowUiUpdates: true
         options:
           path: /var/lib/grafana/dashboards
+%s
 ---
 apiVersion: v1
 kind: Pod
@@ -319,6 +413,7 @@ spec:
     - name: dashboards-config
       mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
       subPath: dashboards.yml
+%s
   volumes:
   - name: datasources
     configMap:
@@ -326,6 +421,7 @@ spec:
   - name: dashboards-config
     configMap:
       name: grafana-dashboards-config
+%s
 ---
 apiVersion: v1
 kind: Service
@@ -337,20 +433,27 @@ spec:
   ports:
   - port: 3000
     targetPort: 3000
-'''))
+''' % (
+        dashboards_configmap,
+        '    - name: dashboards\n      mountPath: /var/lib/grafana/dashboards' if dashboard_files else '',
+        '  - name: dashboards\n    configMap:\n      name: grafana-dashboards' if dashboard_files else ''
+    )
 
-k8s_resource(
-  'grafana',
-  port_forwards='3100:3000',
-  resource_deps=['prometheus'],
-  labels=['monitoring'],
-)
+    k8s_yaml(blob(grafana_config))
+
+    k8s_resource(
+      'grafana',
+      port_forwards='%s:3000' % get_port('grafana', 3100),
+      resource_deps=['prometheus'],
+      labels=['monitoring'],
+    )
+else:
+    print("Monitoring disabled - skipping Prometheus and Grafana deployment")
 
 # ------------------------------------------
-# ADMIN API (Go Backend)
+# ADMIN API (Always Required)
 # ------------------------------------------
 
-# Build an image with a admin binary
 docker_build_with_restart(
     "localhost:5001/canopyx-admin",
     ".",
@@ -363,70 +466,73 @@ k8s_yaml(kustomize("./deploy/k8s/admin/overlays/local"))
 
 k8s_resource(
     "canopyx-admin",
-    port_forwards=["3000:3000"],
+    port_forwards=["%s:3000" % get_port('admin', 3000)],
     labels=['apps'],
     resource_deps=["clickhouse-server", "temporal-frontend"],
-    pod_readiness='wait',  # Wait for readiness probe to pass
-)
-
-# ------------------------------------------
-# QUERY API (Go Backend)
-# ------------------------------------------
-
-# Build an image with query binary
-docker_build_with_restart(
-    "localhost:5001/canopyx-query",
-    ".",
-    dockerfile="./Dockerfile.query",
-    entrypoint=["/app/query"],
-    live_update=[sync("bin/query", "/app/query")],
-)
-
-k8s_yaml(kustomize("./deploy/k8s/query/overlays/local"))
-
-k8s_resource(
-    "canopyx-query",
-    port_forwards=["3001:3001"],
-    labels=['apps'],
-    resource_deps=["clickhouse-server", "canopyx-admin"],
     pod_readiness='wait',
 )
 
 # ------------------------------------------
-# ADMIN WEB (Next.js Frontend)
+# QUERY API (Optional)
 # ------------------------------------------
 
-# Build the admin web frontend image with hot reload support
-# No build args needed - backend URLs are configured via runtime env vars in k8s deployment
-docker_build(
-    "localhost:5001/canopyx-admin-web",
-    "./web/admin",
-    dockerfile="./web/admin/Dockerfile",
-    live_update=[
-        # Fall back to full rebuild if dependencies change (must be first)
-        fall_back_on(['./web/admin/package.json', './web/admin/pnpm-lock.yaml']),
-        # Sync app directory changes - triggers Next.js hot reload
-        sync('./web/admin/app', '/app/app'),
-        # Sync public directory changes
-        sync('./web/admin/public', '/app/public'),
-    ],
-)
+if components.get('query', True):
+    print("Query API enabled")
 
-k8s_yaml(kustomize("./deploy/k8s/admin-web/overlays/local"))
+    docker_build_with_restart(
+        "localhost:5001/canopyx-query",
+        ".",
+        dockerfile="./Dockerfile.query",
+        entrypoint=["/app/query"],
+        live_update=[sync("bin/query", "/app/query")],
+    )
 
-k8s_resource(
-    "canopyx-admin-web",
-    port_forwards=["3003:3003"],
-    labels=['apps'],
-    resource_deps=["canopyx-admin"],
-    pod_readiness='wait',  # Wait for readiness probe to pass
-)
+    k8s_yaml(kustomize("./deploy/k8s/query/overlays/local"))
+
+    k8s_resource(
+        "canopyx-query",
+        port_forwards=["%s:3001" % get_port('query', 3001)],
+        labels=['apps'],
+        resource_deps=["clickhouse-server", "canopyx-admin"],
+        pod_readiness='wait',
+    )
+else:
+    print("Query API disabled")
 
 # ------------------------------------------
-# CONTROLLER
+# ADMIN WEB (Optional)
 # ------------------------------------------
 
-# Build an image with a indexer binary
+if components.get('admin_web', True):
+    print("Admin Web UI enabled")
+
+    docker_build(
+        "localhost:5001/canopyx-admin-web",
+        "./web/admin",
+        dockerfile="./web/admin/Dockerfile",
+        live_update=[
+            fall_back_on(['./web/admin/package.json', './web/admin/pnpm-lock.yaml']),
+            sync('./web/admin/app', '/app/app'),
+            sync('./web/admin/public', '/app/public'),
+        ],
+    )
+
+    k8s_yaml(kustomize("./deploy/k8s/admin-web/overlays/local"))
+
+    k8s_resource(
+        "canopyx-admin-web",
+        port_forwards=["%s:3003" % get_port('admin_web', 3003)],
+        labels=['apps'],
+        resource_deps=["canopyx-admin"],
+        pod_readiness='wait',
+    )
+else:
+    print("Admin Web UI disabled")
+
+# ------------------------------------------
+# CONTROLLER (Always Required)
+# ------------------------------------------
+
 docker_build_with_restart(
     "localhost:5001/canopyx-controller",
     ".",
@@ -442,60 +548,59 @@ k8s_resource(
     labels=['apps'],
     objects=["canopyx-controller:serviceaccount", "canopyx-controller:role", "canopyx-controller:rolebinding"],
     resource_deps=["clickhouse-server", "temporal-frontend", "canopyx-admin"],
-    pod_readiness='wait',  # Wait for readiness probe to pass
+    pod_readiness='wait',
 )
 
 # ------------------------------------------
 # CANOPY LOCAL NODE (Optional)
 # ------------------------------------------
 
-# Only include Canopy node if the ../canopy directory exists
-canopy_path = '../canopy'
-if os.path.exists(canopy_path):
-    print("Found Canopy source at %s - including local node in deployment" % canopy_path)
+# Get configured Canopy source path
+canopy_path = paths_cfg.get('canopy_source', '../canopy')
+# Expand ~ to home directory
+canopy_path = os.path.expanduser(canopy_path)
 
-    # Build Canopy node image using the Dockerfile from the canopy project
-    docker_build(
-        "localhost:5001/canopy-node",
-        canopy_path,
-        dockerfile=canopy_path + "/.docker/Dockerfile",
-        # Watch for changes in canopy source
-        live_update=[],  # Full rebuild on any change - can optimize later
-    )
+if components.get('canopy_node', False):
+    if os.path.exists(canopy_path):
+        print("Canopy node enabled - found source at %s" % canopy_path)
 
-    # Deploy Canopy node manifests
-    k8s_yaml(kustomize("./deploy/k8s/canopy-node/overlays/local"))
+        docker_build(
+            "localhost:5001/canopy-node",
+            canopy_path,
+            dockerfile=canopy_path + "/.docker/Dockerfile",
+            live_update=[],
+        )
 
-    # Configure Canopy node resource with port forwards
-    k8s_resource(
-        "canopy-node",
-        objects=["canopy-node-data:persistentvolumeclaim", "canopy-node-config:configmap", "canopy-node-genesis:configmap", "canopy-node-keystore:configmap"],
-        port_forwards=[
-            "50000:50000",  # Wallet
-            "50001:50001",  # Explorer
-            "50002:50002",  # RPC
-            "50003:50003",  # Admin RPC
-            "9001:9001",    # TCP P2P
-            "6060:6060",    # Debug
-            "9090:9090",    # Metrics
-        ],
-        labels=['blockchain'],
-        pod_readiness='wait',  # Wait for readiness probe to pass
-    )
+        k8s_yaml(kustomize("./deploy/k8s/canopy-node/overlays/local"))
+
+        k8s_resource(
+            "canopy-node",
+            objects=["canopy-node-data:persistentvolumeclaim", "canopy-node-config:configmap", "canopy-node-genesis:configmap", "canopy-node-keystore:configmap"],
+            port_forwards=[
+                "%s:50000" % get_port('canopy_wallet', 50000),
+                "%s:50001" % get_port('canopy_explorer', 50001),
+                "%s:50002" % get_port('canopy_rpc', 50002),
+                "%s:50003" % get_port('canopy_admin_rpc', 50003),
+                "%s:9001" % get_port('canopy_p2p', 9001),
+                "%s:6060" % get_port('canopy_debug', 6060),
+                "%s:9090" % get_port('canopy_metrics', 9090),
+            ],
+            labels=['blockchain'],
+            pod_readiness='wait',
+        )
+    else:
+        fail("Canopy node enabled but source not found at: %s\nPlease update paths.canopy_source in tilt-config.yaml" % canopy_path)
 else:
-    print("Canopy source not found at %s - skipping local node deployment" % canopy_path)
-    print("To use local Canopy node, clone it to: %s" % canopy_path)
+    print("Canopy node disabled")
 
 # ------------------------------------------
-# INDEXER
+# INDEXER (Always Required)
 # ------------------------------------------
 
-# Build an image with indexer binary
+# Use indexer tag from config
+idx_repo = dev_cfg.get('indexer_tag', 'localhost:5001/canopyx-indexer:dev')
+idx_build_mode = TRIGGER_MODE_AUTO if dev_cfg.get('indexer_build_mode', 'auto') == 'auto' else TRIGGER_MODE_MANUAL
 
-# Stable tag to share with the controller
-idx_repo = "localhost:5001/canopyx-indexer:dev"
-
-# Only include the files that affect the indexer image to avoid rebuilding on every change
 idx_deps = [
   "Dockerfile.indexer",
   "app/indexer",
@@ -509,57 +614,54 @@ local_resource(
   name = "build:indexer-stable",
   cmd  = "docker build -f Dockerfile.indexer -t %s . && docker push %s && kubectl rollout restart deployment -l managed-by=canopyx-controller -l app=indexer || true" % (idx_repo, idx_repo),
   deps = idx_deps,
-  # optional: set to TRIGGER_MODE_MANUAL if you don't want auto rebuild
-  trigger_mode = TRIGGER_MODE_AUTO,
+  trigger_mode = idx_build_mode,
   labels = ["Indexer"],
 )
 
 # ------------------------------------------
-# TRIGGER DEFAULT CHAIN (Conditional on Canopy local node)
+# TRIGGER DEFAULT CHAIN (Conditional on Canopy node)
 # ------------------------------------------
 
-# Only register local Canopy chain if the canopy source exists
-if os.path.exists(canopy_path):
-    local_resource(
-        name="add-canopy-local",
-        cmd="""
-        for i in {1..30}; do
-          if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["https://node1.canopy.us.nodefleet.net/rpc"], "image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":6}' 2>/dev/null; then
-            echo "Successfully registered canopy_local chain"
-            exit 0
-          fi
-          echo "Waiting for admin API to be ready... attempt $i/30"
-          sleep 2
-        done
-        echo "Failed to register chain after 30 attempts"
-        exit 1
-        """,
-        deps=[],
-        labels=['no-op'],
-        resource_deps=["canopyx-admin", "canopy-node"],  # Wait for both admin and canopy node
-        allow_parallel=False,
-        auto_init=True,
-    )
+if components.get('canopy_node', False) and os.path.exists(canopy_path):
+    if dev_cfg.get('auto_register_chain', True):
+        print("Auto-registering local Canopy chain")
 
-    # ------------------------------------------
-    # HANDLE LOCAL CHAIN INDEXER
-    # ------------------------------------------
+        local_resource(
+            name="add-canopy-local",
+            cmd="""
+            for i in {1..30}; do
+              if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["https://node1.canopy.us.nodefleet.net/rpc"], "image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":6}' 2>/dev/null; then
+                echo "Successfully registered canopy_local chain"
+                exit 0
+              fi
+              echo "Waiting for admin API to be ready... attempt $i/30"
+              sleep 2
+            done
+            echo "Failed to register chain after 30 attempts"
+            exit 1
+            """,
+            deps=[],
+            labels=['no-op'],
+            resource_deps=["canopyx-admin", "canopy-node"],
+            allow_parallel=False,
+            auto_init=True,
+        )
 
-    # Attach to indexer deployment created by the controller for local node
-    k8s_attach(
-        name="indexer-local",
-        obj="deployment/canopyx-indexer-canopy-local",
-        resource_deps=["canopyx-controller", "add-canopy-local"],
-        labels=['indexers'],
-    )
+        k8s_attach(
+            name="indexer-local",
+            obj="deployment/canopyx-indexer-canopy-local",
+            resource_deps=["canopyx-controller", "add-canopy-local"],
+            labels=['indexers'],
+        )
+    else:
+        print("Auto-register chain disabled in config")
 
-# This resource only exists so `tilt down` deletes the child made by the controller
+# Cleanup resource for controller-spawned deployments
 k8s_custom_deploy(
   'cleanup-controller-spawns',
-  apply_cmd='true',  # no-op on tilt up
+  apply_cmd='true',
   delete_cmd='kubectl delete deployment -l managed-by=canopyx-controller -l app=indexer --ignore-not-found --wait',
   deps=[],
 )
 
-# ensure deletion happens after the controller is torn down
 k8s_resource('cleanup-controller-spawns', resource_deps=['canopyx-controller'], labels=['no-op'])
