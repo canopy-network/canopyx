@@ -209,289 +209,134 @@ k8s_attach(
 if components.get('monitoring', False):
     print("Monitoring enabled - deploying Prometheus and Grafana")
 
-    # Build Prometheus scrape configs
+    # Get resource limits from config
+    prom_cpu = resources_cfg.get('monitoring', {}).get('prometheus_cpu_limit', '1000m')
+    prom_mem = resources_cfg.get('monitoring', {}).get('prometheus_memory_limit', '1Gi')
+    grafana_cpu = resources_cfg.get('monitoring', {}).get('grafana_cpu_limit', '500m')
+    grafana_mem = resources_cfg.get('monitoring', {}).get('grafana_memory_limit', '512Mi')
+
+    print("Prometheus resources: CPU=%s, Memory=%s" % (prom_cpu, prom_mem))
+    print("Grafana resources: CPU=%s, Memory=%s" % (grafana_cpu, grafana_mem))
+
+    # Load Prometheus manifests and apply resource limits + config from profile
+    prom_objects = decode_yaml_stream(kustomize("./deploy/k8s/prometheus/overlays/local"))
+
     scrape_interval = monitoring_cfg.get('prometheus', {}).get('scrape_interval', '15s')
     retention = monitoring_cfg.get('prometheus', {}).get('retention', '2d')
 
-    prometheus_config = '''
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: prometheus-config
-data:
-  prometheus.yml: |
-    global:
-      scrape_interval: %s
-      evaluation_interval: %s
+    for o in prom_objects:
+        # Update ConfigMap with scrape interval
+        if o.get('kind') == 'ConfigMap' and o.get('metadata', {}).get('name') == 'prometheus-config':
+            config_data = o.get('data', {}).get('prometheus.yml', '')
+            # Update scrape interval
+            config_data = config_data.replace('scrape_interval: 15s', 'scrape_interval: %s' % scrape_interval)
+            config_data = config_data.replace('evaluation_interval: 15s', 'evaluation_interval: %s' % scrape_interval)
+            o['data']['prometheus.yml'] = config_data
 
-    scrape_configs:
-      # Scrape Temporal services
-      - job_name: 'temporal-frontend'
-        static_configs:
-          - targets: ['temporal-frontend:9090']
-        metrics_path: '/metrics'
+        # Update Deployment with resource limits and retention
+        if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'prometheus':
+            containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+            for container in containers:
+                if container.get('name') == 'prometheus':
+                    # Update retention arg
+                    args = container.get('args', [])
+                    for i, arg in enumerate(args):
+                        if arg.startswith('--storage.tsdb.retention.time='):
+                            args[i] = '--storage.tsdb.retention.time=%s' % retention
 
-      - job_name: 'temporal-history'
-        static_configs:
-          - targets: ['temporal-history-headless:9090']
-        metrics_path: '/metrics'
+                    # Set resource limits
+                    container['resources'] = {
+                        'limits': {
+                            'cpu': prom_cpu,
+                            'memory': prom_mem
+                        },
+                        'requests': {
+                            'cpu': str(int(prom_cpu.replace('m', '')) // 2) + 'm' if 'm' in prom_cpu else str(float(prom_cpu) / 2),
+                            'memory': str(int(prom_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in prom_mem else str(int(prom_mem.replace('Mi', '')) // 2) + 'Mi'
+                        }
+                    }
 
-      - job_name: 'temporal-matching'
-        static_configs:
-          - targets: ['temporal-matching-headless:9090']
-        metrics_path: '/metrics'
-
-      - job_name: 'temporal-worker'
-        static_configs:
-          - targets: ['temporal-worker:9090']
-        metrics_path: '/metrics'
-
-      # Scrape ClickHouse
-      - job_name: 'clickhouse'
-        static_configs:
-          - targets: ['clickhouse-hdx-oss-v2-clickhouse:9363']
-        metrics_path: '/metrics'
-
-      # Scrape Cassandra (Temporal's persistence)
-      - job_name: 'cassandra'
-        static_configs:
-          - targets: ['temporal-cassandra:8080']
-        metrics_path: '/metrics'
-
-      # Scrape Elasticsearch (Temporal's visibility)
-      - job_name: 'elasticsearch'
-        static_configs:
-          - targets: ['temporal-elasticsearch-master:9114']
-        metrics_path: '/metrics'
-
-      # Scrape CanopyX services via Kubernetes service discovery
-      - job_name: 'canopyx-services'
-        kubernetes_sd_configs:
-          - role: service
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_service_label_app]
-            action: keep
-            regex: 'canopyx.*'
-          - source_labels: [__meta_kubernetes_service_name]
-            target_label: service
-
-      # Scrape Kubernetes pods with prometheus.io annotations
-      - job_name: 'kubernetes-pods'
-        kubernetes_sd_configs:
-          - role: pod
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
-            action: keep
-            regex: true
-          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
-            action: replace
-            target_label: __metrics_path__
-            regex: (.+)
-          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
-            action: replace
-            regex: ([^:]+)(?::[0-9]+)?;([0-9]+)
-            replacement: $1:$2
-            target_label: __address__
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: prometheus
-  labels:
-    app: prometheus
-spec:
-  serviceAccountName: prometheus
-  containers:
-  - name: prometheus
-    image: prom/prometheus:latest
-    args:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=%s'
-    ports:
-    - containerPort: 9090
-    volumeMounts:
-    - name: config
-      mountPath: /etc/prometheus
-  volumes:
-  - name: config
-    configMap:
-      name: prometheus-config
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: prometheus
-spec:
-  selector:
-    app: prometheus
-  ports:
-  - port: 9090
-    targetPort: 9090
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: prometheus
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: prometheus
-rules:
-- apiGroups: [""]
-  resources:
-  - nodes
-  - nodes/proxy
-  - services
-  - endpoints
-  - pods
-  verbs: ["get", "list", "watch"]
-- apiGroups:
-  - extensions
-  resources:
-  - ingresses
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: prometheus
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: prometheus
-subjects:
-- kind: ServiceAccount
-  name: prometheus
-  namespace: default
-''' % (scrape_interval, scrape_interval, retention)
-
-    k8s_yaml(blob(prometheus_config))
+    k8s_yaml(encode_yaml_stream(prom_objects))
 
     k8s_resource(
-      'prometheus',
-      port_forwards='%s:9090' % get_port('prometheus', 9090),
-      labels=['monitoring'],
+        'prometheus',
+        port_forwards='%s:9090' % get_port('prometheus', 9090),
+        labels=['monitoring'],
     )
 
-    # Grafana - build dashboard ConfigMap from files
-    dashboard_files = monitoring_cfg.get('dashboards', [])
-    dashboards_configmap = ''
+    # Load Grafana manifests and apply resource limits
+    grafana_objects = decode_yaml_stream(kustomize("./deploy/k8s/grafana/overlays/local"))
 
+    # Handle dashboard injection
+    dashboard_files = monitoring_cfg.get('dashboards', [])
+
+    for o in grafana_objects:
+        # Update Deployment with resource limits
+        if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'grafana':
+            spec = o.get('spec', {}).get('template', {}).get('spec', {})
+            containers = spec.get('containers', [])
+
+            for container in containers:
+                if container.get('name') == 'grafana':
+                    # Set resource limits
+                    container['resources'] = {
+                        'limits': {
+                            'cpu': grafana_cpu,
+                            'memory': grafana_mem
+                        },
+                        'requests': {
+                            'cpu': str(int(grafana_cpu.replace('m', '')) // 2) + 'm' if 'm' in grafana_cpu else str(float(grafana_cpu) / 2),
+                            'memory': str(int(grafana_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in grafana_mem else str(int(grafana_mem.replace('Mi', '')) // 2) + 'Mi'
+                        }
+                    }
+
+                    # Add dashboard volume mount if dashboards configured
+                    if dashboard_files:
+                        volumeMounts = container.get('volumeMounts', [])
+                        volumeMounts.append({
+                            'name': 'dashboards',
+                            'mountPath': '/var/lib/grafana/dashboards'
+                        })
+                        container['volumeMounts'] = volumeMounts
+
+            # Add dashboard volume if dashboards configured
+            if dashboard_files:
+                volumes = spec.get('volumes', [])
+                volumes.append({
+                    'name': 'dashboards',
+                    'configMap': {
+                        'name': 'grafana-dashboards'
+                    }
+                })
+                spec['volumes'] = volumes
+
+    # Create dashboard ConfigMap if needed
     if dashboard_files:
-        # Read all dashboard files and create ConfigMap
-        dashboards_configmap = '''
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-dashboards
-data:
-'''
+        dashboard_configmap = {
+            'apiVersion': 'v1',
+            'kind': 'ConfigMap',
+            'metadata': {
+                'name': 'grafana-dashboards'
+            },
+            'data': {}
+        }
+
         for dashboard_path in dashboard_files:
             if os.path.exists(dashboard_path):
                 dashboard_name = os.path.basename(dashboard_path)
                 print("Loading Grafana dashboard: %s" % dashboard_path)
                 dashboard_content = read_file(dashboard_path)
-                # Properly indent dashboard JSON in YAML (2 spaces for key, content indented by 4)
-                dashboards_configmap += '  %s: |\n' % dashboard_name
-                for line in dashboard_content.split('\n'):
-                    dashboards_configmap += '    %s\n' % line
+                dashboard_configmap['data'][dashboard_name] = dashboard_content
 
-    grafana_config = '''
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-datasources
-data:
-  prometheus.yml: |
-    apiVersion: 1
-    datasources:
-      - name: Prometheus
-        type: prometheus
-        access: proxy
-        url: http://prometheus:9090
-        isDefault: true
-        editable: true
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-dashboards-config
-data:
-  dashboards.yml: |
-    apiVersion: 1
-    providers:
-      - name: 'CanopyX'
-        orgId: 1
-        folder: ''
-        type: file
-        disableDeletion: false
-        updateIntervalSeconds: 10
-        allowUiUpdates: true
-        options:
-          path: /var/lib/grafana/dashboards
-%s
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: grafana
-  labels:
-    app: grafana
-spec:
-  containers:
-  - name: grafana
-    image: grafana/grafana:latest
-    ports:
-    - containerPort: 3000
-    env:
-    - name: GF_AUTH_ANONYMOUS_ENABLED
-      value: "true"
-    - name: GF_AUTH_ANONYMOUS_ORG_ROLE
-      value: "Admin"
-    - name: GF_AUTH_DISABLE_LOGIN_FORM
-      value: "true"
-    volumeMounts:
-    - name: datasources
-      mountPath: /etc/grafana/provisioning/datasources
-    - name: dashboards-config
-      mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
-      subPath: dashboards.yml
-%s
-  volumes:
-  - name: datasources
-    configMap:
-      name: grafana-datasources
-  - name: dashboards-config
-    configMap:
-      name: grafana-dashboards-config
-%s
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: grafana
-spec:
-  selector:
-    app: grafana
-  ports:
-  - port: 3000
-    targetPort: 3000
-''' % (
-        dashboards_configmap,
-        '    - name: dashboards\n      mountPath: /var/lib/grafana/dashboards' if dashboard_files else '',
-        '  - name: dashboards\n    configMap:\n      name: grafana-dashboards' if dashboard_files else ''
-    )
+        grafana_objects.append(dashboard_configmap)
 
-    k8s_yaml(blob(grafana_config))
+    k8s_yaml(encode_yaml_stream(grafana_objects))
 
     k8s_resource(
-      'grafana',
-      port_forwards='%s:3000' % get_port('grafana', 3100),
-      resource_deps=['prometheus'],
-      labels=['monitoring'],
+        'grafana',
+        port_forwards='%s:3000' % get_port('grafana', 3100),
+        resource_deps=['prometheus'],
+        labels=['monitoring'],
     )
 else:
     print("Monitoring disabled - skipping Prometheus and Grafana deployment")
@@ -611,7 +456,31 @@ if components.get('admin_web', True):
         ],
     )
 
-    k8s_yaml(kustomize("./deploy/k8s/admin-web/overlays/local"))
+    # Load admin-web manifests and apply resource limits from profile
+    admin_web_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin-web/overlays/local"))
+
+    for o in admin_web_objects:
+        if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-admin-web':
+            containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+            for container in containers:
+                if container.get('name') == 'admin-web':
+                    # Note: admin_web_memory_limit should be higher (512Mi+) for Next.js dev mode with hot reload
+                    admin_web_cpu = canopyx_cfg.get('admin_web_cpu_limit', '500m')
+                    admin_web_mem = canopyx_cfg.get('admin_web_memory_limit', '512Mi')
+                    container['resources'] = {
+                        'limits': {
+                            'cpu': admin_web_cpu,
+                            'memory': admin_web_mem
+                        },
+                        'requests': {
+                            'cpu': str(int(admin_web_cpu.replace('m', '')) // 2) + 'm' if 'm' in admin_web_cpu else str(float(admin_web_cpu) / 2),
+                            'memory': str(int(admin_web_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in admin_web_mem else str(int(admin_web_mem.replace('Mi', '')) // 2) + 'Mi'
+                        }
+                    }
+                    print("CanopyX Admin Web resources: CPU=%s, Memory=%s" % (admin_web_cpu, admin_web_mem))
+            break
+
+    k8s_yaml(encode_yaml_stream(admin_web_objects))
 
     k8s_resource(
         "canopyx-admin-web",
@@ -635,7 +504,30 @@ docker_build_with_restart(
     live_update=[sync("bin/controller", "/app/controller")],
 )
 
-k8s_yaml(kustomize("./deploy/k8s/controller/overlays/local"))
+# Load controller manifests and apply resource limits from profile
+controller_objects = decode_yaml_stream(kustomize("./deploy/k8s/controller/overlays/local"))
+
+for o in controller_objects:
+    if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-controller':
+        containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+        for container in containers:
+            if container.get('name') == 'controller':
+                controller_cpu = canopyx_cfg.get('controller_cpu_limit', '500m')
+                controller_mem = canopyx_cfg.get('controller_memory_limit', '512Mi')
+                container['resources'] = {
+                    'limits': {
+                        'cpu': controller_cpu,
+                        'memory': controller_mem
+                    },
+                    'requests': {
+                        'cpu': str(int(controller_cpu.replace('m', '')) // 2) + 'm' if 'm' in controller_cpu else str(float(controller_cpu) / 2),
+                        'memory': str(int(controller_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in controller_mem else str(int(controller_mem.replace('Mi', '')) // 2) + 'Mi'
+                    }
+                }
+                print("CanopyX Controller resources: CPU=%s, Memory=%s" % (controller_cpu, controller_mem))
+        break
+
+k8s_yaml(encode_yaml_stream(controller_objects))
 
 k8s_resource(
     "canopyx-controller",

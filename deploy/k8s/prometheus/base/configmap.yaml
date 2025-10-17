@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      # Scrape Temporal services
+      - job_name: 'temporal-frontend'
+        static_configs:
+          - targets: ['temporal-frontend:9090']
+        metrics_path: '/metrics'
+
+      - job_name: 'temporal-history'
+        static_configs:
+          - targets: ['temporal-history-headless:9090']
+        metrics_path: '/metrics'
+
+      - job_name: 'temporal-matching'
+        static_configs:
+          - targets: ['temporal-matching-headless:9090']
+        metrics_path: '/metrics'
+
+      - job_name: 'temporal-worker'
+        static_configs:
+          - targets: ['temporal-worker:9090']
+        metrics_path: '/metrics'
+
+      # Scrape ClickHouse
+      - job_name: 'clickhouse'
+        static_configs:
+          - targets: ['clickhouse-hdx-oss-v2-clickhouse:9363']
+        metrics_path: '/metrics'
+
+      # Scrape Cassandra (Temporal's persistence)
+      - job_name: 'cassandra'
+        static_configs:
+          - targets: ['temporal-cassandra:8080']
+        metrics_path: '/metrics'
+
+      # Scrape Elasticsearch (Temporal's visibility)
+      - job_name: 'elasticsearch'
+        static_configs:
+          - targets: ['temporal-elasticsearch-master:9114']
+        metrics_path: '/metrics'
+
+      # Scrape CanopyX services via Kubernetes service discovery
+      - job_name: 'canopyx-services'
+        kubernetes_sd_configs:
+          - role: service
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_app]
+            action: keep
+            regex: 'canopyx.*'
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+
+      # Scrape Kubernetes pods with prometheus.io annotations
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::[0-9]+)?;([0-9]+)
+            replacement: $1:$2
+            target_label: __address__

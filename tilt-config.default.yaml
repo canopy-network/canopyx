@@ -96,7 +96,7 @@ resources:
       query_cpu_limit: "500m"
       query_memory_limit: "512Mi"
       admin_web_cpu_limit: "200m"
-      admin_web_memory_limit: "256Mi"
+      admin_web_memory_limit: "512Mi"  # Higher for Next.js dev mode with hot reload
 
     indexer:
       min_replicas: 1
@@ -104,6 +104,10 @@ resources:
 
     monitoring:
       enabled: false  # Force disable monitoring in minimal mode
+      prometheus_cpu_limit: "500m"
+      prometheus_memory_limit: "512Mi"
+      grafana_cpu_limit: "200m"
+      grafana_memory_limit: "256Mi"
 
   development:
     clickhouse:
@@ -139,8 +143,16 @@ resources:
       prometheus:
         retention: "2d"
         scrape_interval: "15s"
+        cpu_limit: "1000m"
+        memory_limit: "1Gi"
       grafana:
         enabled: true
+        cpu_limit: "500m"
+        memory_limit: "512Mi"
+      prometheus_cpu_limit: "1000m"
+      prometheus_memory_limit: "1Gi"
+      grafana_cpu_limit: "500m"
+      grafana_memory_limit: "512Mi"
 
   production:
     clickhouse:
@@ -176,8 +188,16 @@ resources:
       prometheus:
         retention: "7d"
         scrape_interval: "10s"
+        cpu_limit: "2000m"
+        memory_limit: "2Gi"
       grafana:
         enabled: true
+        cpu_limit: "1000m"
+        memory_limit: "1Gi"
+      prometheus_cpu_limit: "2000m"
+      prometheus_memory_limit: "2Gi"
+      grafana_cpu_limit: "1000m"
+      grafana_memory_limit: "1Gi"
 
 # ==============================================================================
 # PORT FORWARDING
