@@ -76,13 +76,27 @@ resources:
     clickhouse:
       cpu_limit: "1000m"
       memory_limit: "2Gi"
+      cpu_request: "500m"
+      memory_request: "1Gi"
 
     temporal:
       history_replicas: 1
-      matching_replicas: 1
-      frontend_replicas: 1
-      worker_replicas: 1
       cassandra_replicas: 1
+      cassandra_heap_size: "4G"
+      cassandra_memory_limit: "6G"
+      elasticsearch_replicas: 1
+      elasticsearch_memory_limit: "1Gi"
+      elasticsearch_cpu_limit: "1000m"
+
+    canopyx:
+      admin_cpu_limit: "500m"
+      admin_memory_limit: "512Mi"
+      controller_cpu_limit: "500m"
+      controller_memory_limit: "512Mi"
+      query_cpu_limit: "500m"
+      query_memory_limit: "512Mi"
+      admin_web_cpu_limit: "200m"
+      admin_web_memory_limit: "256Mi"
 
     indexer:
       min_replicas: 1
@@ -95,13 +109,27 @@ resources:
     clickhouse:
       cpu_limit: "2000m"
       memory_limit: "4Gi"
+      cpu_request: "1000m"
+      memory_request: "2Gi"
 
     temporal:
       history_replicas: 1
-      matching_replicas: 1
-      frontend_replicas: 1
-      worker_replicas: 1
       cassandra_replicas: 1
+      cassandra_heap_size: "8G"
+      cassandra_memory_limit: "12G"
+      elasticsearch_replicas: 1
+      elasticsearch_memory_limit: "2Gi"
+      elasticsearch_cpu_limit: "2000m"
+
+    canopyx:
+      admin_cpu_limit: "1000m"
+      admin_memory_limit: "1Gi"
+      controller_cpu_limit: "1000m"
+      controller_memory_limit: "1Gi"
+      query_cpu_limit: "1000m"
+      query_memory_limit: "1Gi"
+      admin_web_cpu_limit: "500m"
+      admin_web_memory_limit: "512Mi"
 
     indexer:
       min_replicas: 1
@@ -118,13 +146,27 @@ resources:
     clickhouse:
       cpu_limit: "4000m"
       memory_limit: "8Gi"
+      cpu_request: "2000m"
+      memory_request: "4Gi"
 
     temporal:
       history_replicas: 3
-      matching_replicas: 3
-      frontend_replicas: 2
-      worker_replicas: 2
       cassandra_replicas: 3
+      cassandra_heap_size: "16G"
+      cassandra_memory_limit: "24G"
+      elasticsearch_replicas: 3
+      elasticsearch_memory_limit: "4Gi"
+      elasticsearch_cpu_limit: "4000m"
+
+    canopyx:
+      admin_cpu_limit: "2000m"
+      admin_memory_limit: "2Gi"
+      controller_cpu_limit: "2000m"
+      controller_memory_limit: "2Gi"
+      query_cpu_limit: "2000m"
+      query_memory_limit: "2Gi"
+      admin_web_cpu_limit: "1000m"
+      admin_web_memory_limit: "1Gi"
 
     indexer:
       min_replicas: 3

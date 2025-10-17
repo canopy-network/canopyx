@@ -64,13 +64,30 @@ helm_repo(
 # CLICKHOUSE (Always Required)
 # ------------------------------------------
 # ClickHouse is always deployed - resource limits controlled via profile configuration
+
+# Build ClickHouse resource limit flags from profile
+clickhouse_cfg = resources_cfg.get('clickhouse', {})
+clickhouse_flags = ['--values=./deploy/helm/clickhouse-values.yaml']
+
+if clickhouse_cfg.get('cpu_limit'):
+    clickhouse_flags.append('--set=clickhouse.resources.limits.cpu=%s' % clickhouse_cfg['cpu_limit'])
+if clickhouse_cfg.get('memory_limit'):
+    clickhouse_flags.append('--set=clickhouse.resources.limits.memory=%s' % clickhouse_cfg['memory_limit'])
+if clickhouse_cfg.get('cpu_request'):
+    clickhouse_flags.append('--set=clickhouse.resources.requests.cpu=%s' % clickhouse_cfg['cpu_request'])
+if clickhouse_cfg.get('memory_request'):
+    clickhouse_flags.append('--set=clickhouse.resources.requests.memory=%s' % clickhouse_cfg['memory_request'])
+
+print("ClickHouse resources: CPU=%s, Memory=%s" % (
+    clickhouse_cfg.get('cpu_limit', 'default'),
+    clickhouse_cfg.get('memory_limit', 'default')
+))
+
 helm_resource(
   name='clickhouse',
   chart='hyperdx/hdx-oss-v2',
   release_name='clickhouse',
-  flags=[
-    '--values=./deploy/helm/clickhouse-values.yaml'
-  ],
+  flags=clickhouse_flags,
   pod_readiness='wait',
   labels=['clickhouse']
 )
@@ -120,13 +137,42 @@ k8s_attach(
 # TEMPORAL (Always Required)
 # ------------------------------------------
 # Temporal is always deployed - resource limits controlled via profile configuration
+
+# Build Temporal resource limit flags from profile
+temporal_cfg = resources_cfg.get('temporal', {})
+temporal_flags = ['--values=./deploy/helm/temporal-cassandra-elasticsearch-values.yaml']
+
+# Temporal replica counts
+if temporal_cfg.get('history_replicas'):
+    temporal_flags.append('--set=server.replicaCount=%s' % temporal_cfg['history_replicas'])
+if temporal_cfg.get('cassandra_replicas'):
+    temporal_flags.append('--set=cassandra.config.cluster_size=%s' % temporal_cfg['cassandra_replicas'])
+    temporal_flags.append('--set=cassandra.replicas=%s' % temporal_cfg['cassandra_replicas'])
+if temporal_cfg.get('elasticsearch_replicas'):
+    temporal_flags.append('--set=elasticsearch.replicas=%s' % temporal_cfg['elasticsearch_replicas'])
+
+# Cassandra resource limits
+cass_mem_limit = temporal_cfg.get('cassandra_memory_limit', '8G')
+cass_heap = temporal_cfg.get('cassandra_heap_size', '8G')
+temporal_flags.append('--set=cassandra.config.max_heap_size=%s' % cass_heap)
+
+# Elasticsearch resource limits
+if temporal_cfg.get('elasticsearch_memory_limit'):
+    temporal_flags.append('--set=elasticsearch.resources.limits.memory=%s' % temporal_cfg['elasticsearch_memory_limit'])
+if temporal_cfg.get('elasticsearch_cpu_limit'):
+    temporal_flags.append('--set=elasticsearch.resources.limits.cpu=%s' % temporal_cfg['elasticsearch_cpu_limit'])
+
+print("Temporal resources: History replicas=%s, Cassandra replicas=%s, ES replicas=%s" % (
+    temporal_cfg.get('history_replicas', 'default'),
+    temporal_cfg.get('cassandra_replicas', 'default'),
+    temporal_cfg.get('elasticsearch_replicas', 'default')
+))
+
 helm_resource(
   name='temporal',
   chart='temporal/temporal',
   release_name='temporal',
-  flags=[
-    '--values=./deploy/helm/temporal-cassandra-elasticsearch-values.yaml'
-  ],
+  flags=temporal_flags,
   pod_readiness='wait',
   resource_deps=['helm-repo-temporal'],
   labels=['temporal']
@@ -462,7 +508,32 @@ docker_build_with_restart(
     live_update=[sync("bin/admin", "/app/admin")],
 )
 
-k8s_yaml(kustomize("./deploy/k8s/admin/overlays/local"))
+# Load admin manifests and apply resource limits from profile
+admin_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin/overlays/local"))
+canopyx_cfg = resources_cfg.get('canopyx', {})
+
+for o in admin_objects:
+    if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-admin':
+        # Apply resource limits from profile
+        containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+        for container in containers:
+            if container.get('name') == 'admin':
+                admin_cpu = canopyx_cfg.get('admin_cpu_limit', '1000m')
+                admin_mem = canopyx_cfg.get('admin_memory_limit', '1Gi')
+                container['resources'] = {
+                    'limits': {
+                        'cpu': admin_cpu,
+                        'memory': admin_mem
+                    },
+                    'requests': {
+                        'cpu': str(int(admin_cpu.replace('m', '')) // 2) + 'm' if 'm' in admin_cpu else str(float(admin_cpu) / 2),
+                        'memory': str(int(admin_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in admin_mem else str(int(admin_mem.replace('Mi', '')) // 2) + 'Mi'
+                    }
+                }
+                print("CanopyX Admin resources: CPU=%s, Memory=%s" % (admin_cpu, admin_mem))
+        break
+
+k8s_yaml(encode_yaml_stream(admin_objects))
 
 k8s_resource(
     "canopyx-admin",
@@ -487,7 +558,30 @@ if components.get('query', True):
         live_update=[sync("bin/query", "/app/query")],
     )
 
-    k8s_yaml(kustomize("./deploy/k8s/query/overlays/local"))
+    # Load query manifests and apply resource limits from profile
+    query_objects = decode_yaml_stream(kustomize("./deploy/k8s/query/overlays/local"))
+
+    for o in query_objects:
+        if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-query':
+            containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+            for container in containers:
+                if container.get('name') == 'query':
+                    query_cpu = canopyx_cfg.get('query_cpu_limit', '1000m')
+                    query_mem = canopyx_cfg.get('query_memory_limit', '1Gi')
+                    container['resources'] = {
+                        'limits': {
+                            'cpu': query_cpu,
+                            'memory': query_mem
+                        },
+                        'requests': {
+                            'cpu': str(int(query_cpu.replace('m', '')) // 2) + 'm' if 'm' in query_cpu else str(float(query_cpu) / 2),
+                            'memory': str(int(query_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in query_mem else str(int(query_mem.replace('Mi', '')) // 2) + 'Mi'
+                        }
+                    }
+                    print("CanopyX Query resources: CPU=%s, Memory=%s" % (query_cpu, query_mem))
+            break
+
+    k8s_yaml(encode_yaml_stream(query_objects))
 
     k8s_resource(
         "canopyx-query",
