@@ -255,6 +255,48 @@ monitoring:
     #     - targets: ['my-service:9090']
 
 # ==============================================================================
+# CHAIN REGISTRATION
+# ==============================================================================
+# Auto-register external Canopy chains on startup
+# The local node (if enabled) is registered separately via dev.auto_register_chain
+chains: []
+  # Uncomment and modify to connect to external Canopy networks:
+  #
+  # - chain_id: "canopy-mainnet"
+  #   chain_name: "Canopy Mainnet"
+  #   rpc_endpoints: ["https://node1.canopy.us.nodefleet.net/rpc"]
+  #   min_replicas: 3
+  #   max_replicas: 6
+  #   image: "localhost:5001/canopyx-indexer:dev"  # Optional, defaults to dev.indexer_tag
+  #
+  # - chain_id: "canopy-canary"
+  #   chain_name: "Canopy Canary"
+  #   rpc_endpoints: ["https://node2.canopy.us.nodefleet.net/rpc"]
+  #   min_replicas: 3
+  #   max_replicas: 6
+  #   image: "localhost:5001/canopyx-indexer:dev"  # Optional, defaults to dev.indexer_tag
+
+# ==============================================================================
+# ENVIRONMENT VARIABLE OVERRIDES
+# ==============================================================================
+# Override default environment variables for admin and controller
+# Useful for debugging and development tuning
+env:
+  admin:
+    # LOG_LEVEL: "debug"           # Logging level: debug, info, warn, error
+    # CHDEBUG: "1"                 # ClickHouse debug: 0=off, 1=failed queries, 2=all queries
+    # ADMIN_TOKEN: "devtoken"      # Admin API authentication token
+
+  controller:
+    # LOG_LEVEL: "debug"           # Logging level: debug, info, warn, error
+    # CHDEBUG: "1"                 # ClickHouse debug: 0=off, 1=failed queries, 2=all queries
+    # INDEXER_CPU: "2000m"         # CPU limit for spawned indexer pods
+    # INDEXER_MEM: "2Gi"           # Memory limit for spawned indexer pods
+    # INDEXER_HPA_MIN: "1"         # Minimum indexer replicas (HPA)
+    # INDEXER_HPA_MAX: "3"         # Maximum indexer replicas (HPA)
+    # INDEXER_HPA_CPU_TARGET: "80" # CPU target percentage for HPA scaling
+
+# ==============================================================================
 # DEVELOPMENT SETTINGS
 # ==============================================================================
 dev:
