@@ -261,6 +261,12 @@ if components.get('monitoring', False):
     k8s_resource(
         'prometheus',
         port_forwards='%s:9090' % get_port('prometheus', 9090),
+        objects=[
+            'prometheus:serviceaccount',
+            'prometheus:clusterrole',
+            'prometheus:clusterrolebinding',
+            'prometheus-config:configmap'
+        ],
         labels=['monitoring'],
     )
 
@@ -335,6 +341,11 @@ if components.get('monitoring', False):
     k8s_resource(
         'grafana',
         port_forwards='%s:3000' % get_port('grafana', 3100),
+        objects=[
+            'grafana-dashboards-config:configmap',
+            'grafana-datasources:configmap',
+            'grafana-dashboards:configmap'  # Only present if dashboards configured
+        ],
         resource_deps=['prometheus'],
         labels=['monitoring'],
     )
