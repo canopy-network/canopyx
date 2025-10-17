@@ -1,10 +1,74 @@
 # Repository Guidelines
 
+## System Overview
+CanopyX is a high-throughput blockchain indexer that processes blocks/transactions into ClickHouse, orchestrated by Temporal workflows. The architecture is optimized for **parallel multi-chain indexing** with per-chain isolation.
+
+### Core Services
+- **admin** (`cmd/admin`, `app/admin`) - Admin API + Next.js UI; manages chain registration, schedules, triggers head/gap scans
+- **indexer** (`cmd/indexer`, `app/indexer`) - Per-chain Temporal worker (2 workers per chain: index queue + ops queue); fetches blocks/txs and writes to ClickHouse
+- **controller** (`cmd/controller`, `app/controller`) - K8s orchestrator; spawns one `indexer` Deployment per chain, scales replicas based on Temporal queue depth
+- **query** (`cmd/query`) - Public query API for dashboards
+- **reporter** (`cmd/reporter`) - Periodic stats aggregation (hourly/daily/24h tx counts)
+
+### Architecture Deep Dive
+
+**Per-Chain Isolation Model:**
+- Each chain gets **TWO dedicated Temporal task queues** (same namespace):
+  - `index:<chainID>` - IndexBlock workflows (high-throughput, 5000 concurrent activities)
+  - `admin:<chainID>` - Ops workflows (HeadScan, GapScan, Scheduler - lightweight, 5 pollers)
+- Each chain gets **ONE Kubernetes Deployment** (`indexer-<chainID>`):
+  - Runs 2 workers polling both queues
+  - Controller auto-scales replicas (min/max) based on `index:<chainID>` backlog depth
+  - Env: `CHAIN_ID=<chainID>`, Temporal/ClickHouse creds
+- Each chain gets **ONE ClickHouse database** (`<chainID>`):
+  - Tables: `blocks`, `txs`, `txs_raw`
+  - Created on-demand by indexer at startup
+
+**Temporal Workflow Patterns:**
+1. **IndexBlock workflow** (index queue, per-block):
+   - PrepareIndexBlock (local) → check if indexed
+   - FetchBlockFromRPC (local, fast retry) → RPC call
+   - SaveBlock (regular) → ClickHouse write
+   - IndexTransactions (regular) → fetch txs, write to ClickHouse
+   - SaveBlockSummary (regular) → aggregate stats
+   - RecordIndexed (regular) → update `index_progress`
+   - Unlimited retries, 2min timeout per activity
+
+2. **HeadScan workflow** (ops queue):
+   - Queries chain head vs last indexed
+   - If <1000 blocks: schedules directly to index queue (ultra-high priority)
+   - If ≥1000 blocks: triggers SchedulerWorkflow child (catch-up mode)
+
+3. **GapScan workflow** (ops queue):
+   - Queries DB for missing heights
+   - If <1000 total: schedules directly (high priority)
+   - If ≥1000 total: triggers SchedulerWorkflow child
+
+4. **SchedulerWorkflow** (ops queue, long-running):
+   - Processes large ranges (e.g., 700k blocks) sequentially in 500-block batches
+   - ContinueAsNew every 10k blocks to avoid history bloat
+   - Rate-limited: 500 workflows/sec (1s delay per batch)
+   - Dynamic priority based on block age (ultra-high → ultra-low)
+
+**Controller Scaling Logic:**
+- Every 15s reconciliation tick
+- Fetches queue stats from Temporal API (cached 30s)
+- Computes desired replicas: `min + ceil(ratio * (max - min))`
+  - `backlog < 10`: scale to min
+  - `backlog > 1000`: scale to max
+  - In between: linear interpolation
+- 60s cooldown on scale changes
+- Updates ClickHouse with queue/deployment health status
+
+**Data Flow:**
+- RPC → IndexBlock workflow → ClickHouse per-chain DB → Query API
+- Very little data in ClickHouse currently (blocks/txs only, no deep entity indexing yet)
+
 ## Project Structure & Module Organization
 - Services: `cmd/<service>` entries with orchestration in `app/<service>`; update those pairs together.
 - Shared Go libraries live in `pkg/` (database, Temporal, RPC, logging, utils); avoid duplicating helpers elsewhere.
 - Web admin code sits in `web/admin/` with static exports under `web/admin/out`. Infra assets stay in the root `Makefile`, Dockerfiles, `Tiltfile`, and `deploy/`.
-- Indexer binaries now poll per-chain queues: `index:<chainID>` for block workflows and `admin:<chainID>` for head/gap maintenance tasks.
+- Indexer binaries poll per-chain queues: `index:<chainID>` for block workflows and `admin:<chainID>` for head/gap maintenance tasks.
 
 ## Admin UI Workflows
 - Chain metadata now includes `image`, `min_replicas`, `max_replicas`, and optional `notes`; the `/api/chains` create/update endpoints expect these fields and the UI form persists optimistic updates.

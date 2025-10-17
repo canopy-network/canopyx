@@ -1,5 +1,3 @@
-//go:build integration
-
 package indexer
 
 import (
@@ -7,13 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/canopy-network/canopyx/tests/integration/helpers"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/tests/integration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -21,11 +20,13 @@ import (
 
 // TestAdminDB_TableCreation verifies that all AdminDB tables are created correctly
 func TestAdminDB_TableCreation(t *testing.T) {
-	testDB := integration.TestDB()
-	require.NotNil(t, testDB, "test database not initialized")
-
 	ctx := context.Background()
-	integration.CleanDB(t)
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
+	testDB := helpers.TestDB()
+	require.NotNil(t, testDB, "test database not initialized")
+	helpers.CleanDB(ctx, t)
 
 	tests := []struct {
 		name        string
@@ -62,7 +63,7 @@ func TestAdminDB_TableCreation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Verify table exists
-			integration.RequireTableExists(t, tt.tableName)
+			helpers.RequireTableExists(ctx, t, tt.tableName)
 
 			// Check engine type
 			var engine string
@@ -89,15 +90,17 @@ func TestAdminDB_TableCreation(t *testing.T) {
 	}
 
 	// Verify materialized view exists
-	integration.RequireMaterializedViewExists(t, "index_progress_mv")
+	helpers.RequireMaterializedViewExists(ctx, t, "index_progress_mv")
 }
 
 // TestAdminDB_ChainOperations tests all chain-related CRUD operations
 func TestAdminDB_ChainOperations(t *testing.T) {
-	testDB := integration.TestDB()
-	require.NotNil(t, testDB)
-
 	ctx := context.Background()
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
+	testDB := helpers.TestDB()
+	require.NotNil(t, testDB)
 
 	tests := []struct {
 		name string
@@ -147,14 +150,14 @@ func TestAdminDB_ChainOperations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			integration.CleanDB(t)
+			helpers.CleanDB(ctx, t)
 			tt.fn(t, ctx)
 		})
 	}
 }
 
 func testChainUpsertAllFields(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 	now := time.Now().UTC()
 
 	chain := &admin.Chain{
@@ -217,7 +220,7 @@ func testChainUpsertAllFields(t *testing.T, ctx context.Context) {
 }
 
 func testChainNullableAndArrayFields(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Test empty array
 	chain1 := &admin.Chain{
@@ -274,7 +277,7 @@ func testChainNullableAndArrayFields(t *testing.T, ctx context.Context) {
 }
 
 func testChainGetWithFinal(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Insert multiple versions of the same chain
 	chain := &admin.Chain{
@@ -316,7 +319,7 @@ func testChainGetWithFinal(t *testing.T, ctx context.Context) {
 }
 
 func testChainList(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	chains := []*admin.Chain{
 		{
@@ -369,7 +372,7 @@ func testChainList(t *testing.T, ctx context.Context) {
 }
 
 func testChainUpdateRPCHealth(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Create initial chain
 	chain := &admin.Chain{
@@ -405,7 +408,7 @@ func testChainUpdateRPCHealth(t *testing.T, ctx context.Context) {
 }
 
 func testChainUpdateQueueHealth(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Create initial chain
 	chain := &admin.Chain{
@@ -432,7 +435,7 @@ func testChainUpdateQueueHealth(t *testing.T, ctx context.Context) {
 }
 
 func testChainUpdateDeploymentHealth(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Create initial chain
 	chain := &admin.Chain{
@@ -459,7 +462,7 @@ func testChainUpdateDeploymentHealth(t *testing.T, ctx context.Context) {
 }
 
 func testChainUpdateOverallHealth(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Create initial chain
 	chain := &admin.Chain{
@@ -538,7 +541,7 @@ func testChainUpdateOverallHealth(t *testing.T, ctx context.Context) {
 }
 
 func testChainPatchBulk(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Create initial chains
 	chains := []*admin.Chain{
@@ -600,7 +603,7 @@ func testChainPatchBulk(t *testing.T, ctx context.Context) {
 }
 
 func testChainReplacingMergeTreeDedup(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Insert same chain multiple times rapidly
 	for i := 0; i < 5; i++ {
@@ -647,10 +650,12 @@ func testChainReplacingMergeTreeDedup(t *testing.T, ctx context.Context) {
 
 // TestAdminDB_IndexProgressOperations tests index progress tracking with materialized view
 func TestAdminDB_IndexProgressOperations(t *testing.T) {
-	testDB := integration.TestDB()
-	require.NotNil(t, testDB)
-
 	ctx := context.Background()
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
+	testDB := helpers.TestDB()
+	require.NotNil(t, testDB)
 
 	tests := []struct {
 		name string
@@ -680,14 +685,14 @@ func TestAdminDB_IndexProgressOperations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			integration.CleanDB(t)
+			helpers.CleanDB(ctx, t)
 			tt.fn(t, ctx)
 		})
 	}
 }
 
 func testIndexProgressRecordAndQuery(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Create a test chain first
 	chain := &admin.Chain{
@@ -708,7 +713,7 @@ func testIndexProgressRecordAndQuery(t *testing.T, ctx context.Context) {
 	}
 
 	// Wait for materialized view to update
-	integration.WaitForMaterializedView(t, 200*time.Millisecond)
+	helpers.WaitForMaterializedView(t, 200*time.Millisecond)
 
 	// Query last indexed height
 	lastHeight, err := testDB.LastIndexed(ctx, "progress-chain")
@@ -731,7 +736,7 @@ func testIndexProgressRecordAndQuery(t *testing.T, ctx context.Context) {
 }
 
 func testIndexProgressFindGaps(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Create a test chain
 	chain := &admin.Chain{
@@ -762,7 +767,7 @@ func testIndexProgressFindGaps(t *testing.T, ctx context.Context) {
 	require.NoError(t, err)
 
 	// Expected gaps (internal gaps only, not trailing gap)
-	expectedGaps := []integration.GapExpectation{
+	expectedGaps := []helpers.GapExpectation{
 		{From: 4, To: 6},
 		{From: 9, To: 14},
 		{From: 18, To: 19},
@@ -776,7 +781,7 @@ func testIndexProgressFindGaps(t *testing.T, ctx context.Context) {
 }
 
 func testIndexProgressEmptyData(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	// Query for non-existent chain
 	lastHeight, err := testDB.LastIndexed(ctx, "non-existent-chain")
@@ -790,7 +795,7 @@ func testIndexProgressEmptyData(t *testing.T, ctx context.Context) {
 }
 
 func testIndexProgressMaterializedView(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	chainID := "mv-test-chain"
 
@@ -811,7 +816,7 @@ func testIndexProgressMaterializedView(t *testing.T, ctx context.Context) {
 	}
 
 	// Wait for MV to process
-	integration.WaitForMaterializedView(t, 200*time.Millisecond)
+	helpers.WaitForMaterializedView(t, 200*time.Millisecond)
 
 	// Check aggregate table directly
 	var maxHeightState uint64
@@ -827,7 +832,7 @@ func testIndexProgressMaterializedView(t *testing.T, ctx context.Context) {
 	}
 
 	// Wait for MV to process
-	integration.WaitForMaterializedView(t, 200*time.Millisecond)
+	helpers.WaitForMaterializedView(t, 200*time.Millisecond)
 
 	// Verify aggregate updated
 	err = testDB.Db.NewRaw(query, chainID).Scan(ctx, &maxHeightState)
@@ -841,7 +846,7 @@ func testIndexProgressMaterializedView(t *testing.T, ctx context.Context) {
 }
 
 func testIndexProgressLargeDataset(t *testing.T, ctx context.Context) {
-	testDB := integration.TestDB()
+	testDB := helpers.TestDB()
 
 	chainID := "large-dataset-chain"
 
@@ -876,7 +881,7 @@ func testIndexProgressLargeDataset(t *testing.T, ctx context.Context) {
 	}
 
 	// Wait for MV
-	integration.WaitForMaterializedView(t, 500*time.Millisecond)
+	helpers.WaitForMaterializedView(t, 500*time.Millisecond)
 
 	// Performance test: LastIndexed should be fast even with large dataset
 	start := time.Now()
@@ -897,11 +902,13 @@ func testIndexProgressLargeDataset(t *testing.T, ctx context.Context) {
 
 // TestAdminDB_ReindexRequestOperations tests reindex request audit logging
 func TestAdminDB_ReindexRequestOperations(t *testing.T) {
-	testDB := integration.TestDB()
-	require.NotNil(t, testDB)
-
 	ctx := context.Background()
-	integration.CleanDB(t)
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
+	testDB := helpers.TestDB()
+	require.NotNil(t, testDB)
+	helpers.CleanDB(ctx, t)
 
 	t.Run("RecordReindexRequests bulk insert", func(t *testing.T) {
 		heights := []uint64{100, 101, 102, 105, 110}
@@ -960,6 +967,9 @@ func TestAdminDB_ReindexRequestOperations(t *testing.T) {
 // TestChainDB_TableCreation verifies chain-specific database tables
 func TestChainDB_TableCreation(t *testing.T) {
 	ctx := context.Background()
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
 	logger, _ := zap.NewDevelopment()
 
 	// Create a chain-specific database
@@ -1042,14 +1052,17 @@ func TestChainDB_TableCreation(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, ttlExpression, "TTL")
 		assert.Contains(t, ttlExpression, "created_at")
-		assert.Contains(t, ttlExpression, "30")
-		assert.Contains(t, ttlExpression, "DAY")
+		containsThirtyDay := strings.Contains(ttlExpression, "30 DAY") || strings.Contains(ttlExpression, "toIntervalDay(30)")
+		assert.True(t, containsThirtyDay, "expected TTL to specify 30 day interval, got: %s", ttlExpression)
 	})
 }
 
 // TestChainDB_BlockOperations tests block CRUD operations
 func TestChainDB_BlockOperations(t *testing.T) {
 	ctx := context.Background()
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
 	logger, _ := zap.NewDevelopment()
 
 	chainDB, err := db.NewChainDb(ctx, logger, "blocktest")
@@ -1064,7 +1077,6 @@ func TestChainDB_BlockOperations(t *testing.T) {
 			LastBlockHash:   "0xprev789",
 			ProposerAddress: "validator1",
 			Size:            2048,
-			NumTxs:          15,
 		}
 
 		err := chainDB.InsertBlock(ctx, block)
@@ -1075,11 +1087,10 @@ func TestChainDB_BlockOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, block.Height, retrieved.Height)
 		assert.Equal(t, block.Hash, retrieved.Hash)
-		assert.Equal(t, block.Time, retrieved.Time) // Should match exactly with microsecond precision
+		assert.Equal(t, block.Time, retrieved.Time.UTC()) // Normalize timezone to UTC for comparison
 		assert.Equal(t, block.LastBlockHash, retrieved.LastBlockHash)
 		assert.Equal(t, block.ProposerAddress, retrieved.ProposerAddress)
 		assert.Equal(t, block.Size, retrieved.Size)
-		assert.Equal(t, block.NumTxs, retrieved.NumTxs)
 	})
 
 	t.Run("HasBlock existence check", func(t *testing.T) {
@@ -1095,6 +1106,9 @@ func TestChainDB_BlockOperations(t *testing.T) {
 	})
 
 	t.Run("QueryBlocks pagination with cursor", func(t *testing.T) {
+		_, err := chainDB.Db.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s.blocks", chainDB.DatabaseName()))
+		require.NoError(t, err)
+
 		// Insert multiple blocks
 		for i := uint64(1); i <= 20; i++ {
 			block := &indexer.Block{
@@ -1102,7 +1116,6 @@ func TestChainDB_BlockOperations(t *testing.T) {
 				Hash:            fmt.Sprintf("hash-%d", i),
 				Time:            time.Now().Add(time.Duration(i) * time.Second),
 				ProposerAddress: fmt.Sprintf("validator-%d", i%3),
-				NumTxs:          uint32(i * 2),
 			}
 			err := chainDB.InsertBlock(ctx, block)
 			require.NoError(t, err)
@@ -1166,14 +1179,17 @@ func TestChainDB_BlockOperations(t *testing.T) {
 
 		retrieved, err := indexer.GetBlock(ctx, chainDB.Db, 6000)
 		require.NoError(t, err)
-		assert.Equal(t, expectedTime, retrieved.Time)
-		assert.NotEqual(t, preciseTime, retrieved.Time) // Nanoseconds should be truncated
+		assert.Equal(t, expectedTime, retrieved.Time.UTC())
+		assert.NotEqual(t, preciseTime, retrieved.Time.UTC()) // Nanoseconds should be truncated
 	})
 }
 
 // TestChainDB_TransactionOperations tests transaction CRUD operations
 func TestChainDB_TransactionOperations(t *testing.T) {
 	ctx := context.Background()
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
 	logger, _ := zap.NewDevelopment()
 
 	chainDB, err := db.NewChainDb(ctx, logger, "txtest")
@@ -1269,6 +1285,11 @@ func TestChainDB_TransactionOperations(t *testing.T) {
 	})
 
 	t.Run("LowCardinality optimization for message_type", func(t *testing.T) {
+		_, err := chainDB.Db.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s.txs", chainDB.DatabaseName()))
+		require.NoError(t, err)
+		_, err = chainDB.Db.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s.txs_raw", chainDB.DatabaseName()))
+		require.NoError(t, err)
+
 		// Insert transactions with repeated message types
 		messageTypes := []string{"send", "delegate", "undelegate", "send", "send", "delegate"}
 		txs := make([]*indexer.Transaction, len(messageTypes))
@@ -1285,7 +1306,7 @@ func TestChainDB_TransactionOperations(t *testing.T) {
 			}
 		}
 
-		err := indexer.InsertTransactionsCore(ctx, chainDB.Db, txs...)
+		err = indexer.InsertTransactionsCore(ctx, chainDB.Db, txs...)
 		require.NoError(t, err)
 
 		// Verify LowCardinality column type
@@ -1301,6 +1322,11 @@ func TestChainDB_TransactionOperations(t *testing.T) {
 	})
 
 	t.Run("QueryTransactions pagination", func(t *testing.T) {
+		_, err := chainDB.Db.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s.txs", chainDB.DatabaseName()))
+		require.NoError(t, err)
+		_, err = chainDB.Db.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s.txs_raw", chainDB.DatabaseName()))
+		require.NoError(t, err)
+
 		// Insert test data
 		for i := uint64(1); i <= 30; i++ {
 			amount := uint64(i * 1000)
@@ -1314,7 +1340,7 @@ func TestChainDB_TransactionOperations(t *testing.T) {
 				Fee:           i * 10,
 				CreatedHeight: i,
 			}
-			err := indexer.InsertTransactionsCore(ctx, chainDB.Db, tx)
+			err = indexer.InsertTransactionsCore(ctx, chainDB.Db, tx)
 			require.NoError(t, err)
 		}
 
@@ -1392,7 +1418,8 @@ func TestChainDB_TransactionOperations(t *testing.T) {
 		err := chainDB.Db.NewRaw(query, chainDB.Name).Scan(ctx, &engineFull)
 		require.NoError(t, err)
 		assert.Contains(t, engineFull, "TTL")
-		assert.Contains(t, engineFull, "30 DAY")
+		hasThirty := strings.Contains(engineFull, "30 DAY") || strings.Contains(engineFull, "toIntervalDay(30)")
+		assert.True(t, hasThirty, "expected TTL to specify 30 day interval, got: %s", engineFull)
 
 		// Verify created_at column exists with default
 		var defaultExpr string
@@ -1411,14 +1438,16 @@ func TestChainDB_TransactionOperations(t *testing.T) {
 
 // TestIntegrationScenarios tests complete workflows
 func TestIntegrationScenarios(t *testing.T) {
-	testDB := integration.TestDB()
-	require.NotNil(t, testDB)
-
 	ctx := context.Background()
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
+	testDB := helpers.TestDB()
+	require.NotNil(t, testDB)
 	logger, _ := zap.NewDevelopment()
 
 	t.Run("Complete indexing workflow", func(t *testing.T) {
-		integration.CleanDB(t)
+		helpers.CleanDB(ctx, t)
 
 		// 1. Create chain in AdminDB
 		chain := &admin.Chain{
@@ -1445,7 +1474,6 @@ func TestIntegrationScenarios(t *testing.T) {
 				Hash:            fmt.Sprintf("hash-%d", height),
 				Time:            time.Now().Add(time.Duration(height) * time.Second),
 				ProposerAddress: "validator-1",
-				NumTxs:          3,
 			}
 			err := chainDB.InsertBlock(ctx, block)
 			require.NoError(t, err)
@@ -1516,7 +1544,7 @@ func TestIntegrationScenarios(t *testing.T) {
 	})
 
 	t.Run("Concurrent writes stress test", func(t *testing.T) {
-		integration.CleanDB(t)
+		helpers.CleanDB(ctx, t)
 
 		// Create test chain
 		chain := &admin.Chain{
@@ -1544,7 +1572,7 @@ func TestIntegrationScenarios(t *testing.T) {
 		}
 
 		// Wait for materialized view
-		integration.WaitForMaterializedView(t, 500*time.Millisecond)
+		helpers.WaitForMaterializedView(t, 500*time.Millisecond)
 
 		// Verify all heights recorded
 		lastHeight, err := testDB.LastIndexed(ctx, "concurrent-chain")
@@ -1555,10 +1583,12 @@ func TestIntegrationScenarios(t *testing.T) {
 
 // TestErrorHandling tests error conditions and edge cases
 func TestErrorHandling(t *testing.T) {
-	testDB := integration.TestDB()
-	require.NotNil(t, testDB)
-
 	ctx := context.Background()
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
+	testDB := helpers.TestDB()
+	require.NotNil(t, testDB)
 
 	t.Run("GetChain non-existent", func(t *testing.T) {
 		_, err := testDB.GetChain(ctx, "non-existent-chain")

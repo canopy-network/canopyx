@@ -1,0 +1,7 @@
+Context snapshot for next AI session (full-access run):
+
+- Scheduler workflow constants (catch-up threshold, direct batch size, scheduler batch size, block time seconds) now live in `workflow.Config`, populated from env vars inside `app/indexer/app.go`. Defaults remain 200/50/1000/20 but override via `SCHEDULER_CATCHUP_THRESHOLD`, `DIRECT_SCHEDULE_BATCH_SIZE`, `SCHEDULER_BATCH_SIZE`, `BLOCK_TIME_SECONDS`.
+- Shared scheduling worker pool in `pkg/indexer/activity/context.go` now scales to 2×CPU (cap 512, override via `SCHEDULER_BATCH_MAX_PARALLELISM`) with queue sized to `parallelism * schedulerBatchSize`.
+- Workflow logic updated to consume config values; `CalculateBlockPriority` signature includes `blockTimeSeconds`.
+- Unit tests under `tests/unit/indexer` updated to pass `defaultWorkflowConfig()` and new priority arguments.
+- Go tests for `./pkg/indexer/...` passed using local cache; running `go test ./tests/unit/indexer/...` requires network/Go module downloads (blocked in current sandbox).

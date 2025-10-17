@@ -63,7 +63,7 @@ paths:
                     type: string
                     example: ok
 
-  /auth/login:
+  /api/auth/login:
     post:
       tags:
         - Admin - Auth
@@ -106,7 +106,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /auth/logout:
+  /api/auth/logout:
     post:
       tags:
         - Admin - Auth
@@ -715,7 +715,7 @@ components:
       name: cx_session
       description: |
         Session-based authentication using JWT stored in HTTP-only cookie.
-        Obtained from /auth/login endpoint.
+        Obtained from /api/auth/login endpoint.
 
         This is used by the web UI. API consumers should use bearerAuth instead.
 

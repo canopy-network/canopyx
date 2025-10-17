@@ -1,171 +1,168 @@
 package controller
 
 import (
-	"context"
-	"database/sql"
-	"errors"
-	"fmt"
-	"net/http"
-	"strings"
-	"sync"
-	"time"
+    "context"
+    "database/sql"
+    "errors"
+    "fmt"
+    "net/http"
+    "strings"
+    "sync"
+    "time"
 
-	admintypes "github.com/canopy-network/canopyx/app/admin/types"
-	"github.com/canopy-network/canopyx/pkg/db"
-	"github.com/canopy-network/canopyx/pkg/db/models/admin"
-	indexertypes "github.com/canopy-network/canopyx/pkg/indexer/types"
-	indexerworkflow "github.com/canopy-network/canopyx/pkg/indexer/workflow"
-	"github.com/canopy-network/canopyx/pkg/rpc"
-	"github.com/canopy-network/canopyx/pkg/utils"
-	"github.com/go-jose/go-jose/v4/json"
-	"github.com/gorilla/mux"
-	"github.com/puzpuzpuz/xsync/v4"
-	"github.com/uptrace/go-clickhouse/ch"
-	enumspb "go.temporal.io/api/enums/v1"
-	"go.temporal.io/api/serviceerror"
-	taskqueuepb "go.temporal.io/api/taskqueue/v1"
-	workflowservicepb "go.temporal.io/api/workflowservice/v1"
-	"go.temporal.io/sdk/client"
-	sdktemporal "go.temporal.io/sdk/temporal"
-	"go.uber.org/zap"
+    admintypes "github.com/canopy-network/canopyx/app/admin/types"
+    "github.com/canopy-network/canopyx/pkg/db"
+    "github.com/canopy-network/canopyx/pkg/db/models/admin"
+    indexertypes "github.com/canopy-network/canopyx/pkg/indexer/types"
+    indexerworkflow "github.com/canopy-network/canopyx/pkg/indexer/workflow"
+    "github.com/canopy-network/canopyx/pkg/rpc"
+    "github.com/canopy-network/canopyx/pkg/utils"
+    "github.com/go-jose/go-jose/v4/json"
+    "github.com/gorilla/mux"
+    "github.com/puzpuzpuz/xsync/v4"
+    "github.com/uptrace/go-clickhouse/ch"
+    "go.temporal.io/api/serviceerror"
+    "go.temporal.io/sdk/client"
+    sdktemporal "go.temporal.io/sdk/temporal"
+    "go.uber.org/zap"
 )
 
 // HandleChainsList returns all registered chains
 func (c *Controller) HandleChainsList(w http.ResponseWriter, r *http.Request) {
-	cs, err := c.App.AdminDB.ListChain(r.Context())
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if cs == nil {
-		cs = make([]admin.Chain, 0)
-	}
-	_ = json.NewEncoder(w).Encode(cs)
+    cs, err := c.App.AdminDB.ListChain(r.Context())
+    if err != nil {
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+        return
+    }
+    if cs == nil {
+        cs = make([]admin.Chain, 0)
+    }
+    _ = json.NewEncoder(w).Encode(cs)
 }
 
 // HandleChainsUpsert creates or updates a chain
 func (c *Controller) HandleChainsUpsert(w http.ResponseWriter, r *http.Request) {
-	var chain admin.Chain
-	if err := json.NewDecoder(r.Body).Decode(&chain); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "bad json"})
-		return
-	}
-	if chain.ChainID == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chain_id required"})
-		return
-	}
-	chain.Image = strings.TrimSpace(chain.Image)
-	chain.Notes = strings.TrimSpace(chain.Notes)
+    var chain admin.Chain
+    if err := json.NewDecoder(r.Body).Decode(&chain); err != nil {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "bad json"})
+        return
+    }
+    if chain.ChainID == "" {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "chain_id required"})
+        return
+    }
+    chain.Image = strings.TrimSpace(chain.Image)
+    chain.Notes = strings.TrimSpace(chain.Notes)
 
-	if chain.MinReplicas == 0 {
-		chain.MinReplicas = 1
-	}
-	if chain.MaxReplicas == 0 {
-		chain.MaxReplicas = chain.MinReplicas
-	}
-	if chain.MaxReplicas < chain.MinReplicas {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "max_replicas must be greater than or equal to min_replicas"})
-		return
-	}
-	if chain.Image == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "image required"})
-		return
-	}
+    if chain.MinReplicas == 0 {
+        chain.MinReplicas = 1
+    }
+    if chain.MaxReplicas == 0 {
+        chain.MaxReplicas = chain.MinReplicas
+    }
+    if chain.MaxReplicas < chain.MinReplicas {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "max_replicas must be greater than or equal to min_replicas"})
+        return
+    }
+    if chain.Image == "" {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "image required"})
+        return
+    }
 
-	ctx := r.Context()
+    ctx := r.Context()
 
-	if err := c.App.AdminDB.UpsertChain(ctx, &chain); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
+    if err := c.App.AdminDB.UpsertChain(ctx, &chain); err != nil {
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+        return
+    }
 
-	if _, err := c.App.NewChainDb(ctx, chain.ChainID); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
+    if _, err := c.App.NewChainDb(ctx, chain.ChainID); err != nil {
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+        return
+    }
 
-	err := c.App.EnsureChainSchedules(r.Context(), chain.ChainID)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
+    err := c.App.EnsureChainSchedules(r.Context(), chain.ChainID)
+    if err != nil {
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+        return
+    }
 
-	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+    _ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }
 
 // HandleChainDetail returns a chain by ID
 func (c *Controller) HandleChainDetail(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	chain, err := c.App.AdminDB.GetChain(r.Context(), id)
-	if err != nil {
-		w.WriteHeader(404)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-		return
-	}
-	_ = json.NewEncoder(w).Encode(chain)
+    id := mux.Vars(r)["id"]
+    chain, err := c.App.AdminDB.GetChain(r.Context(), id)
+    if err != nil {
+        w.WriteHeader(404)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+        return
+    }
+    _ = json.NewEncoder(w).Encode(chain)
 }
 
 // HandleProgress responds with the last indexed progress of a specific resource identified by its ID.
 func (c *Controller) HandleProgress(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	h, _ := c.App.AdminDB.LastIndexed(r.Context(), id)
-	_ = json.NewEncoder(w).Encode(map[string]any{"last": h})
+    id := mux.Vars(r)["id"]
+    h, _ := c.App.AdminDB.LastIndexed(r.Context(), id)
+    _ = json.NewEncoder(w).Encode(map[string]any{"last": h})
 }
 
 // HandleGaps retrieves and sends back gaps identified for a specific resource based on the given ID from the request.
 func (c *Controller) HandleGaps(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	gs, _ := c.App.AdminDB.FindGaps(r.Context(), id)
-	_ = json.NewEncoder(w).Encode(gs)
+    id := mux.Vars(r)["id"]
+    gs, _ := c.App.AdminDB.FindGaps(r.Context(), id)
+    _ = json.NewEncoder(w).Encode(gs)
 }
 
 // HandleIndexProgressHistory returns time-series indexing progress data for visualization
 func (c *Controller) HandleIndexProgressHistory(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
-		return
-	}
+    id := mux.Vars(r)["id"]
+    if id == "" {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+        return
+    }
 
-	// Parse query parameters for time window (default: last 24 hours, max 500 points)
-	hoursParam := r.URL.Query().Get("hours")
-	hours := 24 // default
-	if hoursParam != "" {
-		if parsed, err := time.ParseDuration(hoursParam + "h"); err == nil {
-			hours = int(parsed.Hours())
-		}
-	}
-	if hours > 168 { // max 7 days
-		hours = 168
-	}
-	if hours < 1 {
-		hours = 1
-	}
+    // Parse query parameters for time window (default: last 24 hours, max 500 points)
+    hoursParam := r.URL.Query().Get("hours")
+    hours := 24 // default
+    if hoursParam != "" {
+        if parsed, err := time.ParseDuration(hoursParam + "h"); err == nil {
+            hours = int(parsed.Hours())
+        }
+    }
+    if hours > 168 { // max 7 days
+        hours = 168
+    }
+    if hours < 1 {
+        hours = 1
+    }
 
-	ctx := r.Context()
-	dbName := c.App.AdminDB.Name
+    ctx := r.Context()
+    dbName := c.App.AdminDB.Name
 
-	// Query aggregated data in time buckets for efficient charting
-	// Use 5-minute buckets for <= 24h, 30-minute for <= 72h, 2-hour for > 72h
-	var intervalMinutes int
-	if hours <= 24 {
-		intervalMinutes = 5
-	} else if hours <= 72 {
-		intervalMinutes = 30
-	} else {
-		intervalMinutes = 120
-	}
+    // Query aggregated data in time buckets for efficient charting
+    // Use 5-minute buckets for <= 24h, 30-minute for <= 72h, 2-hour for > 72h
+    var intervalMinutes int
+    if hours <= 24 {
+        intervalMinutes = 5
+    } else if hours <= 72 {
+        intervalMinutes = 30
+    } else {
+        intervalMinutes = 120
+    }
 
-	query := fmt.Sprintf(`
+    query := fmt.Sprintf(`
         SELECT
             toStartOfInterval(indexed_at, INTERVAL %d MINUTE) AS time_bucket,
             max(height) AS max_height,
@@ -179,752 +176,712 @@ func (c *Controller) HandleIndexProgressHistory(w http.ResponseWriter, r *http.R
         ORDER BY time_bucket ASC
     `, intervalMinutes, dbName, hours)
 
-	type ProgressPoint struct {
-		TimeBucket        time.Time `ch:"time_bucket"`
-		MaxHeight         uint64    `ch:"max_height"`
-		AvgLatency        float64   `ch:"avg_latency"`
-		AvgProcessingTime float64   `ch:"avg_processing_time"`
-		BlocksIndexed     uint64    `ch:"blocks_indexed"`
-	}
+    type ProgressPoint struct {
+        TimeBucket        time.Time `ch:"time_bucket"`
+        MaxHeight         uint64    `ch:"max_height"`
+        AvgLatency        float64   `ch:"avg_latency"`
+        AvgProcessingTime float64   `ch:"avg_processing_time"`
+        BlocksIndexed     uint64    `ch:"blocks_indexed"`
+    }
 
-	var points []ProgressPoint
-	if err := c.App.AdminDB.Db.NewRaw(query, id).Scan(ctx, &points); err != nil {
-		c.App.Logger.Error("query index progress history failed", zap.String("chain_id", id), zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "query failed"})
-		return
-	}
+    var points []ProgressPoint
+    if err := c.App.AdminDB.Db.NewRaw(query, id).Scan(ctx, &points); err != nil {
+        c.App.Logger.Error("query index progress history failed", zap.String("chain_id", id), zap.Error(err))
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "query failed"})
+        return
+    }
 
-	// Format response
-	type ResponsePoint struct {
-		Time              string  `json:"time"`
-		Height            uint64  `json:"height"`
-		AvgLatency        float64 `json:"avg_latency"`         // seconds
-		AvgProcessingTime float64 `json:"avg_processing_time"` // milliseconds
-		BlocksIndexed     uint64  `json:"blocks_indexed"`
-		Velocity          float64 `json:"velocity"` // blocks per minute
-	}
+    // Format response
+    type ResponsePoint struct {
+        Time              string  `json:"time"`
+        Height            uint64  `json:"height"`
+        AvgLatency        float64 `json:"avg_latency"`         // seconds
+        AvgProcessingTime float64 `json:"avg_processing_time"` // milliseconds
+        BlocksIndexed     uint64  `json:"blocks_indexed"`
+        Velocity          float64 `json:"velocity"` // blocks per minute
+    }
 
-	result := make([]ResponsePoint, 0, len(points))
-	for i, p := range points {
-		velocity := 0.0
-		if i > 0 {
-			timeDiff := p.TimeBucket.Sub(points[i-1].TimeBucket).Minutes()
-			heightDiff := float64(p.MaxHeight - points[i-1].MaxHeight)
-			if timeDiff > 0 {
-				velocity = heightDiff / timeDiff
-			}
-		}
+    result := make([]ResponsePoint, 0, len(points))
+    for i, p := range points {
+        velocity := 0.0
+        if i > 0 {
+            timeDiff := p.TimeBucket.Sub(points[i-1].TimeBucket).Minutes()
+            heightDiff := float64(p.MaxHeight - points[i-1].MaxHeight)
+            if timeDiff > 0 {
+                velocity = heightDiff / timeDiff
+            }
+        }
 
-		result = append(result, ResponsePoint{
-			Time:              p.TimeBucket.UTC().Format(time.RFC3339),
-			Height:            p.MaxHeight,
-			AvgLatency:        p.AvgLatency,
-			AvgProcessingTime: p.AvgProcessingTime,
-			BlocksIndexed:     p.BlocksIndexed,
-			Velocity:          velocity,
-		})
-	}
+        result = append(result, ResponsePoint{
+            Time:              p.TimeBucket.UTC().Format(time.RFC3339),
+            Height:            p.MaxHeight,
+            AvgLatency:        p.AvgLatency,
+            AvgProcessingTime: p.AvgProcessingTime,
+            BlocksIndexed:     p.BlocksIndexed,
+            Velocity:          velocity,
+        })
+    }
 
-	_ = json.NewEncoder(w).Encode(result)
+    _ = json.NewEncoder(w).Encode(result)
 }
 
 // HandleChainStatus returns the last indexed height for all known chains.
 func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+    ctx := r.Context()
 
-	// 1) Get chains (for RPC fanout + to ensure we cover all known IDs)
-	chains, err := c.App.AdminDB.ListChain(ctx)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
+    // 1) Get chains (for RPC fanout + to ensure we cover all known IDs)
+    chains, err := c.App.AdminDB.ListChain(ctx)
+    if err != nil {
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+        return
+    }
 
-	out := xsync.NewMap[string, admintypes.ChainStatus]()
-	for _, chn := range chains {
-		out.Store(chn.ChainID, admintypes.ChainStatus{
-			ChainID:     chn.ChainID,
-			ChainName:   chn.ChainName,
-			Image:       chn.Image,
-			Notes:       chn.Notes,
-			Paused:      chn.Paused != 0,
-			Deleted:     chn.Deleted != 0,
-			MinReplicas: chn.MinReplicas,
-			MaxReplicas: chn.MaxReplicas,
-			// Populate health fields from stored chain data
-			Health: admintypes.HealthInfo{
-				Status:    chn.OverallHealthStatus,
-				Message:   "", // Overall health doesn't have a message
-				UpdatedAt: chn.OverallHealthUpdatedAt,
-			},
-			RPCHealth: admintypes.HealthInfo{
-				Status:    chn.RPCHealthStatus,
-				Message:   chn.RPCHealthMessage,
-				UpdatedAt: chn.RPCHealthUpdatedAt,
-			},
-			QueueHealth: admintypes.HealthInfo{
-				Status:    chn.QueueHealthStatus,
-				Message:   chn.QueueHealthMessage,
-				UpdatedAt: chn.QueueHealthUpdatedAt,
-			},
-			DeploymentHealth: admintypes.HealthInfo{
-				Status:    chn.DeploymentHealthStatus,
-				Message:   chn.DeploymentHealthMessage,
-				UpdatedAt: chn.DeploymentHealthUpdatedAt,
-			},
-		})
-	}
+    out := xsync.NewMap[string, admintypes.ChainStatus]()
+    for _, chn := range chains {
+        out.Store(chn.ChainID, admintypes.ChainStatus{
+            ChainID:     chn.ChainID,
+            ChainName:   chn.ChainName,
+            Image:       chn.Image,
+            Notes:       chn.Notes,
+            Paused:      chn.Paused != 0,
+            Deleted:     chn.Deleted != 0,
+            MinReplicas: chn.MinReplicas,
+            MaxReplicas: chn.MaxReplicas,
+            // Populate health fields from stored chain data
+            Health: admintypes.HealthInfo{
+                Status:    chn.OverallHealthStatus,
+                Message:   "", // Overall health doesn't have a message
+                UpdatedAt: chn.OverallHealthUpdatedAt,
+            },
+            RPCHealth: admintypes.HealthInfo{
+                Status:    chn.RPCHealthStatus,
+                Message:   chn.RPCHealthMessage,
+                UpdatedAt: chn.RPCHealthUpdatedAt,
+            },
+            QueueHealth: admintypes.HealthInfo{
+                Status:    chn.QueueHealthStatus,
+                Message:   chn.QueueHealthMessage,
+                UpdatedAt: chn.QueueHealthUpdatedAt,
+            },
+            DeploymentHealth: admintypes.HealthInfo{
+                Status:    chn.DeploymentHealthStatus,
+                Message:   chn.DeploymentHealthMessage,
+                UpdatedAt: chn.DeploymentHealthUpdatedAt,
+            },
+        })
+    }
 
-	// 2) Bulk last-indexed via aggregate table
-	// SELECT chain_id, maxMerge(max_height) FROM <db>.index_progress_agg GROUP BY chain_id
-	{
-		dbName := c.App.AdminDB.Name
-		q := fmt.Sprintf(`
+    // 2) Bulk last-indexed via aggregate table
+    // SELECT chain_id, maxMerge(max_height) FROM <db>.index_progress_agg GROUP BY chain_id
+    {
+        dbName := c.App.AdminDB.Name
+        q := fmt.Sprintf(`
 			SELECT chain_id, maxMerge(max_height) AS last_idx
 			FROM "%s"."index_progress_agg"
 			GROUP BY chain_id
 		`, dbName)
 
-		rows, err := c.App.AdminDB.Db.QueryContext(ctx, q)
-		if err == nil {
-			defer func(rows *ch.Rows) {
-				err := rows.Close()
-				if err != nil {
-					c.App.Logger.Error("Failed to close rows", zap.Error(err))
-				}
-			}(rows)
-			for rows.Next() {
-				var id string
-				var last uint64
-				if err := rows.Scan(&id, &last); err != nil {
-					continue
-				}
-				cs, ok := out.Load(id)
-				if !ok {
-					cs = admintypes.ChainStatus{ChainID: id}
-				}
-				cs.LastIndexed = last
-				out.Store(id, cs)
-			}
-			_ = rows.Err()
-		}
-	}
+        rows, err := c.App.AdminDB.Db.QueryContext(ctx, q)
+        if err == nil {
+            defer func(rows *ch.Rows) {
+                err := rows.Close()
+                if err != nil {
+                    c.App.Logger.Error("Failed to close rows", zap.Error(err))
+                }
+            }(rows)
+            for rows.Next() {
+                var id string
+                var last uint64
+                if err := rows.Scan(&id, &last); err != nil {
+                    continue
+                }
+                cs, ok := out.Load(id)
+                if !ok {
+                    cs = admintypes.ChainStatus{ChainID: id}
+                }
+                cs.LastIndexed = last
+                out.Store(id, cs)
+            }
+            _ = rows.Err()
+        }
+    }
 
-	// 3) Fallback for any chain missing in the aggregate: max(height) from base table
-	{
-		dbName := c.App.AdminDB.Name
-		q := fmt.Sprintf(`
+    // 3) Fallback for any chain missing in the aggregate: max(height) from base table
+    {
+        dbName := c.App.AdminDB.Name
+        q := fmt.Sprintf(`
 			SELECT chain_id, max(height) AS last_idx
 			FROM "%s"."index_progress"
 			GROUP BY chain_id
 		`, dbName)
 
-		rows, err := c.App.AdminDB.Db.QueryContext(ctx, q)
-		if err == nil {
-			defer func(rows *ch.Rows) {
-				err := rows.Close()
-				if err != nil {
-					c.App.Logger.Error("Failed to close rows", zap.Error(err))
-				}
-			}(rows)
-			for rows.Next() {
-				var id string
-				var last uint64
-				if err := rows.Scan(&id, &last); err != nil {
-					continue
-				}
-				cs, ok := out.Load(id)
-				if !ok {
-					cs = admintypes.ChainStatus{ChainID: id}
-				}
-				if cs.LastIndexed == 0 {
-					cs.LastIndexed = last
-					out.Store(id, cs)
-				}
-			}
-			_ = rows.Err()
-		}
-	}
+        rows, err := c.App.AdminDB.Db.QueryContext(ctx, q)
+        if err == nil {
+            defer func(rows *ch.Rows) {
+                err := rows.Close()
+                if err != nil {
+                    c.App.Logger.Error("Failed to close rows", zap.Error(err))
+                }
+            }(rows)
+            for rows.Next() {
+                var id string
+                var last uint64
+                if err := rows.Scan(&id, &last); err != nil {
+                    continue
+                }
+                cs, ok := out.Load(id)
+                if !ok {
+                    cs = admintypes.ChainStatus{ChainID: id}
+                }
+                if cs.LastIndexed == 0 {
+                    cs.LastIndexed = last
+                    out.Store(id, cs)
+                }
+            }
+            _ = rows.Err()
+        }
+    }
 
-	// 4) Heads via RPC (best-effort, bounded concurrency)
-	sem := make(chan struct{}, 8)
-	var wg sync.WaitGroup
-	for _, chn := range chains {
-		chn := chn
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-			defer cancel()
+    // 4) Heads via RPC (best-effort, bounded concurrency)
+    sem := make(chan struct{}, 8)
+    var wg sync.WaitGroup
+    for _, chn := range chains {
+        chn := chn
+        wg.Add(1)
+        sem <- struct{}{}
+        go func() {
+            defer wg.Done()
+            defer func() { <-sem }()
+            ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+            defer cancel()
 
-			cli := rpc.NewHTTPWithOpts(rpc.Opts{Endpoints: chn.RPCEndpoints})
-			head, err := cli.ChainHead(ctx)
-			if err != nil {
-				return
-			}
-			cs, ok := out.Load(chn.ChainID)
-			if !ok {
-				cs = admintypes.ChainStatus{ChainID: chn.ChainID}
-			}
-			cs.Head = head
-			out.Store(chn.ChainID, cs)
-		}()
-	}
-	wg.Wait()
+            cli := rpc.NewHTTPWithOpts(rpc.Opts{Endpoints: chn.RPCEndpoints})
+            head, err := cli.ChainHead(ctx)
+            if err != nil {
+                return
+            }
+            cs, ok := out.Load(chn.ChainID)
+            if !ok {
+                cs = admintypes.ChainStatus{ChainID: chn.ChainID}
+            }
+            cs.Head = head
+            out.Store(chn.ChainID, cs)
+        }()
+    }
+    wg.Wait()
 
-	// 5) Fetch queue metrics for both ops and indexer queues
-	if c.App.TemporalClient != nil {
-		for _, chn := range chains {
-			opsStats, indexerStats, err := c.describeBothQueues(ctx, chn.ChainID)
-			if err != nil {
-				c.App.Logger.Warn("describe queues failed", zap.String("chain_id", chn.ChainID), zap.Error(err))
-				continue
-			}
-			cs, _ := out.Load(chn.ChainID)
-			cs.OpsQueue = opsStats
-			cs.IndexerQueue = indexerStats
-			// For backward compatibility, populate deprecated Queue field with IndexerQueue
-			cs.Queue = indexerStats
-			out.Store(chn.ChainID, cs)
-		}
-	}
+    // 5) Fetch queue metrics for both ops and indexer queues
+    if c.App.TemporalClient != nil {
+        for _, chn := range chains {
+            opsStats, indexerStats, err := c.describeBothQueues(ctx, chn.ChainID)
+            if err != nil {
+                c.App.Logger.Warn("describe queues failed", zap.String("chain_id", chn.ChainID), zap.Error(err))
+                continue
+            }
+            cs, _ := out.Load(chn.ChainID)
+            cs.OpsQueue = opsStats
+            cs.IndexerQueue = indexerStats
+            // For backward compatibility, populate deprecated Queue field with IndexerQueue
+            cs.Queue = indexerStats
+            out.Store(chn.ChainID, cs)
+        }
+    }
 
-	for _, chn := range chains {
-		history, err := c.App.AdminDB.ListReindexRequests(ctx, chn.ChainID, 10)
-		if err != nil {
-			c.App.Logger.Warn("list reindex history failed", zap.String("chain_id", chn.ChainID), zap.Error(err))
-			continue
-		}
-		records := make([]admintypes.ReindexEntry, 0, len(history))
-		for _, h := range history {
-			records = append(records, admintypes.ReindexEntry{
-				Height:      h.Height,
-				Status:      h.Status,
-				RequestedBy: h.RequestedBy,
-				RequestedAt: h.RequestedAt,
-				WorkflowID:  h.WorkflowID,
-				RunID:       h.RunID,
-			})
-		}
-		cs, _ := out.Load(chn.ChainID)
-		cs.ReindexHistory = records
-		out.Store(chn.ChainID, cs)
-	}
+    for _, chn := range chains {
+        history, err := c.App.AdminDB.ListReindexRequests(ctx, chn.ChainID, 10)
+        if err != nil {
+            c.App.Logger.Warn("list reindex history failed", zap.String("chain_id", chn.ChainID), zap.Error(err))
+            continue
+        }
+        records := make([]admintypes.ReindexEntry, 0, len(history))
+        for _, h := range history {
+            records = append(records, admintypes.ReindexEntry{
+                Height:      h.Height,
+                Status:      h.Status,
+                RequestedBy: h.RequestedBy,
+                RequestedAt: h.RequestedAt,
+                WorkflowID:  h.WorkflowID,
+                RunID:       h.RunID,
+            })
+        }
+        cs, _ := out.Load(chn.ChainID)
+        cs.ReindexHistory = records
+        out.Store(chn.ChainID, cs)
+    }
 
-	// Convert xsync.Map to regular map for JSON encoding
-	result := make(map[string]admintypes.ChainStatus)
-	out.Range(func(key string, value admintypes.ChainStatus) bool {
-		result[key] = value
-		return true
-	})
+    // Convert xsync.Map to regular map for JSON encoding
+    result := make(map[string]admintypes.ChainStatus)
+    out.Range(func(key string, value admintypes.ChainStatus) bool {
+        result[key] = value
+        return true
+    })
 
-	_ = json.NewEncoder(w).Encode(result)
+    _ = json.NewEncoder(w).Encode(result)
 }
 
 func (c *Controller) HandleTriggerHeadScan(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
-		return
-	}
-	user := c.currentUser(r)
-	if err := c.startOpsWorkflow(r.Context(), id, indexerworkflow.HeadScanWorkflowName); err != nil {
-		c.App.Logger.Error("headscan trigger failed", zap.String("chain_id", id), zap.String("user", user), zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	c.App.Logger.Info("headscan triggered", zap.String("chain_id", id), zap.String("user", user))
-	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+    id := mux.Vars(r)["id"]
+    if id == "" {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+        return
+    }
+    user := c.currentUser(r)
+    if err := c.startOpsWorkflow(r.Context(), id, indexerworkflow.HeadScanWorkflowName); err != nil {
+        c.App.Logger.Error("headscan trigger failed", zap.String("chain_id", id), zap.String("user", user), zap.Error(err))
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+        return
+    }
+    c.App.Logger.Info("headscan triggered", zap.String("chain_id", id), zap.String("user", user))
+    _ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }
 
 func (c *Controller) HandleTriggerGapScan(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
-		return
-	}
-	user := c.currentUser(r)
-	if err := c.startOpsWorkflow(r.Context(), id, indexerworkflow.GapScanWorkflowName); err != nil {
-		c.App.Logger.Error("gapscan trigger failed", zap.String("chain_id", id), zap.String("user", user), zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	c.App.Logger.Info("gapscan triggered", zap.String("chain_id", id), zap.String("user", user))
-	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+    id := mux.Vars(r)["id"]
+    if id == "" {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+        return
+    }
+    user := c.currentUser(r)
+    if err := c.startOpsWorkflow(r.Context(), id, indexerworkflow.GapScanWorkflowName); err != nil {
+        c.App.Logger.Error("gapscan trigger failed", zap.String("chain_id", id), zap.String("user", user), zap.Error(err))
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+        return
+    }
+    c.App.Logger.Info("gapscan triggered", zap.String("chain_id", id), zap.String("user", user))
+    _ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }
 
 type reindexRequest struct {
-	Heights []uint64 `json:"heights"`
-	From    *uint64  `json:"from"`
-	To      *uint64  `json:"to"`
+    Heights []uint64 `json:"heights"`
+    From    *uint64  `json:"from"`
+    To      *uint64  `json:"to"`
 }
 
 func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
-		return
-	}
+    id := mux.Vars(r)["id"]
+    if id == "" {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+        return
+    }
 
-	var req reindexRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json"})
-		return
-	}
+    var req reindexRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json"})
+        return
+    }
 
-	heights := make([]uint64, 0)
-	seen := make(map[uint64]struct{})
-	addHeight := func(h uint64) {
-		if _, ok := seen[h]; !ok {
-			seen[h] = struct{}{}
-			heights = append(heights, h)
-		}
-	}
+    heights := make([]uint64, 0)
+    seen := make(map[uint64]struct{})
+    addHeight := func(h uint64) {
+        if _, ok := seen[h]; !ok {
+            seen[h] = struct{}{}
+            heights = append(heights, h)
+        }
+    }
 
-	for _, h := range req.Heights {
-		addHeight(h)
-	}
+    for _, h := range req.Heights {
+        addHeight(h)
+    }
 
-	if req.From != nil && req.To != nil {
-		from := *req.From
-		to := *req.To
-		if to < from {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid range"})
-			return
-		}
-		if to-from > 500 {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "range too large"})
-			return
-		}
-		for h := from; h <= to; h++ {
-			addHeight(h)
-		}
-	}
+    if req.From != nil && req.To != nil {
+        from := *req.From
+        to := *req.To
+        if to < from {
+            w.WriteHeader(http.StatusBadRequest)
+            _ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid range"})
+            return
+        }
+        if to-from > 500 {
+            w.WriteHeader(http.StatusBadRequest)
+            _ = json.NewEncoder(w).Encode(map[string]string{"error": "range too large"})
+            return
+        }
+        for h := from; h <= to; h++ {
+            addHeight(h)
+        }
+    }
 
-	if len(heights) == 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "no heights specified"})
-		return
-	}
+    if len(heights) == 0 {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "no heights specified"})
+        return
+    }
 
-	if len(heights) > 500 {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many heights"})
-		return
-	}
+    if len(heights) > 500 {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "too many heights"})
+        return
+    }
 
-	user := c.currentUser(r)
+    user := c.currentUser(r)
 
-	// Enqueue workflows and collect execution info
-	workflowInfos := make([]db.ReindexWorkflowInfo, 0, len(heights))
+    // Enqueue workflows and collect execution info
+    workflowInfos := make([]db.ReindexWorkflowInfo, 0, len(heights))
 
-	for _, h := range heights {
-		workflowID, runID, err := c.enqueueIndexBlock(r.Context(), id, h, true)
-		if err != nil {
-			c.App.Logger.Error("reindex enqueue failed", zap.String("chain_id", id), zap.Uint64("height", h), zap.String("user", user), zap.Error(err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		workflowInfos = append(workflowInfos, db.ReindexWorkflowInfo{
-			Height:     h,
-			WorkflowID: workflowID,
-			RunID:      runID,
-		})
-	}
+    for _, h := range heights {
+        workflowID, runID, err := c.enqueueIndexBlock(r.Context(), id, h, true)
+        if err != nil {
+            c.App.Logger.Error("reindex enqueue failed", zap.String("chain_id", id), zap.Uint64("height", h), zap.String("user", user), zap.Error(err))
+            w.WriteHeader(http.StatusInternalServerError)
+            _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+            return
+        }
+        workflowInfos = append(workflowInfos, db.ReindexWorkflowInfo{
+            Height:     h,
+            WorkflowID: workflowID,
+            RunID:      runID,
+        })
+    }
 
-	// Record all reindex requests with workflow info
-	if err := c.App.AdminDB.RecordReindexRequestsWithWorkflow(r.Context(), id, user, workflowInfos); err != nil {
-		c.App.Logger.Warn("failed to record reindex history", zap.String("chain_id", id), zap.Error(err))
-	}
+    // Record all reindex requests with workflow info
+    if err := c.App.AdminDB.RecordReindexRequestsWithWorkflow(r.Context(), id, user, workflowInfos); err != nil {
+        c.App.Logger.Warn("failed to record reindex history", zap.String("chain_id", id), zap.Error(err))
+    }
 
-	c.App.Logger.Info("reindex queued", zap.String("chain_id", id), zap.String("user", user), zap.Int("count", len(heights)), zap.Any("heights", heights))
-	_ = json.NewEncoder(w).Encode(map[string]any{"queued": len(heights)})
+    c.App.Logger.Info("reindex queued", zap.String("chain_id", id), zap.String("user", user), zap.Int("count", len(heights)), zap.Any("heights", heights))
+    _ = json.NewEncoder(w).Encode(map[string]any{"queued": len(heights)})
 }
 
 func (c *Controller) startOpsWorkflow(ctx context.Context, chainID, workflowName string) error {
-	tc := c.App.TemporalClient
-	if tc == nil {
-		return fmt.Errorf("temporal client unavailable")
-	}
+    tc := c.App.TemporalClient
+    if tc == nil {
+        return fmt.Errorf("temporal client unavailable")
+    }
 
-	// Use the correct input type based on workflow name
-	var input interface{}
-	switch workflowName {
-	case indexerworkflow.HeadScanWorkflowName:
-		input = indexerworkflow.HeadScanInput{ChainID: chainID}
-	case indexerworkflow.GapScanWorkflowName:
-		input = indexerworkflow.GapScanInput{ChainID: chainID}
-	default:
-		// Fallback to old input type for unknown workflows
-		input = indexertypes.ChainIdInput{ChainID: chainID}
-	}
+    // Use the correct input type based on workflow name
+    var input interface{}
+    switch workflowName {
+    case indexerworkflow.HeadScanWorkflowName:
+        input = indexerworkflow.HeadScanInput{ChainID: chainID}
+    case indexerworkflow.GapScanWorkflowName:
+        input = indexerworkflow.GapScanInput{ChainID: chainID}
+    default:
+        // Fallback to old input type for unknown workflows
+        input = indexertypes.ChainIdInput{ChainID: chainID}
+    }
 
-	options := client.StartWorkflowOptions{
-		ID:        fmt.Sprintf("%s:%s:%d", chainID, strings.ToLower(workflowName), time.Now().UnixNano()),
-		TaskQueue: tc.GetIndexerOpsQueue(chainID),
-	}
+    options := client.StartWorkflowOptions{
+        ID:        fmt.Sprintf("%s:%s:%d", chainID, strings.ToLower(workflowName), time.Now().UnixNano()),
+        TaskQueue: tc.GetIndexerOpsQueue(chainID),
+    }
 
-	_, err := tc.TClient.ExecuteWorkflow(ctx, options, workflowName, input)
-	return err
+    _, err := tc.TClient.ExecuteWorkflow(ctx, options, workflowName, input)
+    return err
 }
 
 func (c *Controller) enqueueIndexBlock(ctx context.Context, chainID string, height uint64, reindex bool) (string, string, error) {
-	tc := c.App.TemporalClient
-	if tc == nil {
-		return "", "", fmt.Errorf("temporal client unavailable")
-	}
+    tc := c.App.TemporalClient
+    if tc == nil {
+        return "", "", fmt.Errorf("temporal client unavailable")
+    }
 
-	input := indexertypes.IndexBlockInput{ChainID: chainID, Height: height, Reindex: reindex, PriorityKey: 1}
-	options := client.StartWorkflowOptions{
-		ID:        c.App.TemporalClient.GetIndexBlockWorkflowIdWithTime(chainID, height),
-		TaskQueue: tc.GetIndexerQueue(chainID),
-		RetryPolicy: &sdktemporal.RetryPolicy{
-			InitialInterval:    time.Second,
-			BackoffCoefficient: 1.2,
-			MaximumInterval:    5 * time.Second,
-			MaximumAttempts:    0,
-		},
-	}
+    input := indexertypes.IndexBlockInput{ChainID: chainID, Height: height, Reindex: reindex, PriorityKey: 1}
+    options := client.StartWorkflowOptions{
+        ID:        c.App.TemporalClient.GetIndexBlockWorkflowIdWithTime(chainID, height),
+        TaskQueue: tc.GetIndexerQueue(chainID),
+        RetryPolicy: &sdktemporal.RetryPolicy{
+            InitialInterval:    time.Second,
+            BackoffCoefficient: 1.2,
+            MaximumInterval:    5 * time.Second,
+            MaximumAttempts:    0,
+        },
+    }
 
-	run, err := tc.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", input)
-	if err != nil {
-		return "", "", err
-	}
-	return run.GetID(), run.GetRunID(), nil
+    run, err := tc.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", input)
+    if err != nil {
+        return "", "", err
+    }
+    return run.GetID(), run.GetRunID(), nil
 }
 
 // describeBothQueues fetches metrics for both the ops queue and indexer queue for a given chain.
 // It uses caching with a 30s TTL to reduce load on Temporal API.
 // Returns (opsQueue, indexerQueue, error).
 func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (admintypes.QueueStatus, admintypes.QueueStatus, error) {
-	opsStats := admintypes.QueueStatus{}
-	indexerStats := admintypes.QueueStatus{}
+    opsStats := admintypes.QueueStatus{}
+    indexerStats := admintypes.QueueStatus{}
 
-	temporalClient := c.App.TemporalClient
-	if temporalClient == nil {
-		c.App.Logger.Error("describeBothQueues: temporal client not initialized", zap.String("chain_id", chainID))
-		return opsStats, indexerStats, fmt.Errorf("temporal temporalClient not initialized")
-	}
+    temporalClient := c.App.TemporalClient
+    if temporalClient == nil {
+        c.App.Logger.Error("describeBothQueues: temporal client not initialized", zap.String("chain_id", chainID))
+        return opsStats, indexerStats, fmt.Errorf("temporal temporalClient not initialized")
+    }
 
-	// Check cache first (30s TTL to reduce Temporal API load)
-	if cached, ok := c.App.QueueStatsCache.Load(chainID); ok {
-		cacheAge := time.Since(cached.Fetched)
-		if cacheAge < 30*time.Second {
-			c.App.Logger.Debug("using cached queue stats",
-				zap.String("chain_id", chainID),
-				zap.Duration("cache_age", cacheAge),
-				zap.Int64("ops_pending_workflows", cached.OpsQueue.PendingWorkflow),
-				zap.Int64("indexer_pending_workflows", cached.IndexerQueue.PendingWorkflow),
-			)
-			return cached.OpsQueue, cached.IndexerQueue, nil
-		}
-	}
+    // Check cache first (30s TTL to reduce Temporal API load)
+    if cached, ok := c.App.QueueStatsCache.Load(chainID); ok {
+        cacheAge := time.Since(cached.Fetched)
+        if cacheAge < 30*time.Second {
+            c.App.Logger.Debug("using cached queue stats",
+                zap.String("chain_id", chainID),
+                zap.Duration("cache_age", cacheAge),
+                zap.Int64("ops_pending_workflows", cached.OpsQueue.PendingWorkflow),
+                zap.Int64("indexer_pending_workflows", cached.IndexerQueue.PendingWorkflow),
+            )
+            return cached.OpsQueue, cached.IndexerQueue, nil
+        }
+    }
 
-	svc := temporalClient.TClient.WorkflowService()
-	if svc == nil {
-		c.App.Logger.Error("describeBothQueues: workflow service unavailable", zap.String("chain_id", chainID))
-		return opsStats, indexerStats, fmt.Errorf("temporal workflow service unavailable")
-	}
+    reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+    defer cancel()
 
-	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
+    // Query both queues in parallel for better performance using the enhanced API
+    type queueResult struct {
+        stats admintypes.QueueStatus
+        err   error
+    }
 
-	// Helper function to query a specific queue
-	describeQueue := func(queueName string) (admintypes.QueueStatus, error) {
-		stats := admintypes.QueueStatus{}
+    opsChannel := make(chan queueResult, 1)
+    indexerChannel := make(chan queueResult, 1)
 
-		baseReq := func(t enumspb.TaskQueueType) *workflowservicepb.DescribeTaskQueueRequest {
-			return &workflowservicepb.DescribeTaskQueueRequest{
-				Namespace:     temporalClient.Namespace,
-				TaskQueue:     &taskqueuepb.TaskQueue{Name: queueName},
-				TaskQueueType: t,
-				ReportStats:   true,
-			}
-		}
+    // Query ops queue using the new common function
+    go func() {
+        queueName := temporalClient.GetIndexerOpsQueue(chainID)
+        c.App.Logger.Debug("querying ops queue", zap.String("chain_id", chainID), zap.String("queue_name", queueName))
 
-		// Get workflow queue stats
-		resp, err := svc.DescribeTaskQueue(reqCtx, baseReq(enumspb.TASK_QUEUE_TYPE_WORKFLOW))
-		if err != nil {
-			c.App.Logger.Warn("failed to describe workflow queue",
-				zap.String("chain_id", chainID),
-				zap.String("queue_name", queueName),
-				zap.Error(err),
-			)
-			return stats, err
-		}
-		if s := resp.GetStats(); s != nil {
-			stats.PendingWorkflow = s.GetApproximateBacklogCount()
-			if age := s.GetApproximateBacklogAge(); age != nil {
-				stats.BacklogAgeSecs = float64(age.Seconds) + float64(age.Nanos)/1e9
-			}
-		}
-		stats.Pollers = len(resp.GetPollers())
+        // Use the common GetQueueStats function with enhanced API
+        pendingWorkflows, pendingActivities, pollerCount, backlogAge, err := temporalClient.GetQueueStats(reqCtx, queueName)
+        if err != nil {
+            opsChannel <- queueResult{stats: opsStats, err: err}
+            return
+        }
 
-		c.App.Logger.Debug("workflow queue stats",
-			zap.String("chain_id", chainID),
-			zap.String("queue_name", queueName),
-			zap.Int64("pending_workflows", stats.PendingWorkflow),
-			zap.Int("pollers", stats.Pollers),
-			zap.Float64("backlog_age_secs", stats.BacklogAgeSecs),
-		)
+        stats := admintypes.QueueStatus{
+            PendingWorkflow: pendingWorkflows,
+            PendingActivity: pendingActivities,
+            Pollers:         pollerCount,
+            BacklogAgeSecs:  backlogAge,
+        }
+        opsChannel <- queueResult{stats: stats, err: nil}
+    }()
 
-		// Get activity queue stats (best effort, ignore errors)
-		if actResp, err := svc.DescribeTaskQueue(reqCtx, baseReq(enumspb.TASK_QUEUE_TYPE_ACTIVITY)); err == nil {
-			if s := actResp.GetStats(); s != nil {
-				stats.PendingActivity = s.GetApproximateBacklogCount()
-				c.App.Logger.Debug("activity queue stats",
-					zap.String("chain_id", chainID),
-					zap.String("queue_name", queueName),
-					zap.Int64("pending_activities", stats.PendingActivity),
-				)
-			}
-		} else {
-			c.App.Logger.Debug("failed to describe activity queue (ignoring)",
-				zap.String("chain_id", chainID),
-				zap.String("queue_name", queueName),
-				zap.Error(err),
-			)
-		}
+    // Query indexer queue using the new common function
+    go func() {
+        queueName := temporalClient.GetIndexerQueue(chainID)
+        c.App.Logger.Debug("querying indexer queue", zap.String("chain_id", chainID), zap.String("queue_name", queueName))
 
-		return stats, nil
-	}
+        // Use the common GetQueueStats function with enhanced API
+        pendingWorkflows, pendingActivities, pollerCount, backlogAge, err := temporalClient.GetQueueStats(reqCtx, queueName)
+        if err != nil {
+            indexerChannel <- queueResult{stats: indexerStats, err: err}
+            return
+        }
 
-	// Query both queues in parallel for better performance
-	type queueResult struct {
-		stats admintypes.QueueStatus
-		err   error
-	}
+        stats := admintypes.QueueStatus{
+            PendingWorkflow: pendingWorkflows,
+            PendingActivity: pendingActivities,
+            Pollers:         pollerCount,
+            BacklogAgeSecs:  backlogAge,
+        }
+        indexerChannel <- queueResult{stats: stats, err: nil}
+    }()
 
-	opsChannel := make(chan queueResult, 1)
-	indexerChannel := make(chan queueResult, 1)
+    // Collect results
+    opsResult := <-opsChannel
+    indexerResult := <-indexerChannel
 
-	// Query ops queue
-	go func() {
-		queueName := temporalClient.GetIndexerOpsQueue(chainID)
-		c.App.Logger.Debug("querying ops queue", zap.String("chain_id", chainID), zap.String("queue_name", queueName))
-		stats, err := describeQueue(queueName)
-		opsChannel <- queueResult{stats: stats, err: err}
-	}()
+    // If either query failed, log detailed error and return
+    if opsResult.err != nil {
+        c.App.Logger.Error("failed to describe ops queue",
+            zap.String("chain_id", chainID),
+            zap.String("queue_name", temporalClient.GetIndexerOpsQueue(chainID)),
+            zap.Error(opsResult.err),
+        )
+        return opsStats, indexerStats, fmt.Errorf("failed to describe ops queue: %w", opsResult.err)
+    }
+    if indexerResult.err != nil {
+        c.App.Logger.Error("failed to describe indexer queue",
+            zap.String("chain_id", chainID),
+            zap.String("queue_name", temporalClient.GetIndexerQueue(chainID)),
+            zap.Error(indexerResult.err),
+        )
+        return opsStats, indexerStats, fmt.Errorf("failed to describe indexer queue: %w", indexerResult.err)
+    }
 
-	// Query indexer queue
-	go func() {
-		queueName := temporalClient.GetIndexerQueue(chainID)
-		c.App.Logger.Debug("querying indexer queue", zap.String("chain_id", chainID), zap.String("queue_name", queueName))
-		stats, err := describeQueue(queueName)
-		indexerChannel <- queueResult{stats: stats, err: err}
-	}()
+    opsStats = opsResult.stats
+    indexerStats = indexerResult.stats
 
-	// Collect results
-	opsResult := <-opsChannel
-	indexerResult := <-indexerChannel
+    // Log final combined stats
+    c.App.Logger.Info("queue stats fetched successfully",
+        zap.String("chain_id", chainID),
+        zap.Int64("ops_pending_workflows", opsStats.PendingWorkflow),
+        zap.Int64("ops_pending_activities", opsStats.PendingActivity),
+        zap.Int("ops_pollers", opsStats.Pollers),
+        zap.Int64("indexer_pending_workflows", indexerStats.PendingWorkflow),
+        zap.Int64("indexer_pending_activities", indexerStats.PendingActivity),
+        zap.Int("indexer_pollers", indexerStats.Pollers),
+    )
 
-	// If either query failed, log detailed error and return
-	if opsResult.err != nil {
-		c.App.Logger.Error("failed to describe ops queue",
-			zap.String("chain_id", chainID),
-			zap.String("queue_name", temporalClient.GetIndexerOpsQueue(chainID)),
-			zap.Error(opsResult.err),
-		)
-		return opsStats, indexerStats, fmt.Errorf("failed to describe ops queue: %w", opsResult.err)
-	}
-	if indexerResult.err != nil {
-		c.App.Logger.Error("failed to describe indexer queue",
-			zap.String("chain_id", chainID),
-			zap.String("queue_name", temporalClient.GetIndexerQueue(chainID)),
-			zap.Error(indexerResult.err),
-		)
-		return opsStats, indexerStats, fmt.Errorf("failed to describe indexer queue: %w", indexerResult.err)
-	}
+    // Store both in cache
+    c.App.QueueStatsCache.Store(chainID, admintypes.CachedQueueStats{
+        OpsQueue:     opsStats,
+        IndexerQueue: indexerStats,
+        Fetched:      time.Now(),
+    })
 
-	opsStats = opsResult.stats
-	indexerStats = indexerResult.stats
-
-	// Log final combined stats
-	c.App.Logger.Info("queue stats fetched successfully",
-		zap.String("chain_id", chainID),
-		zap.Int64("ops_pending_workflows", opsStats.PendingWorkflow),
-		zap.Int64("ops_pending_activities", opsStats.PendingActivity),
-		zap.Int("ops_pollers", opsStats.Pollers),
-		zap.Int64("indexer_pending_workflows", indexerStats.PendingWorkflow),
-		zap.Int64("indexer_pending_activities", indexerStats.PendingActivity),
-		zap.Int("indexer_pollers", indexerStats.Pollers),
-	)
-
-	// Store both in cache
-	c.App.QueueStatsCache.Store(chainID, admintypes.CachedQueueStats{
-		OpsQueue:     opsStats,
-		IndexerQueue: indexerStats,
-		Fetched:      time.Now(),
-	})
-
-	return opsStats, indexerStats, nil
+    return opsStats, indexerStats, nil
 }
 
 // HandleChainPatch updates a chain by ID
 func (c *Controller) HandleChainPatch(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
+    id := mux.Vars(r)["id"]
 
-	// 1) Load the current row (so we can do a partial update)
-	cur, err := c.App.AdminDB.GetChain(r.Context(), id)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-		return
-	}
+    // 1) Load the current row (so we can do a partial update)
+    cur, err := c.App.AdminDB.GetChain(r.Context(), id)
+    if err != nil {
+        w.WriteHeader(http.StatusNotFound)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+        return
+    }
 
-	// 2) Decode patch body
-	var in admin.Chain
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "bad json"})
-		return
-	}
+    // 2) Decode patch body
+    var in admin.Chain
+    if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "bad json"})
+        return
+    }
 
-	// 3) Apply changes
-	if in.ChainName != cur.ChainName {
-		cur.ChainName = strings.TrimSpace(in.ChainName)
-	}
+    // 3) Apply changes
+    if in.ChainName != cur.ChainName {
+        cur.ChainName = strings.TrimSpace(in.ChainName)
+    }
 
-	if in.Paused != cur.Paused {
-		cur.Paused = in.Paused
-	}
-	if in.Deleted != cur.Deleted {
-		cur.Deleted = in.Deleted
-	}
-	if in.RPCEndpoints != nil { // provided => replace
-		cleaned := make([]string, 0, len(in.RPCEndpoints))
-		for _, e := range in.RPCEndpoints {
-			e = strings.TrimSpace(e)
-			if e != "" {
-				cleaned = append(cleaned, e)
-			}
-		}
-		cur.RPCEndpoints = utils.Dedup(cleaned)
-	}
+    if in.Paused != cur.Paused {
+        cur.Paused = in.Paused
+    }
+    if in.Deleted != cur.Deleted {
+        cur.Deleted = in.Deleted
+    }
+    if in.RPCEndpoints != nil { // provided => replace
+        cleaned := make([]string, 0, len(in.RPCEndpoints))
+        for _, e := range in.RPCEndpoints {
+            e = strings.TrimSpace(e)
+            if e != "" {
+                cleaned = append(cleaned, e)
+            }
+        }
+        cur.RPCEndpoints = utils.Dedup(cleaned)
+    }
 
-	// 4) Persist (ReplacingMergeTree upsert)
-	if upsertErr := c.App.AdminDB.UpsertChain(r.Context(), cur); upsertErr != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": upsertErr.Error()})
-		return
-	}
+    // 4) Persist (ReplacingMergeTree upsert)
+    if upsertErr := c.App.AdminDB.UpsertChain(r.Context(), cur); upsertErr != nil {
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": upsertErr.Error()})
+        return
+    }
 
-	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+    _ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }
 
 // PATCH /admin/chains/status
 func (c *Controller) HandlePatchChainsStatus(w http.ResponseWriter, r *http.Request) {
-	var reqs []admin.Chain
-	if err := json.NewDecoder(r.Body).Decode(&reqs); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
-		return
-	}
-	if len(reqs) == 0 {
-		http.Error(w, "empty patch list", http.StatusBadRequest)
-		return
-	}
+    var reqs []admin.Chain
+    if err := json.NewDecoder(r.Body).Decode(&reqs); err != nil {
+        http.Error(w, "invalid json body", http.StatusBadRequest)
+        return
+    }
+    if len(reqs) == 0 {
+        http.Error(w, "empty patch list", http.StatusBadRequest)
+        return
+    }
 
-	// Convert to DB layer patches and execute
-	patches := make([]admin.Chain, 0, len(reqs))
-	for _, x := range reqs {
-		if x.ChainID == "" {
-			http.Error(w, "chain_id is required", http.StatusBadRequest)
-			return
-		}
+    // Convert to DB layer patches and execute
+    patches := make([]admin.Chain, 0, len(reqs))
+    for _, x := range reqs {
+        if x.ChainID == "" {
+            http.Error(w, "chain_id is required", http.StatusBadRequest)
+            return
+        }
 
-		if x.RPCEndpoints != nil {
-			x.RPCEndpoints = utils.Dedup(x.RPCEndpoints)
-		}
+        if x.RPCEndpoints != nil {
+            x.RPCEndpoints = utils.Dedup(x.RPCEndpoints)
+        }
 
-		patches = append(patches, x)
-	}
+        patches = append(patches, x)
+    }
 
-	if err := c.App.AdminDB.PatchChains(r.Context(), patches); err != nil {
-		// Map a not-found to 404, everything else 500
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+    if err := c.App.AdminDB.PatchChains(r.Context(), patches); err != nil {
+        // Map a not-found to 404, everything else 500
+        if errors.Is(err, sql.ErrNoRows) {
+            http.Error(w, err.Error(), http.StatusNotFound)
+            return
+        }
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
 
-	w.WriteHeader(http.StatusNoContent)
+    w.WriteHeader(http.StatusNoContent)
 }
 
 // HandleChainDelete handles the deletion of a chain by marking it as deleted,
 // removing Temporal schedules, and optionally dropping the chain database.
 func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
-		return
-	}
+    id := mux.Vars(r)["id"]
+    if id == "" {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+        return
+    }
 
-	ctx := r.Context()
+    ctx := r.Context()
 
-	// 1. Verify chain exists
-	chain, err := c.App.AdminDB.GetChain(ctx, id)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chain not found"})
-		return
-	}
+    // 1. Verify chain exists
+    chain, err := c.App.AdminDB.GetChain(ctx, id)
+    if err != nil {
+        w.WriteHeader(http.StatusNotFound)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "chain not found"})
+        return
+    }
 
-	user := c.currentUser(r)
-	c.App.Logger.Info("deleting chain", zap.String("chain_id", id), zap.String("user", user))
+    user := c.currentUser(r)
+    c.App.Logger.Info("deleting chain", zap.String("chain_id", id), zap.String("user", user))
 
-	// 2. Delete Temporal schedules for this chain
-	if c.App.TemporalClient != nil {
-		// Delete head scan schedule
-		headScheduleID := c.App.TemporalClient.GetHeadScheduleID(id)
-		headHandle := c.App.TemporalClient.TSClient.GetHandle(ctx, headScheduleID)
-		if err := headHandle.Delete(ctx); err != nil {
-			var notFound *serviceerror.NotFound
-			if !errors.As(err, &notFound) {
-				c.App.Logger.Warn("failed to delete head scan schedule", zap.String("chain_id", id), zap.Error(err))
-			}
-		}
+    // 2. Delete Temporal schedules for this chain
+    if c.App.TemporalClient != nil {
+        // Delete head scan schedule
+        headScheduleID := c.App.TemporalClient.GetHeadScheduleID(id)
+        headHandle := c.App.TemporalClient.TSClient.GetHandle(ctx, headScheduleID)
+        if err := headHandle.Delete(ctx); err != nil {
+            var notFound *serviceerror.NotFound
+            if !errors.As(err, &notFound) {
+                c.App.Logger.Warn("failed to delete head scan schedule", zap.String("chain_id", id), zap.Error(err))
+            }
+        }
 
-		// Delete gap scan schedule
-		gapScheduleID := c.App.TemporalClient.GetGapScanScheduleID(id)
-		gapHandle := c.App.TemporalClient.TSClient.GetHandle(ctx, gapScheduleID)
-		if err := gapHandle.Delete(ctx); err != nil {
-			var notFound *serviceerror.NotFound
-			if !errors.As(err, &notFound) {
-				c.App.Logger.Warn("failed to delete gap scan schedule", zap.String("chain_id", id), zap.Error(err))
-			}
-		}
-	}
+        // Delete gap scan schedule
+        gapScheduleID := c.App.TemporalClient.GetGapScanScheduleID(id)
+        gapHandle := c.App.TemporalClient.TSClient.GetHandle(ctx, gapScheduleID)
+        if err := gapHandle.Delete(ctx); err != nil {
+            var notFound *serviceerror.NotFound
+            if !errors.As(err, &notFound) {
+                c.App.Logger.Warn("failed to delete gap scan schedule", zap.String("chain_id", id), zap.Error(err))
+            }
+        }
+    }
 
-	// 3. Mark chain as deleted in admin database
-	chain.Deleted = 1
-	if err := c.App.AdminDB.UpsertChain(ctx, chain); err != nil {
-		c.App.Logger.Error("failed to mark chain as deleted", zap.String("chain_id", id), zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to delete chain"})
-		return
-	}
+    // 3. Mark chain as deleted in admin database
+    chain.Deleted = 1
+    if err := c.App.AdminDB.UpsertChain(ctx, chain); err != nil {
+        c.App.Logger.Error("failed to mark chain as deleted", zap.String("chain_id", id), zap.Error(err))
+        w.WriteHeader(http.StatusInternalServerError)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to delete chain"})
+        return
+    }
 
-	// 4. Remove chain database from in-memory cache
-	c.App.ChainsDB.Delete(id)
+    // 4. Remove chain database from in-memory cache
+    c.App.ChainsDB.Delete(id)
 
-	// 5. Clear queue stats cache for this chain
-	c.App.QueueStatsCache.Delete(id)
+    // 5. Clear queue stats cache for this chain
+    c.App.QueueStatsCache.Delete(id)
 
-	c.App.Logger.Info("chain deleted successfully", zap.String("chain_id", id), zap.String("user", user))
-	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+    c.App.Logger.Info("chain deleted successfully", zap.String("chain_id", id), zap.String("user", user))
+    _ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }

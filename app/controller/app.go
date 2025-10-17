@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
@@ -15,16 +16,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/robfig/cron/v3"
-	enumspb "go.temporal.io/api/enums/v1"
-	taskqueuepb "go.temporal.io/api/taskqueue/v1"
-	workflowservicepb "go.temporal.io/api/workflowservice/v1"
 	"go.uber.org/zap"
 
 	"github.com/canopy-network/canopyx/pkg/db"
 )
 
 const (
-	queuePrefix          = "index:"
 	backlogLowWatermark  = int64(10)
 	backlogHighWatermark = int64(1000)
 	queueRequestTimeout  = 2 * time.Second
@@ -273,7 +270,7 @@ func (a *App) Reconcile(ctx context.Context) error {
 	// If any previously Running chain disappeared from desired, delete it.
 	var pruned int
 	a.Running.Range(func(q string, prev *Chain) bool {
-		chainID := q[len(queuePrefix):]
+		chainID := strings.Split(q, ":")[1]
 		if _, ok := desiredSet[chainID]; !ok {
 			if err := a.Provider.DeleteChain(ctx, chainID); err != nil {
 				a.Logger.Warn("prune delete failed", zap.String("chain_id", chainID), zap.String("queue_id", q), zap.Error(err))
@@ -396,7 +393,7 @@ func (a *App) Start(ctx context.Context) {
 }
 
 func (a *App) populateChain(ctx context.Context, ch *Chain) {
-	ch.TaskQueue = queuePrefix + ch.ID
+	ch.TaskQueue = a.Temporal.GetIndexerQueue(ch.ID)
 
 	if ch.Paused || ch.Deleted {
 		ch.Replicas = 0
@@ -521,46 +518,33 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 			return cached.stats, nil
 		}
 	}
-	stats := QueueStats{}
-
-	svc := a.Temporal.TClient.WorkflowService()
-	if svc == nil {
-		return stats, fmt.Errorf("temporal workflow service unavailable")
-	}
 
 	ctx, cancel := context.WithTimeout(ctx, queueRequestTimeout)
 	defer cancel()
 
 	queueName := a.Temporal.GetIndexerQueue(chainID)
-	req := &workflowservicepb.DescribeTaskQueueRequest{
-		Namespace:     a.Temporal.Namespace,
-		TaskQueue:     &taskqueuepb.TaskQueue{Name: queueName},
-		TaskQueueType: enumspb.TASK_QUEUE_TYPE_WORKFLOW,
-		ReportStats:   true,
-	}
-	resp, err := svc.DescribeTaskQueue(ctx, req)
-	if err != nil {
-		return stats, err
-	}
-	if qStats := resp.GetStats(); qStats != nil {
-		stats.PendingWorkflowTasks = qStats.GetApproximateBacklogCount()
-		if dur := qStats.GetApproximateBacklogAge(); dur != nil {
-			stats.BacklogAgeSeconds = float64(dur.Seconds) + float64(dur.Nanos)/1e9
-		}
-	}
-	stats.PollerCount = len(resp.GetPollers())
 
-	actReq := &workflowservicepb.DescribeTaskQueueRequest{
-		Namespace:     a.Temporal.Namespace,
-		TaskQueue:     &taskqueuepb.TaskQueue{Name: queueName},
-		TaskQueueType: enumspb.TASK_QUEUE_TYPE_ACTIVITY,
-		ReportStats:   true,
+	// Use the common GetQueueStats function from temporal client
+	pendingWorkflowTasks, pendingActivityTasks, pollerCount, backlogAgeSeconds, err := a.Temporal.GetQueueStats(ctx, queueName)
+	if err != nil {
+		return QueueStats{}, err
 	}
-	actResp, err := svc.DescribeTaskQueue(ctx, actReq)
-	if err == nil {
-		if aStats := actResp.GetStats(); aStats != nil {
-			stats.PendingActivityTasks = aStats.GetApproximateBacklogCount()
-		}
+
+	// Log queue stats for monitoring
+	a.Logger.Debug("queue stats fetched",
+		zap.String("chain_id", chainID),
+		zap.String("queue_name", queueName),
+		zap.Int64("pending_workflow_tasks", pendingWorkflowTasks),
+		zap.Int64("pending_activity_tasks", pendingActivityTasks),
+		zap.Int("poller_count", pollerCount),
+		zap.Float64("backlog_age_seconds", backlogAgeSeconds),
+	)
+
+	stats := QueueStats{
+		PendingWorkflowTasks: pendingWorkflowTasks,
+		PendingActivityTasks: pendingActivityTasks,
+		PollerCount:          pollerCount,
+		BacklogAgeSeconds:    backlogAgeSeconds,
 	}
 
 	a.queueCache.Store(chainID, cachedQueueStats{stats: stats, fetched: time.Now()})

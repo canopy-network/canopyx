@@ -84,3 +84,18 @@ type RecordIndexedInput struct {
 	IndexingTimeMs float64 `json:"indexingTimeMs"` // Total activity execution time in milliseconds
 	IndexingDetail string  `json:"indexingDetail"` // JSON string with breakdown of individual activity timings
 }
+
+// BatchScheduleInput contains the parameters for batch scheduling workflows.
+type BatchScheduleInput struct {
+	ChainID     string `json:"chainId"`
+	StartHeight uint64 `json:"startHeight"`
+	EndHeight   uint64 `json:"endHeight"`
+	PriorityKey int    `json:"priorityKey"`
+}
+
+// BatchScheduleOutput contains the result of batch scheduling.
+type BatchScheduleOutput struct {
+	Scheduled  int     `json:"scheduled"`  // Number of workflows successfully scheduled
+	Failed     int     `json:"failed"`     // Number of workflows that failed to schedule
+	DurationMs float64 `json:"durationMs"` // Total execution time in milliseconds
+}

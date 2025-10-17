@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
 	"go.temporal.io/api/serviceerror"
@@ -63,6 +65,8 @@ func (c *Context) GetLastIndexed(ctx context.Context, in *types.ChainIdInput) (u
 
 // GetLatestHead returns the latest block height for the given chain by hitting RPC endpoints.
 // It also updates the RPC health status in the database based on the success/failure of the RPC call.
+// NOTE: /v1/height may return blocks before they're ready, causing IndexBlock workflows to hang.
+// We verify block availability by attempting to fetch the block. If unavailable, we return head-1.
 func (c *Context) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (uint64, error) {
 	logger := activity.GetLogger(ctx)
 
@@ -90,6 +94,22 @@ func (c *Context) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (ui
 			)
 		}
 		return 0, err
+	}
+
+	// Verify head block is actually available before returning it
+	// This prevents scheduling workflows for blocks that aren't ready yet
+	if head > 0 {
+		_, err := cli.BlockByHeight(ctx, head)
+		if err != nil {
+			// Head block not available yet, use head-1 instead
+			logger.Debug("Head block not yet available, using head-1",
+				zap.String("chain_id", in.ChainID),
+				zap.Uint64("reported_head", head),
+				zap.Uint64("adjusted_head", head-1),
+				zap.Error(err),
+			)
+			head = head - 1
+		}
 	}
 
 	// RPC call succeeded - mark as healthy
@@ -187,4 +207,126 @@ func (c *Context) IsSchedulerWorkflowRunning(ctx context.Context, in *types.Chai
 	)
 
 	return isRunning, nil
+}
+
+// StartIndexWorkflowBatch schedules multiple IndexBlock workflows in a batch.
+// This activity reduces Temporal API overhead by batching workflow start calls.
+// Returns summary of scheduled/failed workflows and execution duration.
+func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchScheduleInput) (types.BatchScheduleOutput, error) {
+	logger := activity.GetLogger(ctx)
+	start := time.Now()
+
+	var scheduled atomic.Int32
+	var failed atomic.Int32
+
+	logger.Info("Starting batch workflow scheduling",
+		zap.String("chain_id", in.ChainID),
+		zap.Uint64("start_height", in.StartHeight),
+		zap.Uint64("end_height", in.EndHeight),
+		zap.Int("batch_size", int(in.EndHeight-in.StartHeight+1)),
+		zap.Int("priority", in.PriorityKey),
+	)
+
+	totalHeights := int(in.EndHeight - in.StartHeight + 1)
+	if totalHeights <= 0 {
+		durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+		logger.Info("Batch workflow scheduling completed",
+			zap.String("chain_id", in.ChainID),
+			zap.Int("scheduled", 0),
+			zap.Int("failed", 0),
+			zap.Float64("duration_ms", durationMs),
+			zap.Float64("workflows_per_sec", 0),
+		)
+
+		return types.BatchScheduleOutput{
+			Scheduled:  0,
+			Failed:     0,
+			DurationMs: durationMs,
+		}, nil
+	}
+
+	pool := c.schedulerBatchPool(totalHeights)
+	group := pool.NewGroupContext(ctx)
+	groupCtx := group.Context()
+
+	for height := in.StartHeight; height <= in.EndHeight; height++ {
+		h := height
+
+		group.Submit(func() {
+			if err := groupCtx.Err(); err != nil {
+				return
+			}
+
+			wfID := c.TemporalClient.GetIndexBlockWorkflowId(in.ChainID, h)
+			options := client.StartWorkflowOptions{
+				ID:        wfID,
+				TaskQueue: c.TemporalClient.GetIndexerQueue(in.ChainID),
+				RetryPolicy: &sdktemporal.RetryPolicy{
+					InitialInterval:    time.Second,
+					BackoffCoefficient: 1.2,
+					MaximumInterval:    5 * time.Second,
+					MaximumAttempts:    0,
+				},
+			}
+			if in.PriorityKey > 0 {
+				options.Priority = sdktemporal.Priority{PriorityKey: in.PriorityKey}
+			}
+
+			_, err := c.TemporalClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.IndexBlockInput{
+				ChainID:     in.ChainID,
+				Height:      h,
+				PriorityKey: in.PriorityKey,
+			})
+			if err != nil {
+				var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
+				if errors.As(err, &alreadyStarted) {
+					scheduled.Add(1) // Count as scheduled (idempotent)
+					return
+				}
+				logger.Warn("failed to schedule workflow in batch",
+					zap.Uint64("h", h),
+					zap.Error(err),
+				)
+				failed.Add(1)
+				return
+			}
+			scheduled.Add(1)
+		})
+	}
+
+	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		logger.Warn("batch scheduling group encountered error",
+			zap.String("chain_id", in.ChainID),
+			zap.Error(err),
+		)
+	}
+
+	scheduledValue := int(scheduled.Load())
+	failedValue := int(failed.Load())
+	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+	totalProcessed := scheduledValue + failedValue
+	var rate float64
+	if durationMs > 0 {
+		rate = float64(totalProcessed) / (durationMs / 1000.0)
+	}
+
+	parallelism := c.SchedulerPoolSize()
+	if totalHeights < parallelism {
+		parallelism = totalHeights
+	}
+
+	logger.Info("Batch workflow scheduling completed",
+		zap.String("chain_id", in.ChainID),
+		zap.Int("scheduled", scheduledValue),
+		zap.Int("failed", failedValue),
+		zap.Float64("duration_ms", durationMs),
+		zap.Float64("workflows_per_sec", rate),
+		zap.Int("parallelism", parallelism),
+	)
+
+	return types.BatchScheduleOutput{
+		Scheduled:  scheduledValue,
+		Failed:     failedValue,
+		DurationMs: durationMs,
+	}, nil
 }

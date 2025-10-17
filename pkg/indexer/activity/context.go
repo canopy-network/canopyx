@@ -2,13 +2,16 @@ package activity
 
 import (
 	"context"
+	"runtime"
+	"sync"
 
+	"github.com/alitto/pond/v2"
+	"github.com/puzpuzpuz/xsync/v4"
 	"go.uber.org/zap"
 
 	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	temporalclient "github.com/canopy-network/canopyx/pkg/temporal"
-	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type Context struct {
@@ -18,6 +21,12 @@ type Context struct {
 	RPCFactory     rpc.Factory
 	RPCOpts        rpc.Opts
 	TemporalClient *temporalclient.Client
+	// SchedulerMaxParallelism allows overriding the default scheduling pool size.
+	SchedulerMaxParallelism int
+
+	schedulerPoolOnce sync.Once
+	schedulerPool     pond.Pool
+	schedulerPoolSize int
 }
 
 // NewChainDb returns a chain store instance for the provided chain ID.
@@ -35,4 +44,71 @@ func (c *Context) NewChainDb(ctx context.Context, chainID string) (db.ChainStore
 	c.ChainsDB.Store(chainID, chainDB)
 
 	return chainDB, nil
+}
+
+// schedulerBatchPool returns a shared worker pool for batch scheduling activities.
+// Pool size defaults to two workers per CPU (with sensible caps) but can be overridden.
+func (c *Context) schedulerBatchPool(batchSize int) pond.Pool {
+	c.schedulerPoolOnce.Do(func() {
+		maxWorkers := schedulerParallelism(c.SchedulerMaxParallelism)
+		c.schedulerPoolSize = maxWorkers
+		queueSize := schedulerQueueSize(maxWorkers, batchSize)
+		c.schedulerPool = pond.NewPool(
+			maxWorkers,
+			pond.WithQueueSize(queueSize),
+		)
+	})
+
+	return c.schedulerPool
+}
+
+// SchedulerPoolSize exposes the configured pool size for logging purposes.
+func (c *Context) SchedulerPoolSize() int {
+	if c.schedulerPoolSize != 0 {
+		return c.schedulerPoolSize
+	}
+	return schedulerParallelism(c.SchedulerMaxParallelism)
+}
+
+func schedulerParallelism(override int) int {
+	if override > 0 {
+		if override > 512 {
+			return 512
+		}
+		return override
+	}
+
+	n := runtime.NumCPU()
+	if n < 1 {
+		n = 1
+	}
+
+	parallelism := n * 2
+	if parallelism < 2 {
+		parallelism = 2
+	}
+	if parallelism > 512 {
+		parallelism = 512
+	}
+
+	return parallelism
+}
+
+func schedulerQueueSize(parallelism, batchSize int) int {
+	if parallelism < 1 {
+		parallelism = 1
+	}
+	if batchSize < 1 {
+		batchSize = 1
+	}
+
+	// Allow large batches to enqueue without blocking submissions.
+	queue := parallelism * batchSize
+	if queue < 4096 {
+		queue = 4096
+	}
+	if queue > 262144 {
+		queue = 262144
+	}
+	return queue
 }

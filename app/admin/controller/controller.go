@@ -77,9 +77,9 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	// basically it's ok, could even be a public endpoint
 	r.Handle("/api/health", http.HandlerFunc(c.HandleHealth)).Methods(http.MethodGet)
 
-	// Admin API - Login/Logout
-	r.HandleFunc("/auth/login", c.HandleAdminLogin).Methods(http.MethodPost)
-	r.HandleFunc("/auth/logout", c.HandleAdminLogout).Methods(http.MethodPost)
+	// Admin API - Login/Logout (normalized to /api prefix)
+	r.HandleFunc("/api/auth/login", c.HandleAdminLogin).Methods(http.MethodPost)
+	r.HandleFunc("/api/auth/logout", c.HandleAdminLogout).Methods(http.MethodPost)
 
 	// API (crud?)
 	r.Handle("/api/chains", c.RequireAuth(http.HandlerFunc(c.HandleChainsList))).Methods(http.MethodGet)

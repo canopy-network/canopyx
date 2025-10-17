@@ -5,6 +5,7 @@ go 1.24.0
 toolchain go1.24.3
 
 require (
+	github.com/alitto/pond/v2 v2.5.0
 	github.com/go-jose/go-jose/v4 v4.1.2
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/gorilla/mux v1.8.1

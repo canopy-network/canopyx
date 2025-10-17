@@ -21,6 +21,9 @@ func TestSchedulerWorkflow_InitialMainnetCatchup(t *testing.T) {
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 
+	cleanup := workflow.SetSchedulerContinueThresholdForTesting(100000)
+	defer cleanup()
+
 	mock := &mockSchedulerActivities{
 		latestHead:   700000,
 		lastIndexed:  0,
@@ -31,11 +34,13 @@ func TestSchedulerWorkflow_InitialMainnetCatchup(t *testing.T) {
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          defaultWorkflowConfig(),
 	}
 
 	// Register workflow and activities
 	env.RegisterWorkflow(wfCtx.SchedulerWorkflow)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Set up workflow options to handle long execution
 	env.SetWorkflowRunTimeout(10 * time.Hour) // Enough for 700k blocks
@@ -79,6 +84,9 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 
+	cleanup := workflow.SetSchedulerContinueThresholdForTesting(100000)
+	defer cleanup()
+
 	// First HeadScan: Triggers SchedulerWorkflow (10k blocks = catch-up mode)
 	mock := &mockSchedulerActivities{
 		latestHead:   10000,
@@ -90,6 +98,7 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          defaultWorkflowConfig(),
 	}
 
 	// Register workflows
@@ -101,6 +110,7 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 	env.RegisterActivity(mock.GetLastIndexed)
 	env.RegisterActivity(mock.IsSchedulerWorkflowRunning)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute first HeadScan - this should trigger SchedulerWorkflow
 	env.ExecuteWorkflow(wfCtx.HeadScan, workflow.HeadScanInput{
@@ -128,6 +138,7 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 	env2.RegisterActivity(mock.GetLastIndexed)
 	env2.RegisterActivity(mock.IsSchedulerWorkflowRunning)
 	env2.RegisterActivity(mock.StartIndexWorkflow)
+	env2.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Track StartIndexWorkflow calls before second HeadScan
 	callsBeforeSecond := mock.startIndexCalls.Load()
@@ -163,6 +174,7 @@ func TestSchedulerWorkflow_NormalOperation(t *testing.T) {
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          defaultWorkflowConfig(),
 	}
 
 	// Register workflow and activities
@@ -170,6 +182,7 @@ func TestSchedulerWorkflow_NormalOperation(t *testing.T) {
 	env.RegisterActivity(mock.GetLatestHead)
 	env.RegisterActivity(mock.GetLastIndexed)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute HeadScan for small range (should use direct scheduling)
 	env.ExecuteWorkflow(wfCtx.HeadScan, workflow.HeadScanInput{
@@ -198,6 +211,9 @@ func TestSchedulerWorkflow_MixedPriorityDistribution(t *testing.T) {
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 
+	cleanup := workflow.SetSchedulerContinueThresholdForTesting(100000)
+	defer cleanup()
+
 	mock := &mockSchedulerActivities{
 		latestHead:   100000,
 		lastIndexed:  90000,
@@ -208,11 +224,13 @@ func TestSchedulerWorkflow_MixedPriorityDistribution(t *testing.T) {
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          defaultWorkflowConfig(),
 	}
 
 	// Register workflow and activities
 	env.RegisterWorkflow(wfCtx.SchedulerWorkflow)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute workflow with 10k block range
 	input := types.SchedulerInput{
@@ -227,18 +245,36 @@ func TestSchedulerWorkflow_MixedPriorityDistribution(t *testing.T) {
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
 
-	// Verify priority distribution matches expected
+	// Verify priority distribution matches expected batch-based calculation
 	dist := mock.getPriorityDistribution()
 	t.Logf("Priority distribution for 10k blocks: %+v", dist)
 
-	// Based on block age calculation:
-	// - Blocks 95681-100000 (4320 blocks) = High (last 24 hours at 20s/block)
-	// - Blocks 91361-95680 (4320 blocks) = Medium (24-48 hours)
-	// - Blocks 90001-91360 (1360 blocks) = Low (48-72 hours)
+	expected := map[int]int{}
+	current := input.EndHeight
+	for current >= input.StartHeight {
+		priority := workflow.CalculateBlockPriority(input.LatestHeight, current, wfCtx.Config.BlockTimeSeconds, false)
 
-	assert.Greater(t, dist[workflow.PriorityHigh], 4000, "Should have ~4320 High priority blocks")
-	assert.Greater(t, dist[workflow.PriorityMedium], 4000, "Should have ~4320 Medium priority blocks")
-	assert.Greater(t, dist[workflow.PriorityLow], 1000, "Should have ~1360 Low priority blocks")
+		remaining := current - input.StartHeight + 1
+		batchLimit := wfCtx.Config.SchedulerBatchSize
+		if batchLimit == 0 {
+			batchLimit = 1
+		}
+
+		var batchStart uint64
+		if remaining <= batchLimit {
+			batchStart = input.StartHeight
+		} else {
+			batchStart = current - batchLimit + 1
+		}
+
+		batchSize := int(current - batchStart + 1)
+		expected[priority] += batchSize
+		current = batchStart - 1
+	}
+
+	assert.Equal(t, expected[workflow.PriorityHigh], dist[workflow.PriorityHigh], "High priority batch distribution mismatch")
+	assert.Equal(t, expected[workflow.PriorityMedium], dist[workflow.PriorityMedium], "Medium priority batch distribution mismatch")
+	assert.Equal(t, expected[workflow.PriorityLow], dist[workflow.PriorityLow], "Low priority batch distribution mismatch")
 
 	// Verify scheduling order
 	err := mock.verifyPriorityOrder()
@@ -260,11 +296,13 @@ func TestSchedulerWorkflow_ContinueAsNewChain(t *testing.T) {
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          defaultWorkflowConfig(),
 	}
 
 	// Register workflow with continuation tracking
 	env.RegisterWorkflow(wfCtx.SchedulerWorkflow)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// For testing, we'll simulate with smaller threshold
 	input := types.SchedulerInput{
@@ -335,9 +373,10 @@ func TestCalculateBlockPriority(t *testing.T) {
 		},
 	}
 
+	const blockTimeSeconds = 20
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actual := workflow.CalculateBlockPriority(tt.latest, tt.height, tt.isLive)
+			actual := workflow.CalculateBlockPriority(tt.latest, tt.height, blockTimeSeconds, tt.isLive)
 			assert.Equal(t, tt.expected, actual,
 				"Priority for block %d (latest: %d, isLive: %v)",
 				tt.height, tt.latest, tt.isLive)
@@ -350,6 +389,9 @@ func TestSchedulerWorkflow_RateLimiting(t *testing.T) {
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 
+	cleanup := workflow.SetSchedulerContinueThresholdForTesting(100000)
+	defer cleanup()
+
 	mock := &mockSchedulerActivities{
 		latestHead:   1000,
 		lastIndexed:  0,
@@ -360,11 +402,13 @@ func TestSchedulerWorkflow_RateLimiting(t *testing.T) {
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          defaultWorkflowConfig(),
 	}
 
 	// Register workflow and activities
 	env.RegisterWorkflow(wfCtx.SchedulerWorkflow)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute with 1000 blocks to test rate limiting
 	input := types.SchedulerInput{
@@ -397,6 +441,9 @@ func TestSchedulerWorkflow_ErrorHandling(t *testing.T) {
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 
+	cleanup := workflow.SetSchedulerContinueThresholdForTesting(100000)
+	defer cleanup()
+
 	mock := &mockSchedulerActivities{
 		latestHead:  100,
 		lastIndexed: 0,
@@ -409,11 +456,13 @@ func TestSchedulerWorkflow_ErrorHandling(t *testing.T) {
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          defaultWorkflowConfig(),
 	}
 
 	// Register workflow and activities
 	env.RegisterWorkflow(wfCtx.SchedulerWorkflow)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	input := types.SchedulerInput{
 		ChainID:      "mainnet",
@@ -437,6 +486,9 @@ func TestSchedulerWorkflow_ErrorHandling(t *testing.T) {
 
 // Benchmark test for large-scale scheduling performance
 func BenchmarkSchedulerWorkflow_LargeScale(b *testing.B) {
+	cleanup := workflow.SetSchedulerContinueThresholdForTesting(100000)
+	defer cleanup()
+
 	for i := 0; i < b.N; i++ {
 		suite := testsuite.WorkflowTestSuite{}
 		env := suite.NewTestWorkflowEnvironment()
@@ -451,10 +503,12 @@ func BenchmarkSchedulerWorkflow_LargeScale(b *testing.B) {
 		wfCtx := workflow.Context{
 			TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 			ActivityContext: &activity.Context{},
+			Config:          defaultWorkflowConfig(),
 		}
 
 		env.RegisterWorkflow(wfCtx.SchedulerWorkflow)
 		env.RegisterActivity(mock.StartIndexWorkflow)
+		env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 		input := types.SchedulerInput{
 			ChainID:      "mainnet",

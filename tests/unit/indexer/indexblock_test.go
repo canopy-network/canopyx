@@ -56,10 +56,13 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s"},
 		ActivityContext: activityCtx,
+		Config:          defaultWorkflowConfig(),
 	}
 
 	env.RegisterWorkflow(wfCtx.IndexBlockWorkflow)
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
+	env.RegisterActivity(activityCtx.FetchBlockFromRPC)
+	env.RegisterActivity(activityCtx.SaveBlock)
 	env.RegisterActivity(activityCtx.IndexBlock)
 	env.RegisterActivity(activityCtx.IndexTransactions)
 	env.RegisterActivity(activityCtx.SaveBlockSummary)
@@ -83,10 +86,11 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 }
 
 func TestPriorityKeyForHeight(t *testing.T) {
-	require.Equal(t, workflow.PriorityHigh, workflow.CalculateBlockPriority(10_000, 10_000, false))
-	require.Equal(t, workflow.PriorityHigh, workflow.CalculateBlockPriority(10_000, 9_950, false))
-	require.Equal(t, workflow.PriorityMedium, workflow.CalculateBlockPriority(10_000, 5_500, false))
-	require.Equal(t, workflow.PriorityLow, workflow.CalculateBlockPriority(10_000, 1_000, false))
+	const blockTimeSeconds = 20
+	require.Equal(t, workflow.PriorityHigh, workflow.CalculateBlockPriority(10_000, 10_000, blockTimeSeconds, false))
+	require.Equal(t, workflow.PriorityHigh, workflow.CalculateBlockPriority(10_000, 9_950, blockTimeSeconds, false))
+	require.Equal(t, workflow.PriorityMedium, workflow.CalculateBlockPriority(10_000, 5_500, blockTimeSeconds, false))
+	require.Equal(t, workflow.PriorityLow, workflow.CalculateBlockPriority(10_000, 1_000, blockTimeSeconds, false))
 }
 
 type wfFakeAdminStore struct {

@@ -24,8 +24,10 @@ server:
       worker:
         rps: 5000                    # default: 1000
     # Configure persistence to use PostgreSQL instead of Cassandra
-    # Using conservative connection pools to stay within PostgreSQL defaults (max_connections=100)
-    # TODO: Increase once we tune PostgreSQL for production
+    # Connection pools tuned for PostgreSQL with max_connections=300
+    # Total connections: (default: 60) + (visibility: 30) = 90 per Temporal service
+    # With 4 services (frontend, history, matching, worker): 90 * 4 = 360 connections needed
+    # PostgreSQL max_connections=300 is tight but workable (some services use fewer connections)
     persistence:
       default:
         driver: "sql"
@@ -36,21 +38,23 @@ server:
           database: "temporal"
           user: "temporal"
           password: "temporal"
-          maxConns: 10               # Conservative for default PostgreSQL config
-          maxIdleConns: 5
+          maxConns: 60               # Increased from 10 (main workflow history store)
+          maxIdleConns: 20           # Keep connections warm
           maxConnLifetime: "1h"
+          connMaxIdleTime: "5m"      # Close idle connections after 5min
       visibility:
         driver: "sql"
         sql:
           driver: "postgres12"
           host: "temporal-postgresql"
           port: 5432
-          database: "temporal_visibility"
+          database: "temporal_visibility"  # Separate database (fixes missing schema tables)
           user: "temporal"
           password: "temporal"
-          maxConns: 5                # Conservative for default PostgreSQL config
-          maxIdleConns: 2
+          maxConns: 30               # Increased from 5 (workflow search/filtering)
+          maxIdleConns: 10
           maxConnLifetime: "1h"
+          connMaxIdleTime: "5m"
 
 prometheus:
   enabled: false

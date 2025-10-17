@@ -52,7 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (username: string, password: string) => {
     try {
-      const res = await apiFetch('/auth/login', {
+      const res = await apiFetch('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       })
@@ -73,7 +73,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       // Set authenticated to false first to prevent race condition
       setIsAuthenticated(false)
-      await apiFetch('/auth/logout', { method: 'POST' })
+      await apiFetch('/api/auth/logout', { method: 'POST' })
     } catch (error) {
       // Ignore errors during logout
     } finally {

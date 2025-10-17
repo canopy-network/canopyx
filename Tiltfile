@@ -291,7 +291,7 @@ if os.path.exists(canopy_path):
         name="add-canopy-local",
         cmd="""
         for i in {1..30}; do
-          if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["http://canopy-node.default.svc.cluster.local:50002"], "image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":3}' 2>/dev/null; then
+          if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["https://node1.canopy.us.nodefleet.net/rpc"], "image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":3}' 2>/dev/null; then
             echo "Successfully registered canopy_local chain"
             exit 0
           fi

@@ -16,6 +16,13 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	defaultCatchupThreshold        = 200
+	defaultDirectScheduleBatchSize = 50
+	defaultSchedulerBatchSize      = 1000
+	defaultBlockTimeSeconds        = 20
+)
+
 type App struct {
 	Worker         worker.Worker
 	OpsWorker      worker.Worker
@@ -74,17 +81,41 @@ func Initialize(ctx context.Context) *App {
 	// RPC rate limiting: Configured for high-throughput parallel block indexing (700k+ blocks)
 	// RPS: Requests per second, Burst: Burst capacity for short spikes
 	rpcOpts := rpc.Opts{RPS: 1000, Burst: 2000, BreakerFailures: 10, BreakerCooldown: 30 * time.Second}
+	catchupThreshold := utils.EnvInt("SCHEDULER_CATCHUP_THRESHOLD", defaultCatchupThreshold)
+	if catchupThreshold <= 0 {
+		catchupThreshold = defaultCatchupThreshold
+	}
+	directScheduleBatch := utils.EnvInt("DIRECT_SCHEDULE_BATCH_SIZE", defaultDirectScheduleBatchSize)
+	if directScheduleBatch <= 0 {
+		directScheduleBatch = defaultDirectScheduleBatchSize
+	}
+	schedulerBatch := utils.EnvInt("SCHEDULER_BATCH_SIZE", defaultSchedulerBatchSize)
+	if schedulerBatch <= 0 {
+		schedulerBatch = defaultSchedulerBatchSize
+	}
+	blockTimeSeconds := utils.EnvInt("BLOCK_TIME_SECONDS", defaultBlockTimeSeconds)
+	if blockTimeSeconds <= 0 {
+		blockTimeSeconds = defaultBlockTimeSeconds
+	}
+
 	activityContext := &activity.Context{
-		Logger:         logger,
-		IndexerDB:      indexerDb,
-		ChainsDB:       chainsDb,
-		RPCFactory:     rpc.NewHTTPFactory(rpcOpts),
-		RPCOpts:        rpcOpts,
-		TemporalClient: temporalClient,
+		Logger:                  logger,
+		IndexerDB:               indexerDb,
+		ChainsDB:                chainsDb,
+		RPCFactory:              rpc.NewHTTPFactory(rpcOpts),
+		RPCOpts:                 rpcOpts,
+		TemporalClient:          temporalClient,
+		SchedulerMaxParallelism: utils.EnvInt("SCHEDULER_BATCH_MAX_PARALLELISM", 0),
 	}
 	workflowContext := workflow.Context{
 		TemporalClient:  temporalClient,
 		ActivityContext: activityContext,
+		Config: workflow.Config{
+			CatchupThreshold:        uint64(catchupThreshold),
+			DirectScheduleBatchSize: uint64(directScheduleBatch),
+			SchedulerBatchSize:      uint64(schedulerBatch),
+			BlockTimeSeconds:        uint64(blockTimeSeconds),
+		},
 	}
 
 	// Turn on the temporal worker to listen on chain id task queue (chain-specific workflow/activity)
@@ -146,6 +177,7 @@ func Initialize(ctx context.Context) *App {
 	opsWorker.RegisterActivity(activityContext.GetLastIndexed)
 	opsWorker.RegisterActivity(activityContext.FindGaps)
 	opsWorker.RegisterActivity(activityContext.StartIndexWorkflow)
+	opsWorker.RegisterActivity(activityContext.StartIndexWorkflowBatch)
 	opsWorker.RegisterActivity(activityContext.IsSchedulerWorkflowRunning)
 
 	return &App{

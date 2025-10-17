@@ -3,13 +3,24 @@ package indexer
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
+	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
 )
+
+func defaultWorkflowConfig() workflow.Config {
+	return workflow.Config{
+		CatchupThreshold:        200,
+		DirectScheduleBatchSize: 50,
+		SchedulerBatchSize:      1000,
+		BlockTimeSeconds:        20,
+	}
+}
 
 // mockSchedulerActivities provides comprehensive mock activities for testing
 type mockSchedulerActivities struct {
@@ -70,7 +81,7 @@ func (m *mockSchedulerActivities) FindGaps(ctx context.Context, in *types.ChainI
 	return m.gaps, nil
 }
 
-func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in *types.IndexBlockInput) error {
+func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInput) error {
 	m.startIndexCalls.Add(1)
 
 	m.mu.Lock()
@@ -88,6 +99,34 @@ func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in *ty
 		return fmt.Errorf("mock StartIndexWorkflow failure")
 	}
 	return nil
+}
+
+func (m *mockSchedulerActivities) StartIndexWorkflowBatch(ctx context.Context, in types.BatchScheduleInput) (types.BatchScheduleOutput, error) {
+	start := time.Now()
+
+	scheduled := 0
+	failed := 0
+
+	for height := in.StartHeight; height <= in.EndHeight; height++ {
+		err := m.StartIndexWorkflow(ctx, types.IndexBlockInput{
+			ChainID:     in.ChainID,
+			Height:      height,
+			PriorityKey: in.PriorityKey,
+		})
+		if err != nil {
+			failed++
+		} else {
+			scheduled++
+		}
+	}
+
+	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+
+	return types.BatchScheduleOutput{
+		Scheduled:  scheduled,
+		Failed:     failed,
+		DurationMs: durationMs,
+	}, nil
 }
 
 func (m *mockSchedulerActivities) IsSchedulerWorkflowRunning(ctx context.Context, in *types.ChainIdInput) (bool, error) {
@@ -119,8 +158,14 @@ func (m *mockSchedulerActivities) verifyPriorityOrder() error {
 		return nil
 	}
 
-	lastPriority := m.scheduledBlocks[0].Priority
-	for _, block := range m.scheduledBlocks[1:] {
+	sorted := make([]scheduledBlock, len(m.scheduledBlocks))
+	copy(sorted, m.scheduledBlocks)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Height > sorted[j].Height
+	})
+
+	lastPriority := sorted[0].Priority
+	for _, block := range sorted[1:] {
 		if block.Priority > lastPriority {
 			return fmt.Errorf("priority order violation: block %d has priority %d after priority %d",
 				block.Height, block.Priority, lastPriority)

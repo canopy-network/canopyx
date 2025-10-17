@@ -134,11 +134,11 @@ func (db *AdminDB) LastIndexed(ctx context.Context, chainID string) (uint64, err
 // and does NOT include the trailing gap to 'up to'. The caller should add a tail gap separately.
 func (db *AdminDB) FindGaps(ctx context.Context, chainID string) ([]Gap, error) {
 	q := fmt.Sprintf(`
-		SELECT prev_h + 1 AS from_h, h - 1 AS to_h
+		SELECT assumeNotNull(prev_h) + 1 AS from_h, h - 1 AS to_h
 		FROM (
 		  SELECT
 		    height AS h,
-		    lagInFrame(height) OVER (
+		    lagInFrame(toNullable(height)) OVER (
 		      PARTITION BY chain_id
 		      ORDER BY height
 		      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
@@ -203,6 +203,19 @@ func (db *AdminDB) UpsertChain(ctx context.Context, c *admin.Chain) error {
 		return fmt.Errorf("max_replicas (%d) must be >= min_replicas (%d)", c.MaxReplicas, c.MinReplicas)
 	}
 	c.Image = strings.TrimSpace(c.Image)
+
+	if c.RPCHealthStatus == "" {
+		c.RPCHealthStatus = "unknown"
+	}
+	if c.QueueHealthStatus == "" {
+		c.QueueHealthStatus = "unknown"
+	}
+	if c.DeploymentHealthStatus == "" {
+		c.DeploymentHealthStatus = "unknown"
+	}
+	if c.OverallHealthStatus == "" {
+		c.OverallHealthStatus = "unknown"
+	}
 
 	// Insert (ReplacingMergeTree will treat the same (chain_id) as an upsert by latest UpdatedAt)
 	_, err := db.Db.NewInsert().Model(c).Exec(ctx)
@@ -289,6 +302,7 @@ func (db *AdminDB) RecordReindexRequests(ctx context.Context, chainID, requested
 			Height:      h,
 			RequestedBy: requestedBy,
 			Status:      "queued",
+			RequestedAt: time.Now(),
 		})
 	}
 	_, err := db.Db.NewInsert().Model(&rows).Exec(ctx)
@@ -309,6 +323,7 @@ func (db *AdminDB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainI
 			Status:      "queued",
 			WorkflowID:  info.WorkflowID,
 			RunID:       info.RunID,
+			RequestedAt: time.Now(),
 		})
 	}
 	_, err := db.Db.NewInsert().Model(&rows).Exec(ctx)

@@ -210,6 +210,10 @@ test: test-unit test-integration
 .PHONY: test-unit
 test-unit:
 	@mkdir -p .gocache
+	@if [ "$(CLEAN_CACHE)" = "1" ]; then \
+		rm -rf .gocache; \
+		$(GO) clean -testcache; \
+	fi
 	@echo ">> Running unit tests..."
 	@if [ -n "$(RUN)" ]; then \
 		GOCACHE=$(CURDIR)/.gocache $(GO) test -run '$(RUN)' $(if $(TEST_PKG),$(TEST_PKG),./tests/unit/...); \
@@ -220,11 +224,15 @@ test-unit:
 .PHONY: test-integration
 test-integration:
 	@mkdir -p .gocache
+	@if [ "$(CLEAN_CACHE)" = "1" ]; then \
+		rm -rf .gocache; \
+		$(GO) clean -testcache; \
+	fi
 	@echo ">> Running integration tests (requires Docker)..."
 	@if [ -n "$(RUN)" ]; then \
-		GOCACHE=$(CURDIR)/.gocache $(GO) test -tags=integration -v -run '$(RUN)' ./tests/integration/...; \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -v -race -run '$(RUN)' ./tests/integration/...; \
 	else \
-		GOCACHE=$(CURDIR)/.gocache $(GO) test -tags=integration -v ./tests/integration/...; \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -v -race ./tests/integration/...; \
 	fi
 
 .PHONY: clean

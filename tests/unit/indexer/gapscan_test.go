@@ -31,9 +31,12 @@ func TestGapScanWorkflow_SingleSmallGap(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflow and activities
@@ -70,9 +73,9 @@ func TestGapScanWorkflow_SingleSmallGap(t *testing.T) {
 	t.Logf("Successfully scheduled 100 blocks with UltraHigh priority")
 }
 
-// TestGapScanWorkflow_MultipleSmallGaps tests multiple gaps totaling <1000 blocks (should use direct scheduling)
-// Scenario: gaps = [{From: 100, To: 199}, {From: 500, To: 699}], latestHead = 1000 (total: 300 blocks)
-// Expected: StartIndexWorkflow called 300 times total
+// TestGapScanWorkflow_MultipleSmallGaps tests multiple gaps totaling below the catch-up threshold (should use direct scheduling)
+// Scenario: gaps = [{From: 100, To: 149}, {From: 500, To: 599}], latestHead = 1000 (total: 150 blocks)
+// Expected: StartIndexWorkflow called 150 times total
 // Expected: SchedulerWorkflow NOT triggered
 func TestGapScanWorkflow_MultipleSmallGaps(t *testing.T) {
 	suite := testsuite.WorkflowTestSuite{}
@@ -82,16 +85,19 @@ func TestGapScanWorkflow_MultipleSmallGaps(t *testing.T) {
 		latestHead:  1000,
 		lastIndexed: 0,
 		gaps: []db.Gap{
-			{From: 100, To: 199}, // 100 blocks
-			{From: 500, To: 699}, // 200 blocks
+			{From: 100, To: 149}, // 50 blocks
+			{From: 500, To: 599}, // 100 blocks
 		},
 		shouldFail:   make(map[string]bool),
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflow and activities
@@ -108,20 +114,20 @@ func TestGapScanWorkflow_MultipleSmallGaps(t *testing.T) {
 	require.True(t, env.IsWorkflowCompleted())
 	require.NoError(t, env.GetWorkflowError())
 
-	// Verify StartIndexWorkflow was called exactly 300 times (100 + 200)
-	assert.Equal(t, int32(300), mock.startIndexCalls.Load(),
-		"Should schedule exactly 300 blocks across both gaps")
+	// Verify StartIndexWorkflow was called exactly 150 times (50 + 100)
+	assert.Equal(t, int32(150), mock.startIndexCalls.Load(),
+		"Should schedule exactly 150 blocks across both gaps")
 
 	// Verify all blocks have UltraHigh priority
 	dist := mock.getPriorityDistribution()
-	assert.Equal(t, 300, dist[workflow.PriorityUltraHigh],
+	assert.Equal(t, 150, dist[workflow.PriorityUltraHigh],
 		"All blocks should have UltraHigh priority for small gaps")
 
 	// Verify FindGaps was called
 	assert.Equal(t, int32(1), mock.findGapsCalls.Load(),
 		"FindGaps should be called once")
 
-	t.Logf("Successfully scheduled 300 blocks across 2 gaps with direct scheduling")
+	t.Logf("Successfully scheduled 150 blocks across 2 gaps with direct scheduling")
 }
 
 // TestGapScanWorkflow_LargeGap tests one gap of 10k+ blocks (should trigger SchedulerWorkflow)
@@ -142,9 +148,12 @@ func TestGapScanWorkflow_LargeGap(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflows and activities
@@ -154,6 +163,7 @@ func TestGapScanWorkflow_LargeGap(t *testing.T) {
 	env.RegisterActivity(mock.FindGaps)
 	env.RegisterActivity(mock.IsSchedulerWorkflowRunning)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
@@ -196,9 +206,12 @@ func TestGapScanWorkflow_NoGaps(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflow and activities
@@ -249,9 +262,12 @@ func TestGapScanWorkflow_SchedulerAlreadyRunning(t *testing.T) {
 	}
 	mock.isSchedulerRunning.Store(true) // Scheduler already running
 
+	cfg := defaultWorkflowConfig()
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflows and activities
@@ -261,6 +277,7 @@ func TestGapScanWorkflow_SchedulerAlreadyRunning(t *testing.T) {
 	env.RegisterActivity(mock.FindGaps)
 	env.RegisterActivity(mock.IsSchedulerWorkflowRunning)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Track calls before execution
 	callsBefore := mock.startIndexCalls.Load()
@@ -306,9 +323,12 @@ func TestGapScanWorkflow_MultipleGapsLargeTotal(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflows and activities
@@ -318,6 +338,7 @@ func TestGapScanWorkflow_MultipleGapsLargeTotal(t *testing.T) {
 	env.RegisterActivity(mock.FindGaps)
 	env.RegisterActivity(mock.IsSchedulerWorkflowRunning)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
@@ -374,9 +395,12 @@ func TestGapScanWorkflow_ErrorHandling(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflow and activities
@@ -384,6 +408,7 @@ func TestGapScanWorkflow_ErrorHandling(t *testing.T) {
 	env.RegisterActivity(mock.GetLatestHead)
 	env.RegisterActivity(mock.FindGaps)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
@@ -427,9 +452,12 @@ func TestGapScanWorkflow_GetLatestHeadError(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflow and activities
@@ -475,9 +503,13 @@ func TestGapScanWorkflow_EdgeCase_ExactlyThreshold(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+	cfg.CatchupThreshold = 1000
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflows and activities
@@ -487,6 +519,7 @@ func TestGapScanWorkflow_EdgeCase_ExactlyThreshold(t *testing.T) {
 	env.RegisterActivity(mock.FindGaps)
 	env.RegisterActivity(mock.IsSchedulerWorkflowRunning)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
@@ -525,9 +558,13 @@ func TestGapScanWorkflow_PerformanceLargeNumberOfGaps(t *testing.T) {
 		failureCount: make(map[string]int),
 	}
 
+	cfg := defaultWorkflowConfig()
+	cfg.CatchupThreshold = 1000
+
 	wfCtx := workflow.Context{
 		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
 		ActivityContext: &activity.Context{},
+		Config:          cfg,
 	}
 
 	// Register workflow and activities
@@ -535,6 +572,7 @@ func TestGapScanWorkflow_PerformanceLargeNumberOfGaps(t *testing.T) {
 	env.RegisterActivity(mock.GetLatestHead)
 	env.RegisterActivity(mock.FindGaps)
 	env.RegisterActivity(mock.StartIndexWorkflow)
+	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Set workflow timeout for performance testing
 	env.SetWorkflowRunTimeout(5 * time.Minute)
