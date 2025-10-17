@@ -464,20 +464,35 @@ if components.get('admin_web', True):
             containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
             for container in containers:
                 if container.get('name') == 'admin-web':
-                    # Note: admin_web_memory_limit should be higher (512Mi+) for Next.js dev mode with hot reload
                     admin_web_cpu = canopyx_cfg.get('admin_web_cpu_limit', '500m')
                     admin_web_mem = canopyx_cfg.get('admin_web_memory_limit', '512Mi')
-                    container['resources'] = {
-                        'limits': {
-                            'cpu': admin_web_cpu,
-                            'memory': admin_web_mem
-                        },
-                        'requests': {
-                            'cpu': str(int(admin_web_cpu.replace('m', '')) // 2) + 'm' if 'm' in admin_web_cpu else str(float(admin_web_cpu) / 2),
-                            'memory': str(int(admin_web_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in admin_web_mem else str(int(admin_web_mem.replace('Mi', '')) // 2) + 'Mi'
+
+                    # For dev environments (minimal/development), don't set memory limit to allow Next.js builds with hot reload
+                    # For production, apply memory limit for safety
+                    if profile in ['minimal', 'development']:
+                        container['resources'] = {
+                            'limits': {
+                                'cpu': admin_web_cpu,
+                                # No memory limit for dev mode - Next.js can spike during builds
+                            },
+                            'requests': {
+                                'cpu': str(int(admin_web_cpu.replace('m', '')) // 2) + 'm' if 'm' in admin_web_cpu else str(float(admin_web_cpu) / 2),
+                                'memory': '256Mi'  # Baseline request for scheduling
+                            }
                         }
-                    }
-                    print("CanopyX Admin Web resources: CPU=%s, Memory=%s" % (admin_web_cpu, admin_web_mem))
+                        print("CanopyX Admin Web resources: CPU=%s, Memory=unlimited (dev mode)" % admin_web_cpu)
+                    else:
+                        container['resources'] = {
+                            'limits': {
+                                'cpu': admin_web_cpu,
+                                'memory': admin_web_mem
+                            },
+                            'requests': {
+                                'cpu': str(int(admin_web_cpu.replace('m', '')) // 2) + 'm' if 'm' in admin_web_cpu else str(float(admin_web_cpu) / 2),
+                                'memory': str(int(admin_web_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in admin_web_mem else str(int(admin_web_mem.replace('Mi', '')) // 2) + 'Mi'
+                            }
+                        }
+                        print("CanopyX Admin Web resources: CPU=%s, Memory=%s" % (admin_web_cpu, admin_web_mem))
             break
 
     k8s_yaml(encode_yaml_stream(admin_web_objects))
