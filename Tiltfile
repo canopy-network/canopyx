@@ -27,6 +27,8 @@ monitoring_cfg = cfg.get('monitoring', {})
 ports = cfg.get('ports', {})
 paths_cfg = cfg.get('paths', {})
 dev_cfg = cfg.get('dev', {})
+chains_cfg = cfg.get('chains', [])
+env_cfg = cfg.get('env', {})
 
 print("Tilt Profile: %s" % profile)
 print("Components enabled: %s" % ', '.join([k for k, v in components.items() if v]))
@@ -387,6 +389,16 @@ for o in admin_objects:
                     }
                 }
                 print("CanopyX Admin resources: CPU=%s, Memory=%s" % (admin_cpu, admin_mem))
+
+                # Apply environment variable overrides from config
+                admin_env_overrides = env_cfg.get('admin', {})
+                if admin_env_overrides:
+                    env_vars = container.get('env', [])
+                    for env_var in env_vars:
+                        env_name = env_var.get('name')
+                        if env_name in admin_env_overrides:
+                            env_var['value'] = str(admin_env_overrides[env_name])
+                            print("CanopyX Admin env override: %s=%s" % (env_name, env_var['value']))
         break
 
 k8s_yaml(encode_yaml_stream(admin_objects))
@@ -551,6 +563,16 @@ for o in controller_objects:
                     }
                 }
                 print("CanopyX Controller resources: CPU=%s, Memory=%s" % (controller_cpu, controller_mem))
+
+                # Apply environment variable overrides from config
+                controller_env_overrides = env_cfg.get('controller', {})
+                if controller_env_overrides:
+                    env_vars = container.get('env', [])
+                    for env_var in env_vars:
+                        env_name = env_var.get('name')
+                        if env_name in controller_env_overrides:
+                            env_var['value'] = str(controller_env_overrides[env_name])
+                            print("CanopyX Controller env override: %s=%s" % (env_name, env_var['value']))
         break
 
 k8s_yaml(encode_yaml_stream(controller_objects))
@@ -666,6 +688,65 @@ if components.get('canopy_node', False) and os.path.exists(canopy_path):
         )
     else:
         print("Auto-register chain disabled in config")
+
+# ------------------------------------------
+# AUTO-REGISTER EXTERNAL CHAINS
+# ------------------------------------------
+# Register external Canopy networks from config
+if chains_cfg and len(chains_cfg) > 0:
+    print("Auto-registering %d external Canopy chain(s)" % len(chains_cfg))
+
+    for chain in chains_cfg:
+        chain_id = chain.get('chain_id')
+        chain_name = chain.get('chain_name')
+        rpc_endpoints = chain.get('rpc_endpoints', [])
+        min_replicas = chain.get('min_replicas', 1)
+        max_replicas = chain.get('max_replicas', 3)
+        image = chain.get('image', idx_repo)  # Default to dev indexer image
+
+        if not chain_id or not chain_name or not rpc_endpoints:
+            fail("Invalid chain configuration: chain_id, chain_name, and rpc_endpoints are required")
+
+        # Build JSON payload for chain registration manually (Starlark doesn't have json.encode)
+        rpc_endpoints_str = ', '.join(['"%s"' % ep for ep in rpc_endpoints])
+        chain_payload = '{\"chain_id\":\"%s\",\"chain_name\":\"%s\",\"rpc_endpoints\":[%s],\"image\":\"%s\",\"min_replicas\":%d,\"max_replicas\":%d}' % (
+            chain_id, chain_name, rpc_endpoints_str, image, min_replicas, max_replicas
+        )
+
+        resource_name = "add-chain-%s" % chain_id
+
+        print("Configuring auto-registration for chain: %s (%s)" % (chain_name, chain_id))
+
+        local_resource(
+            name=resource_name,
+            cmd="""
+            for i in {1..30}; do
+              if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '%s' 2>/dev/null; then
+                echo "Successfully registered %s chain"
+                exit 0
+              fi
+              echo "Waiting for admin API to be ready... attempt $i/30"
+              sleep 2
+            done
+            echo "Failed to register %s chain after 30 attempts"
+            exit 1
+            """ % (chain_payload, chain_name, chain_name),
+            deps=[],
+            labels=['chains'],
+            resource_deps=["canopyx-admin"],
+            allow_parallel=False,
+            auto_init=True,
+        )
+
+        # Attach to the controller-spawned indexer deployment
+        k8s_attach(
+            name="indexer-%s" % chain_id,
+            obj="deployment/canopyx-indexer-%s" % chain_id,
+            resource_deps=["canopyx-controller", resource_name],
+            labels=['indexers'],
+        )
+else:
+    print("No external chains configured for auto-registration")
 
 # Cleanup resource for controller-spawned deployments
 k8s_custom_deploy(
