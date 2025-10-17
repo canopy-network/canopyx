@@ -47,7 +47,7 @@ func (c *Context) NewChainDb(ctx context.Context, chainID string) (db.ChainStore
 }
 
 // schedulerBatchPool returns a shared worker pool for batch scheduling activities.
-// Pool size defaults to two workers per CPU (with sensible caps) but can be overridden.
+// Pool size defaults to four workers per CPU (with sensible caps) but can be overridden.
 func (c *Context) schedulerBatchPool(batchSize int) pond.Pool {
 	c.schedulerPoolOnce.Do(func() {
 		maxWorkers := schedulerParallelism(c.SchedulerMaxParallelism)
@@ -83,7 +83,8 @@ func schedulerParallelism(override int) int {
 		n = 1
 	}
 
-	parallelism := n * 2
+	// Use 4x CPU multiplier for increased throughput (target: 200k+ workflows/sec)
+	parallelism := n * 4
 	if parallelism < 2 {
 		parallelism = 2
 	}

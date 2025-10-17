@@ -19,7 +19,7 @@ import (
 const (
 	defaultCatchupThreshold        = 200
 	defaultDirectScheduleBatchSize = 50
-	defaultSchedulerBatchSize      = 1000
+	defaultSchedulerBatchSize      = 5000 // Increased from 1000 to reduce overhead from frequent batch operations
 	defaultBlockTimeSeconds        = 20
 )
 
@@ -89,6 +89,11 @@ func Initialize(ctx context.Context) *App {
 	if directScheduleBatch <= 0 {
 		directScheduleBatch = defaultDirectScheduleBatchSize
 	}
+	// SCHEDULER_BATCH_SIZE: Number of workflows to schedule per batch operation
+	// Default: 5000 (optimized to reduce overhead from frequent batch operations)
+	// For 750k blocks: 150 batch operations vs 750 with previous default of 1000
+	// Higher values (e.g., 10000) can further reduce overhead but require proportionally longer timeouts
+	// Consider: Activity timeout is set to 2 minutes in workflow/ops.go
 	schedulerBatch := utils.EnvInt("SCHEDULER_BATCH_SIZE", defaultSchedulerBatchSize)
 	if schedulerBatch <= 0 {
 		schedulerBatch = defaultSchedulerBatchSize

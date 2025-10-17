@@ -425,8 +425,9 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.Scheduler
 
 	// Activity options for batched StartIndexWorkflow calls
 	// Use regular activities (not local) to distribute load across workers
+	// Timeout increased to 2 minutes to accommodate larger batch sizes (5000+ workflows)
 	ao := workflow.ActivityOptions{
-		StartToCloseTimeout: 30 * time.Second,
+		StartToCloseTimeout: 2 * time.Minute,
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    200 * time.Millisecond,
 			BackoffCoefficient: 1.2,
@@ -532,8 +533,8 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.Scheduler
 }
 
 // scheduleDirectly schedules small block ranges directly without SchedulerWorkflow.
-// Used for ranges < 1000 blocks. Schedules in batches of 50 with Ultra High priority.
-// Uses local activities for performance.
+// Used for ranges < CatchupThreshold blocks. Schedules in parallel batches with Ultra High priority.
+// Uses local activities for performance with parallel execution via batched futures.
 func (wc *Context) scheduleDirectly(ctx workflow.Context, chainID string, start, end uint64) error {
 	logger := workflow.GetLogger(ctx)
 
@@ -557,37 +558,81 @@ func (wc *Context) scheduleDirectly(ctx workflow.Context, chainID string, start,
 	}
 	localCtx := workflow.WithLocalActivityOptions(ctx, localAo)
 
+	// Parallel scheduling configuration
+	// Process in chunks to control concurrency and avoid overwhelming the workflow
+	const maxConcurrentPerChunk uint64 = 50
+
 	batchSize := wc.Config.DirectScheduleBatchSize
 	if batchSize == 0 {
 		batchSize = 1
 	}
 
-	// Schedule in batches
+	// Use maxConcurrentPerChunk as the effective batch size for parallel processing
+	effectiveBatchSize := maxConcurrentPerChunk
+	if batchSize > effectiveBatchSize {
+		effectiveBatchSize = batchSize
+	}
+
+	var totalScheduled uint64
+	var totalErrors int
+
+	// Schedule in parallel chunks
 	for currentHeight := start; currentHeight <= end; {
-		batchEnd := currentHeight + batchSize - 1
-		if batchEnd > end {
-			batchEnd = end
+		chunkEnd := currentHeight + effectiveBatchSize - 1
+		if chunkEnd > end {
+			chunkEnd = end
+		}
+		chunkSize := chunkEnd - currentHeight + 1
+
+		// Submit all heights in this chunk in parallel by collecting futures
+		// ExecuteLocalActivity returns immediately with a Future, allowing parallel execution
+		futures := make([]workflow.Future, 0, chunkSize)
+
+		for h := currentHeight; h <= chunkEnd; h++ {
+			height := h // Capture loop variable for closure
+
+			// Start local activity asynchronously - returns immediately with Future
+			future := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, types.IndexBlockInput{
+				ChainID:     chainID,
+				Height:      height,
+				PriorityKey: PriorityUltraHigh,
+			})
+			futures = append(futures, future)
 		}
 
-		// Schedule batch with Ultra High priority (live blocks)
-		for h := currentHeight; h <= batchEnd; h++ {
+		// Wait for all futures in this chunk to complete
+		for i, future := range futures {
 			var result interface{}
-			err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, types.IndexBlockInput{
-				ChainID:     chainID,
-				Height:      h,
-				PriorityKey: PriorityUltraHigh,
-			}).Get(localCtx, &result)
-			if err != nil {
-				logger.Error("Failed to schedule block directly", "height", h, "error", err)
+			if err := future.Get(localCtx, &result); err != nil {
+				height := currentHeight + uint64(i)
+				logger.Error("Failed to schedule block directly",
+					"height", height,
+					"error", err,
+				)
+				totalErrors++
+			} else {
+				totalScheduled++
 			}
 		}
 
-		currentHeight = batchEnd + 1
+		// Log progress for larger ranges
+		if totalBlocks > 100 && totalScheduled%100 == 0 {
+			logger.Info("Direct scheduling progress",
+				"chain_id", chainID,
+				"scheduled", totalScheduled,
+				"total", totalBlocks,
+				"progress_pct", int((float64(totalScheduled)/float64(totalBlocks))*100),
+			)
+		}
+
+		currentHeight = chunkEnd + 1
 	}
 
 	logger.Info("Direct scheduling completed",
 		"chain_id", chainID,
-		"total_scheduled", totalBlocks,
+		"total_scheduled", totalScheduled,
+		"total_errors", totalErrors,
+		"total_blocks", totalBlocks,
 	)
 
 	return nil

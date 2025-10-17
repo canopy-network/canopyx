@@ -17,7 +17,7 @@ func defaultWorkflowConfig() workflow.Config {
 	return workflow.Config{
 		CatchupThreshold:        200,
 		DirectScheduleBatchSize: 50,
-		SchedulerBatchSize:      1000,
+		SchedulerBatchSize:      5000, // Updated to match production default for realistic testing
 		BlockTimeSeconds:        20,
 	}
 }
