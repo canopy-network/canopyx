@@ -32,7 +32,12 @@ func TestSchedulerWorkflow_InitialMainnetCatchup(t *testing.T) {
 	}
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          defaultWorkflowConfig(),
 	}
@@ -96,7 +101,12 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 	}
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          defaultWorkflowConfig(),
 	}
@@ -172,7 +182,12 @@ func TestSchedulerWorkflow_NormalOperation(t *testing.T) {
 	}
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          defaultWorkflowConfig(),
 	}
@@ -222,7 +237,12 @@ func TestSchedulerWorkflow_MixedPriorityDistribution(t *testing.T) {
 	}
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          defaultWorkflowConfig(),
 	}
@@ -294,7 +314,12 @@ func TestSchedulerWorkflow_ContinueAsNewChain(t *testing.T) {
 	}
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          defaultWorkflowConfig(),
 	}
@@ -400,7 +425,12 @@ func TestSchedulerWorkflow_RateLimiting(t *testing.T) {
 	}
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          defaultWorkflowConfig(),
 	}
@@ -454,7 +484,12 @@ func TestSchedulerWorkflow_ErrorHandling(t *testing.T) {
 	}
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          defaultWorkflowConfig(),
 	}
@@ -501,7 +536,12 @@ func BenchmarkSchedulerWorkflow_LargeScale(b *testing.B) {
 		}
 
 		wfCtx := workflow.Context{
-			TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+			TemporalClient: &temporal.Client{
+				IndexerQueue:           "index:%s",
+				IndexerLiveQueue:       "index:%s:live",
+				IndexerHistoricalQueue: "index:%s:historical",
+				IndexerOpsQueue:        "admin:%s",
+			},
 			ActivityContext: &activity.Context{},
 			Config:          defaultWorkflowConfig(),
 		}

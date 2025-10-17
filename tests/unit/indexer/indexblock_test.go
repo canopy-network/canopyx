@@ -54,7 +54,12 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 	}
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: activityCtx,
 		Config:          defaultWorkflowConfig(),
 	}

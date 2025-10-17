@@ -34,7 +34,12 @@ func TestGapScanWorkflow_SingleSmallGap(t *testing.T) {
 	cfg := defaultWorkflowConfig()
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -95,7 +100,12 @@ func TestGapScanWorkflow_MultipleSmallGaps(t *testing.T) {
 	cfg := defaultWorkflowConfig()
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -151,7 +161,12 @@ func TestGapScanWorkflow_LargeGap(t *testing.T) {
 	cfg := defaultWorkflowConfig()
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -209,7 +224,12 @@ func TestGapScanWorkflow_NoGaps(t *testing.T) {
 	cfg := defaultWorkflowConfig()
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -265,7 +285,12 @@ func TestGapScanWorkflow_SchedulerAlreadyRunning(t *testing.T) {
 	cfg := defaultWorkflowConfig()
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -326,7 +351,12 @@ func TestGapScanWorkflow_MultipleGapsLargeTotal(t *testing.T) {
 	cfg := defaultWorkflowConfig()
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -398,7 +428,12 @@ func TestGapScanWorkflow_ErrorHandling(t *testing.T) {
 	cfg := defaultWorkflowConfig()
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -455,7 +490,12 @@ func TestGapScanWorkflow_GetLatestHeadError(t *testing.T) {
 	cfg := defaultWorkflowConfig()
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -507,7 +547,12 @@ func TestGapScanWorkflow_EdgeCase_ExactlyThreshold(t *testing.T) {
 	cfg.CatchupThreshold = 1000
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
@@ -562,7 +607,12 @@ func TestGapScanWorkflow_PerformanceLargeNumberOfGaps(t *testing.T) {
 	cfg.CatchupThreshold = 1000
 
 	wfCtx := workflow.Context{
-		TemporalClient:  &temporal.Client{IndexerQueue: "index:%s", IndexerOpsQueue: "admin:%s"},
+		TemporalClient: &temporal.Client{
+			IndexerQueue:           "index:%s",
+			IndexerLiveQueue:       "index:%s:live",
+			IndexerHistoricalQueue: "index:%s:historical",
+			IndexerOpsQueue:        "admin:%s",
+		},
 		ActivityContext: &activity.Context{},
 		Config:          cfg,
 	}
