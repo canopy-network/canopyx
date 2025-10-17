@@ -30,8 +30,8 @@ spec:
             - { name: INDEXER_HPA_MIN, value: "1" }
             - { name: INDEXER_HPA_MAX, value: "3" }
             - { name: INDEXER_HPA_CPU_TARGET, value: "80" }
-            - { name: INDEXER_CPU, value: "1000m" }
-            - { name: INDEXER_MEM, value: "256Mi" }
+            - { name: INDEXER_CPU, value: "2000m" }
+            - { name: INDEXER_MEM, value: "2Gi" }
             - { name: TEMPORAL_TASK_QUEUE_PREFIX, value: "index:" }
             - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.default.svc.cluster.local:7233" }
             - { name: TEMPORAL_NAMESPACE, value: "canopyx" }

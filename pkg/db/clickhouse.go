@@ -17,6 +17,7 @@ type Client struct {
 }
 
 // NewDB initializes and returns a new database client for ClickHouse with provided context and logger.
+// Includes connection pooling optimizations for high-throughput workloads.
 func NewDB(ctx context.Context, logger *zap.Logger, dbName string) (client Client, e error) {
 	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000?sslmode=disable")
 
@@ -26,6 +27,14 @@ func NewDB(ctx context.Context, logger *zap.Logger, dbName string) (client Clien
 		ch.WithDSN(dsn),
 		ch.WithAutoCreateDatabase(true),
 		ch.WithDatabase(dbName),
+
+		// Connection pool settings for high-throughput (3,500+ workflows/sec)
+		// With 12 indexers: 12 × 75 = 900 max connections
+		ch.WithPoolSize(75),          // Max open connections per indexer (increased for 12+ indexers)
+		ch.WithConnMaxLifetime(0),    // Connections never expire (default: 0)
+		ch.WithConnMaxIdleTime(5*60), // Idle connections timeout after 5 min (seconds)
+		ch.WithPoolTimeout(30),       // Pool timeout: 30 seconds (increased for high contention)
+
 		ch.WithQuerySettings(map[string]interface{}{
 			"prefer_column_name_to_alias": 1,
 			// this could be useful for some data (but we should avoid 100% - so maybe restrict will be better)

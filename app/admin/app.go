@@ -46,6 +46,14 @@ func Initialize(ctx context.Context) *types.App {
 		logger.Fatal("Unable to establish temporal connection", zap.Error(err))
 	}
 
+	// Ensure the Temporal namespace exists (Helm chart doesn't auto-create it)
+	// Use 7 days retention to match the Helm values configuration
+	err = temporalClient.EnsureNamespace(ctx, 7*24*time.Hour)
+	if err != nil {
+		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
+	}
+	logger.Info("Temporal namespace ready", zap.String("namespace", temporalClient.Namespace))
+
 	// This will listen to workflows/activities for the ManagerQueue (head, gap, etc.)
 	managerTemporalWorker := worker.New(temporalClient.TClient, temporalClient.ManagerQueue, worker.Options{
 		MaxConcurrentWorkflowTaskPollers: 10,
