@@ -17,6 +17,16 @@ cassandra:
   # NOTE: The Helm incubator Cassandra chart doesn't support persistentVolumeClaimRetentionPolicy
   # PVCs must be manually deleted: kubectl delete pvc -l app.kubernetes.io/instance=temporal
 
+  # Enable Cassandra Prometheus exporter
+  exporter:
+    enabled: true
+    port: 5556
+  # Add Prometheus annotations for pod discovery
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5556"
+    prometheus.io/path: "/metrics"
+
 # Use Elasticsearch
 elasticsearch:
   enabled: true

@@ -8,6 +8,12 @@ clickhouse:
     whenDeleted: Delete  # Auto-delete PVCs when chart is uninstalled
     whenScaled: Retain   # Keep PVCs when scaling down (for data safety)
 
+  # Prometheus scraping annotations
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9363"
+    prometheus.io/path: "/metrics"
+
   # NOTE: HyperDX chart does NOT support extraConfigFiles or config.maxConcurrentQueries
   # To increase max_concurrent_queries, you must manually patch the ConfigMap after deployment
   # See docs/clickhouse-optimization.md for instructions
