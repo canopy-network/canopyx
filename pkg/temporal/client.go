@@ -21,10 +21,12 @@ type Client struct {
 	Namespace string
 
 	// Task Queues
-	ManagerQueue    string // manager - this is the queue for head-schedule and gap-scan or any other manager tasks in the future.
-	ReportsQueue    string // reports - this is the queue for reports, global or by chain (to be defined)
-	IndexerQueue    string // index:<chainID> - per chain queue for indexing blocks preventing a new out of data chain blocks an already up to date with a lot of missing heights.
-	IndexerOpsQueue string // admin:<chainID> - per chain operations queue (headscan, gapscan, maintenance).
+	ManagerQueue           string // manager - this is the queue for head-schedule and gap-scan or any other manager tasks in the future.
+	ReportsQueue           string // reports - this is the queue for reports, global or by chain (to be defined)
+	IndexerQueue           string // index:<chainID> - per chain queue for indexing blocks preventing a new out of data chain blocks an already up to date with a lot of missing heights. [DEPRECATED - keeping for backward compatibility]
+	IndexerLiveQueue       string // index:<chainID>:live - per chain queue for live blocks (within threshold of head)
+	IndexerHistoricalQueue string // index:<chainID>:historical - per chain queue for historical blocks (beyond threshold)
+	IndexerOpsQueue        string // admin:<chainID> - per chain operations queue (headscan, gapscan, maintenance).
 
 	// Schedule IDs
 	HeadScheduleID          string
@@ -62,10 +64,12 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		TSClient:  tClient.ScheduleClient(),
 		Namespace: ns,
 		// for now this is just hardcoded, could be configurable if we need it
-		ManagerQueue:    "manager",
-		ReportsQueue:    "reports",
-		IndexerQueue:    "index:%s",
-		IndexerOpsQueue: "admin:%s",
+		ManagerQueue:           "manager",
+		ReportsQueue:           "reports",
+		IndexerQueue:           "index:%s",           // Keep for backwards compat
+		IndexerLiveQueue:       "index:%s:live",      // NEW: Live queue for recent blocks
+		IndexerHistoricalQueue: "index:%s:historical", // NEW: Historical queue for old blocks
+		IndexerOpsQueue:        "admin:%s",
 		// schedule IDs
 		HeadScheduleID:          "headscan:%s",
 		GapScanScheduleID:       "gapscan:%s",
@@ -95,8 +99,21 @@ func (c *Client) GetManagerQueue() string { return c.ManagerQueue }
 func (c *Client) GetGlobalReportsQueue() string { return c.ReportsQueue }
 
 // GetIndexerQueue returns the indexer queue for the given chain.
+// DEPRECATED: Keep for backward compatibility, use GetIndexerLiveQueue or GetIndexerHistoricalQueue instead.
 func (c *Client) GetIndexerQueue(chainID string) string {
 	return fmt.Sprintf(c.IndexerQueue, chainID)
+}
+
+// GetIndexerLiveQueue returns the live indexer queue for the given chain.
+// This queue is for blocks within the LiveBlockThreshold of the chain head.
+func (c *Client) GetIndexerLiveQueue(chainID string) string {
+	return fmt.Sprintf(c.IndexerLiveQueue, chainID)
+}
+
+// GetIndexerHistoricalQueue returns the historical indexer queue for the given chain.
+// This queue is for blocks beyond the LiveBlockThreshold from the chain head.
+func (c *Client) GetIndexerHistoricalQueue(chainID string) string {
+	return fmt.Sprintf(c.IndexerHistoricalQueue, chainID)
 }
 
 // GetIndexerOpsQueue returns the operations queue for the given chain.

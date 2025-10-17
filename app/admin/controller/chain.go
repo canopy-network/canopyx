@@ -448,6 +448,19 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
             cs.IndexerQueue = indexerStats
             // For backward compatibility, populate deprecated Queue field with IndexerQueue
             cs.Queue = indexerStats
+
+            // Populate dual-queue fields from cache
+            // These will be 0 until dual-queue architecture is deployed
+            if cached, ok := c.App.QueueStatsCache.Load(chn.ChainID); ok {
+                // Live queue depth = total pending tasks (workflows + activities)
+                cs.LiveQueueDepth = cached.LiveQueue.PendingWorkflow + cached.LiveQueue.PendingActivity
+                cs.LiveQueueBacklogAge = cached.LiveQueue.BacklogAgeSecs
+
+                // Historical queue depth = total pending tasks (workflows + activities)
+                cs.HistoricalQueueDepth = cached.HistoricalQueue.PendingWorkflow + cached.HistoricalQueue.PendingActivity
+                cs.HistoricalQueueBacklogAge = cached.HistoricalQueue.BacklogAgeSecs
+            }
+
             out.Store(chn.ChainID, cs)
         }
     }
@@ -793,11 +806,13 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
         zap.Int("indexer_pollers", indexerStats.Pollers),
     )
 
-    // Store both in cache
+    // Store all queues in cache (including live and historical)
     c.App.QueueStatsCache.Store(chainID, admintypes.CachedQueueStats{
-        OpsQueue:     opsStats,
-        IndexerQueue: indexerStats,
-        Fetched:      time.Now(),
+        OpsQueue:        opsStats,
+        IndexerQueue:    indexerStats,
+        LiveQueue:       admintypes.QueueStatus{}, // Will be populated when dual-queue is implemented
+        HistoricalQueue: admintypes.QueueStatus{}, // Will be populated when dual-queue is implemented
+        Fetched:         time.Now(),
     })
 
     return opsStats, indexerStats, nil

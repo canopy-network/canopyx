@@ -24,16 +24,20 @@ const (
 )
 
 type App struct {
-	Worker         worker.Worker
-	OpsWorker      worker.Worker
-	TemporalClient *temporal.Client
-	Logger         *zap.Logger
+	LiveWorker       worker.Worker  // NEW: Live block indexing (optimized for low-latency)
+	HistoricalWorker worker.Worker  // NEW: Historical block indexing (optimized for throughput)
+	OpsWorker        worker.Worker  // UNCHANGED: Operations (headscan, gapscan, scheduler)
+	TemporalClient   *temporal.Client
+	Logger           *zap.Logger
 }
 
 // Start starts the worker and blocks until the context is canceled.
 func (a *App) Start(ctx context.Context) {
-	if err := a.Worker.Start(); err != nil {
-		a.Logger.Fatal("Unable to start worker", zap.Error(err))
+	if err := a.LiveWorker.Start(); err != nil {
+		a.Logger.Fatal("Unable to start live worker", zap.Error(err))
+	}
+	if err := a.HistoricalWorker.Start(); err != nil {
+		a.Logger.Fatal("Unable to start historical worker", zap.Error(err))
 	}
 	if err := a.OpsWorker.Start(); err != nil {
 		a.Logger.Fatal("Unable to start operations worker", zap.Error(err))
@@ -44,7 +48,8 @@ func (a *App) Start(ctx context.Context) {
 
 // Stop stops the worker.
 func (a *App) Stop() {
-	a.Worker.Stop()
+	a.LiveWorker.Stop()
+	a.HistoricalWorker.Stop()
 	a.OpsWorker.Stop()
 	time.Sleep(200 * time.Millisecond)
 	a.Logger.Info("さようなら!")
@@ -123,38 +128,60 @@ func Initialize(ctx context.Context) *App {
 		},
 	}
 
-	// Turn on the temporal worker to listen on chain id task queue (chain-specific workflow/activity)
-	// Configured for high-throughput parallel processing of 700k+ blocks
-	wkr := worker.New(
+	// Create Live Worker - optimized for low-latency, high-priority blocks
+	liveWorker := worker.New(
 		temporalClient.TClient,
-		temporalClient.GetIndexerQueue(chainID),
+		temporalClient.GetIndexerLiveQueue(chainID),
 		worker.Options{
-			// Pollers: Number of goroutines polling for tasks from Temporal server
-			MaxConcurrentWorkflowTaskPollers: 50,
-			MaxConcurrentActivityTaskPollers: 50,
-			// Executors: Maximum number of concurrent workflow/activity executions
-			// High limits to allow massive parallelism when processing large backlogs
-			MaxConcurrentWorkflowTaskExecutionSize: 2000, // Allow 2000 concurrent workflow executions
-			MaxConcurrentActivityExecutionSize:     5000, // Allow 5000 concurrent activity executions
+			// Lower poller count - live queue should have small backlog
+			MaxConcurrentWorkflowTaskPollers: 10,
+			MaxConcurrentActivityTaskPollers: 10,
+			// Lower execution limits - focus on throughput per block
+			MaxConcurrentWorkflowTaskExecutionSize: 100,
+			MaxConcurrentActivityExecutionSize:     200,
 			WorkerStopTimeout:                      1 * time.Minute,
 		},
 	)
 
-	// Register the workflow
-	wkr.RegisterWorkflowWithOptions(
+	// Create Historical Worker - optimized for high-throughput batch processing
+	historicalWorker := worker.New(
+		temporalClient.TClient,
+		temporalClient.GetIndexerHistoricalQueue(chainID),
+		worker.Options{
+			// Higher poller count for large backlogs
+			MaxConcurrentWorkflowTaskPollers: 50,
+			MaxConcurrentActivityTaskPollers: 50,
+			// High execution limits for parallel processing
+			MaxConcurrentWorkflowTaskExecutionSize: 2000,
+			MaxConcurrentActivityExecutionSize:     5000,
+			WorkerStopTimeout:                      1 * time.Minute,
+		},
+	)
+
+	// Register IndexBlockWorkflow on BOTH workers (same workflow, different queues)
+	liveWorker.RegisterWorkflowWithOptions(
 		workflowContext.IndexBlockWorkflow,
 		temporalworkflow.RegisterOptions{
 			Name: workflow.IndexBlockWorkflowName,
 		},
 	)
-	// Register all the activities
-	wkr.RegisterActivity(activityContext.PrepareIndexBlock)
-	wkr.RegisterActivity(activityContext.FetchBlockFromRPC)
-	wkr.RegisterActivity(activityContext.SaveBlock)
-	wkr.RegisterActivity(activityContext.IndexBlock)
-	wkr.RegisterActivity(activityContext.IndexTransactions)
-	wkr.RegisterActivity(activityContext.SaveBlockSummary)
-	wkr.RegisterActivity(activityContext.RecordIndexed)
+	historicalWorker.RegisterWorkflowWithOptions(
+		workflowContext.IndexBlockWorkflow,
+		temporalworkflow.RegisterOptions{
+			Name: workflow.IndexBlockWorkflowName,
+		},
+	)
+
+	// Register all IndexBlock activities on BOTH workers
+	for _, w := range []worker.Worker{liveWorker, historicalWorker} {
+		w.RegisterActivity(activityContext.PrepareIndexBlock)
+		w.RegisterActivity(activityContext.FetchBlockFromRPC)
+		w.RegisterActivity(activityContext.SaveBlock)
+		w.RegisterActivity(activityContext.IndexBlock)
+		w.RegisterActivity(activityContext.IndexTransactions)
+		w.RegisterActivity(activityContext.SaveBlockSummary)
+		w.RegisterActivity(activityContext.RecordIndexed)
+	}
 
 	opsWorker := worker.New(
 		temporalClient.TClient,
@@ -186,9 +213,10 @@ func Initialize(ctx context.Context) *App {
 	opsWorker.RegisterActivity(activityContext.IsSchedulerWorkflowRunning)
 
 	return &App{
-		Worker:         wkr,
-		OpsWorker:      opsWorker,
-		TemporalClient: temporalClient,
-		Logger:         logger,
+		LiveWorker:       liveWorker,
+		HistoricalWorker: historicalWorker,
+		OpsWorker:        opsWorker,
+		TemporalClient:   temporalClient,
+		Logger:           logger,
 	}
 }

@@ -58,8 +58,10 @@ type App struct {
 }
 
 type cachedQueueStats struct {
-	stats   QueueStats
-	fetched time.Time
+	stats           QueueStats // Aggregated stats for scaling decisions
+	liveStats       QueueStats // Live queue stats for visibility
+	historicalStats QueueStats // Historical queue stats for visibility
+	fetched         time.Time
 }
 
 // Initialize initializes the App.
@@ -447,20 +449,33 @@ func computeQueueHealthStatus(stats QueueStats) string {
 
 // updateQueueHealthStatus updates queue health in the database
 func (a *App) updateQueueHealthStatus(ctx context.Context, chainID, status, customMessage string) {
-	backlog := int64(0)
+	totalBacklog := int64(0)
+	liveBacklog := int64(0)
+	liveBacklogAge := 0.0
+	histBacklog := int64(0)
+	histBacklogAge := 0.0
+
 	if cached, ok := a.queueCache.Load(chainID); ok {
-		backlog = cached.stats.PendingWorkflowTasks + cached.stats.PendingActivityTasks
+		totalBacklog = cached.stats.PendingWorkflowTasks + cached.stats.PendingActivityTasks
+		liveBacklog = cached.liveStats.PendingWorkflowTasks + cached.liveStats.PendingActivityTasks
+		liveBacklogAge = cached.liveStats.BacklogAgeSeconds
+		histBacklog = cached.historicalStats.PendingWorkflowTasks + cached.historicalStats.PendingActivityTasks
+		histBacklogAge = cached.historicalStats.BacklogAgeSeconds
 	}
 
 	message := customMessage
 	if message == "" {
+		// NEW: Report both queues separately for visibility
 		switch status {
 		case "healthy":
-			message = fmt.Sprintf("Queue backlog: %d tasks (below low watermark of %d)", backlog, backlogLowWatermark)
+			message = fmt.Sprintf("Total backlog: %d tasks (below low watermark of %d) | Live queue: %d tasks (age: %.0fs) | Historical queue: %d tasks (age: %.0fs)",
+				totalBacklog, backlogLowWatermark, liveBacklog, liveBacklogAge, histBacklog, histBacklogAge)
 		case "warning":
-			message = fmt.Sprintf("Queue backlog: %d tasks (between %d and %d)", backlog, backlogLowWatermark, backlogHighWatermark)
+			message = fmt.Sprintf("Total backlog: %d tasks (between %d and %d) | Live queue: %d tasks (age: %.0fs) | Historical queue: %d tasks (age: %.0fs)",
+				totalBacklog, backlogLowWatermark, backlogHighWatermark, liveBacklog, liveBacklogAge, histBacklog, histBacklogAge)
 		case "critical":
-			message = fmt.Sprintf("Queue backlog: %d tasks (above high watermark of %d)", backlog, backlogHighWatermark)
+			message = fmt.Sprintf("Total backlog: %d tasks (above high watermark of %d) | Live queue: %d tasks (age: %.0fs) | Historical queue: %d tasks (age: %.0fs)",
+				totalBacklog, backlogHighWatermark, liveBacklog, liveBacklogAge, histBacklog, histBacklogAge)
 		default:
 			message = "Queue status unknown"
 		}
@@ -522,32 +537,104 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 	ctx, cancel := context.WithTimeout(ctx, queueRequestTimeout)
 	defer cancel()
 
-	queueName := a.Temporal.GetIndexerQueue(chainID)
+	// NEW: Get stats from BOTH queues (live and historical)
+	liveQueue := a.Temporal.GetIndexerLiveQueue(chainID)
+	historicalQueue := a.Temporal.GetIndexerHistoricalQueue(chainID)
 
-	// Use the common GetQueueStats function from temporal client
-	pendingWorkflowTasks, pendingActivityTasks, pollerCount, backlogAgeSeconds, err := a.Temporal.GetQueueStats(ctx, queueName)
-	if err != nil {
-		return QueueStats{}, err
+	// Fetch live queue stats
+	livePendingWF, livePendingAct, livePollers, liveBacklogAge, liveErr := a.Temporal.GetQueueStats(ctx, liveQueue)
+	if liveErr != nil {
+		a.Logger.Warn("failed to fetch live queue stats, continuing with historical",
+			zap.String("chain_id", chainID),
+			zap.String("queue", liveQueue),
+			zap.Error(liveErr),
+		)
+		// Set to zero on error, continue with historical queue
+		livePendingWF = 0
+		livePendingAct = 0
+		livePollers = 0
+		liveBacklogAge = 0
 	}
 
-	// Log queue stats for monitoring
+	// Fetch historical queue stats
+	histPendingWF, histPendingAct, histPollers, histBacklogAge, histErr := a.Temporal.GetQueueStats(ctx, historicalQueue)
+	if histErr != nil {
+		a.Logger.Warn("failed to fetch historical queue stats",
+			zap.String("chain_id", chainID),
+			zap.String("queue", historicalQueue),
+			zap.Error(histErr),
+		)
+		// Set to zero on error
+		histPendingWF = 0
+		histPendingAct = 0
+		histPollers = 0
+		histBacklogAge = 0
+	}
+
+	// Return error only if BOTH queues failed
+	if liveErr != nil && histErr != nil {
+		return QueueStats{}, fmt.Errorf("both queues failed: live=%v, historical=%v", liveErr, histErr)
+	}
+
+	// Aggregate stats for scaling decisions
+	totalPendingWF := livePendingWF + histPendingWF
+	totalPendingAct := livePendingAct + histPendingAct
+	totalPollers := livePollers + histPollers
+
+	// Use max backlog age (worst case)
+	maxBacklogAge := liveBacklogAge
+	if histBacklogAge > maxBacklogAge {
+		maxBacklogAge = histBacklogAge
+	}
+
+	// Log both queues separately for visibility
 	a.Logger.Debug("queue stats fetched",
 		zap.String("chain_id", chainID),
-		zap.String("queue_name", queueName),
-		zap.Int64("pending_workflow_tasks", pendingWorkflowTasks),
-		zap.Int64("pending_activity_tasks", pendingActivityTasks),
-		zap.Int("poller_count", pollerCount),
-		zap.Float64("backlog_age_seconds", backlogAgeSeconds),
+		zap.String("live_queue", liveQueue),
+		zap.Int64("live_queue_wf", livePendingWF),
+		zap.Int64("live_queue_act", livePendingAct),
+		zap.Int("live_pollers", livePollers),
+		zap.Float64("live_backlog_age_seconds", liveBacklogAge),
+		zap.String("historical_queue", historicalQueue),
+		zap.Int64("historical_queue_wf", histPendingWF),
+		zap.Int64("historical_queue_act", histPendingAct),
+		zap.Int("historical_pollers", histPollers),
+		zap.Float64("historical_backlog_age_seconds", histBacklogAge),
+		zap.Int64("total_pending_wf", totalPendingWF),
+		zap.Int64("total_pending_act", totalPendingAct),
+		zap.Int("total_pollers", totalPollers),
+		zap.Float64("max_backlog_age_seconds", maxBacklogAge),
 	)
 
+	// Use aggregated stats (backward compatible with scaling logic)
 	stats := QueueStats{
-		PendingWorkflowTasks: pendingWorkflowTasks,
-		PendingActivityTasks: pendingActivityTasks,
-		PollerCount:          pollerCount,
-		BacklogAgeSeconds:    backlogAgeSeconds,
+		PendingWorkflowTasks: totalPendingWF,
+		PendingActivityTasks: totalPendingAct,
+		PollerCount:          totalPollers,
+		BacklogAgeSeconds:    maxBacklogAge,
 	}
 
-	a.queueCache.Store(chainID, cachedQueueStats{stats: stats, fetched: time.Now()})
+	// Store individual queue stats for visibility
+	liveStats := QueueStats{
+		PendingWorkflowTasks: livePendingWF,
+		PendingActivityTasks: livePendingAct,
+		PollerCount:          livePollers,
+		BacklogAgeSeconds:    liveBacklogAge,
+	}
+
+	historicalStats := QueueStats{
+		PendingWorkflowTasks: histPendingWF,
+		PendingActivityTasks: histPendingAct,
+		PollerCount:          histPollers,
+		BacklogAgeSeconds:    histBacklogAge,
+	}
+
+	a.queueCache.Store(chainID, cachedQueueStats{
+		stats:           stats,
+		liveStats:       liveStats,
+		historicalStats: historicalStats,
+		fetched:         time.Now(),
+	})
 	return stats, nil
 }
 
