@@ -329,9 +329,46 @@ All core features have been implemented:
 - [x] Canopy source path configuration with expansion
 - [x] Development settings (auto_register_chain, indexer_tag, indexer_build_mode)
 
-### Pending Work
+### Resource Limits (Completed)
 
-- [ ] Apply resource limits from profile configuration
-  - This will require updating Helm values and K8s manifests
-  - Resource limits are defined in config but not yet applied
-  - Future enhancement: dynamically set replica counts and resource limits
+✅ **Implemented** - Resource limits are now dynamically applied from profile configuration:
+
+**Helm Charts (ClickHouse, Temporal)**
+- ClickHouse: CPU/memory limits and requests via `--set` flags
+- Temporal: Cassandra replicas, heap size, and memory limits
+- Temporal: Elasticsearch replicas, CPU/memory limits
+- Applied automatically based on selected profile
+
+**Kustomize Deployments (CanopyX Services)**
+- Admin API: CPU/memory limits from `canopyx.admin_*`
+- Query API: CPU/memory limits from `canopyx.query_*`
+- Controller & Admin Web: Limits defined but not yet applied (future enhancement)
+- Uses `decode_yaml_stream()` / `encode_yaml_stream()` pattern for dynamic patching
+
+**How It Works**
+```starlark
+# Load Kustomize output
+admin_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin/overlays/local"))
+
+# Find and patch Deployment
+for o in admin_objects:
+    if o['kind'] == 'Deployment' and o['metadata']['name'] == 'canopyx-admin':
+        container['resources'] = {
+            'limits': {'cpu': admin_cpu, 'memory': admin_mem},
+            'requests': {'cpu': admin_cpu // 2, 'memory': admin_mem // 2}
+        }
+
+# Re-encode and apply
+k8s_yaml(encode_yaml_stream(admin_objects))
+```
+
+**Profile Resource Allocations**
+
+| Component | Minimal | Development | Production |
+|-----------|---------|-------------|------------|
+| **ClickHouse** | 2Gi / 1CPU | 4Gi / 2CPU | 8Gi / 4CPU |
+| **Cassandra** | 6G heap, 1 replica | 12G heap, 1 replica | 24G heap, 3 replicas |
+| **Elasticsearch** | 1Gi / 1CPU, 1 replica | 2Gi / 2CPU, 1 replica | 4Gi / 4CPU, 3 replicas |
+| **Admin API** | 512Mi / 0.5CPU | 1Gi / 1CPU | 2Gi / 2CPU |
+| **Query API** | 512Mi / 0.5CPU | 1Gi / 1CPU | 2Gi / 2CPU |
+| **Total Estimate** | ~4GB RAM | ~8GB RAM | ~16GB+ RAM |
