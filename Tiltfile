@@ -325,7 +325,7 @@ if components.get('monitoring', False):
             if os.path.exists(dashboard_path):
                 dashboard_name = os.path.basename(dashboard_path)
                 print("Loading Grafana dashboard: %s" % dashboard_path)
-                dashboard_content = read_file(dashboard_path)
+                dashboard_content = str(read_file(dashboard_path))
                 dashboard_configmap['data'][dashboard_name] = dashboard_content
 
         grafana_objects.append(dashboard_configmap)

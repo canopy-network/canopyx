@@ -20,6 +20,7 @@ cassandra:
   # Enable Cassandra Prometheus exporter
   exporter:
     enabled: true
+    servicemonitor: false  # Disable ServiceMonitor, use pod annotations instead
     port: 5556
   # Add Prometheus annotations for pod discovery
   podAnnotations:
