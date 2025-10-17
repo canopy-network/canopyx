@@ -665,3 +665,19 @@ k8s_custom_deploy(
 )
 
 k8s_resource('cleanup-controller-spawns', resource_deps=['canopyx-controller'], labels=['no-op'])
+
+# Cleanup Temporal persistent data (Cassandra + Elasticsearch PVCs)
+# This ensures fresh data on each tilt up by removing old workflow/visibility data
+k8s_custom_deploy(
+  'cleanup-temporal-data',
+  apply_cmd='true',
+  delete_cmd='''
+    echo "Cleaning up Temporal persistent data (Cassandra + Elasticsearch PVCs)..." && \
+    kubectl delete pvc -l app.kubernetes.io/instance=temporal,app.kubernetes.io/component=cassandra --ignore-not-found --wait && \
+    kubectl delete pvc -l app=elasticsearch-master --ignore-not-found --wait && \
+    echo "Temporal data cleanup complete"
+  ''',
+  deps=[],
+)
+
+k8s_resource('cleanup-temporal-data', resource_deps=['temporal'], labels=['no-op'])
