@@ -7,7 +7,6 @@ import (
     "fmt"
     "net/http"
     "strings"
-    "sync"
     "time"
 
     admintypes "github.com/canopy-network/canopyx/app/admin/types"
@@ -17,6 +16,7 @@ import (
     indexerworkflow "github.com/canopy-network/canopyx/pkg/indexer/workflow"
     "github.com/canopy-network/canopyx/pkg/rpc"
     "github.com/canopy-network/canopyx/pkg/utils"
+    "github.com/alitto/pond/v2"
     "github.com/go-jose/go-jose/v4/json"
     "github.com/gorilla/mux"
     "github.com/puzpuzpuz/xsync/v4"
@@ -344,33 +344,96 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
         }
     }
 
-    // 4) Heads via RPC (best-effort, bounded concurrency)
-    sem := make(chan struct{}, 8)
-    var wg sync.WaitGroup
+    // 4) Fetch heads via RPC and gaps in parallel using pond worker pool
+    // Create worker pool for concurrent fetching (8 workers, queue size to accommodate all tasks)
+    maxWorkers := 8
+    totalTasks := len(chains) * 2 // head + gaps for each chain
+    queueSize := totalTasks
+    if queueSize < 16 {
+        queueSize = 16 // minimum queue size
+    }
+
+    pool := pond.NewPool(maxWorkers, pond.WithQueueSize(queueSize))
+    group := pool.NewGroupContext(ctx)
+    groupCtx := group.Context()
+
+    // Submit head fetching tasks
     for _, chn := range chains {
         chn := chn
-        wg.Add(1)
-        sem <- struct{}{}
-        go func() {
-            defer wg.Done()
-            defer func() { <-sem }()
-            ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+        group.Submit(func() {
+            if err := groupCtx.Err(); err != nil {
+                return
+            }
+
+            fetchCtx, cancel := context.WithTimeout(groupCtx, 3*time.Second)
             defer cancel()
 
             cli := rpc.NewHTTPWithOpts(rpc.Opts{Endpoints: chn.RPCEndpoints})
-            head, err := cli.ChainHead(ctx)
+            head, err := cli.ChainHead(fetchCtx)
             if err != nil {
                 return
             }
+
             cs, ok := out.Load(chn.ChainID)
             if !ok {
                 cs = admintypes.ChainStatus{ChainID: chn.ChainID}
             }
             cs.Head = head
             out.Store(chn.ChainID, cs)
-        }()
+        })
     }
-    wg.Wait()
+
+    // Submit gap fetching tasks
+    for _, chn := range chains {
+        chn := chn
+        group.Submit(func() {
+            if err := groupCtx.Err(); err != nil {
+                return
+            }
+
+            // Fetch gaps from database
+            gaps, err := c.App.AdminDB.FindGaps(groupCtx, chn.ChainID)
+            if err != nil {
+                c.App.Logger.Warn("failed to fetch gaps",
+                    zap.String("chain_id", chn.ChainID),
+                    zap.Error(err))
+                return
+            }
+
+            // Calculate gap summary statistics
+            var missingCount uint64
+            var largestGapStart, largestGapEnd uint64
+            var largestGapSize uint64
+
+            for _, gap := range gaps {
+                gapSize := gap.To - gap.From + 1
+                missingCount += gapSize
+
+                // Track largest gap
+                if gapSize > largestGapSize {
+                    largestGapSize = gapSize
+                    largestGapStart = gap.From
+                    largestGapEnd = gap.To
+                }
+            }
+
+            // Update chain status with gap information
+            cs, ok := out.Load(chn.ChainID)
+            if !ok {
+                cs = admintypes.ChainStatus{ChainID: chn.ChainID}
+            }
+            cs.MissingBlocksCount = missingCount
+            cs.GapRangesCount = len(gaps)
+            cs.LargestGapStart = largestGapStart
+            cs.LargestGapEnd = largestGapEnd
+            out.Store(chn.ChainID, cs)
+        })
+    }
+
+    // Wait for all head and gap fetching tasks to complete
+    if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+        c.App.Logger.Warn("some chain status tasks failed", zap.Error(err))
+    }
 
     // 5) Fetch queue metrics for both ops and indexer queues
     if c.App.TemporalClient != nil {
@@ -410,6 +473,17 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
         cs.ReindexHistory = records
         out.Store(chn.ChainID, cs)
     }
+
+    // 6) Calculate IsLiveSync for each chain after all data has been loaded
+    // IsLiveSync indicates whether the chain is caught up with the latest blocks (within 2 blocks of head)
+    out.Range(func(key string, cs admintypes.ChainStatus) bool {
+        if cs.Head > 0 && cs.LastIndexed > 0 {
+            // Chain is considered "live synced" if last indexed is within 2 blocks of head
+            cs.IsLiveSync = (cs.Head - cs.LastIndexed <= 2)
+            out.Store(key, cs)
+        }
+        return true
+    })
 
     // Convert xsync.Map to regular map for JSON encoding
     result := make(map[string]admintypes.ChainStatus)
@@ -769,6 +843,23 @@ func (c *Controller) HandleChainPatch(w http.ResponseWriter, r *http.Request) {
             }
         }
         cur.RPCEndpoints = utils.Dedup(cleaned)
+    }
+
+    // Update MinReplicas if provided (non-zero value)
+    if in.MinReplicas > 0 {
+        cur.MinReplicas = in.MinReplicas
+    }
+
+    // Update MaxReplicas if provided (non-zero value)
+    if in.MaxReplicas > 0 {
+        cur.MaxReplicas = in.MaxReplicas
+    }
+
+    // Validate that MaxReplicas >= MinReplicas after updates
+    if cur.MaxReplicas < cur.MinReplicas {
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{"error": "max_replicas must be greater than or equal to min_replicas"})
+        return
     }
 
     // 4) Persist (ReplacingMergeTree upsert)

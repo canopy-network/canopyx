@@ -25,6 +25,13 @@ type ChainStatus struct {
 	IndexerQueue   QueueStatus    `json:"indexer_queue"` // Indexer queue metrics (block indexing)
 	ReindexHistory []ReindexEntry `json:"reindex_history,omitempty"`
 
+	// Gap/Missing Block Information - for historical indexing progress display
+	MissingBlocksCount uint64 `json:"missing_blocks_count"` // Total number of missing blocks across all gaps
+	GapRangesCount     int    `json:"gap_ranges_count"`     // Number of gap ranges (contiguous missing block segments)
+	LargestGapStart    uint64 `json:"largest_gap_start"`    // Start height of the largest gap (0 if no gaps)
+	LargestGapEnd      uint64 `json:"largest_gap_end"`      // End height of the largest gap (0 if no gaps)
+	IsLiveSync         bool   `json:"is_live_sync"`         // True if last indexed is within 2 blocks of head
+
 	// Health Status - populated from stored chain health fields
 	Health           HealthInfo `json:"health"`            // overall health status
 	RPCHealth        HealthInfo `json:"rpc_health"`        // RPC endpoint health (from headscan)
