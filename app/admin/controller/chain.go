@@ -374,6 +374,23 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
                 return
             }
 
+            // Verify head block is actually available before using it
+            // This prevents scheduling workflows for blocks that aren't ready yet
+            // Same logic as GetLatestHead activity in pkg/indexer/activity/ops.go
+            if head > 0 {
+                _, err := cli.BlockByHeight(fetchCtx, head)
+                if err != nil {
+                    // Head block not available yet, use head-1 instead
+                    c.App.Logger.Debug("Head block not yet available in HandleChainStatus, using head-1",
+                        zap.String("chain_id", chn.ChainID),
+                        zap.Uint64("reported_head", head),
+                        zap.Uint64("adjusted_head", head-1),
+                        zap.Error(err),
+                    )
+                    head = head - 1
+                }
+            }
+
             cs, ok := out.Load(chn.ChainID)
             if !ok {
                 cs = admintypes.ChainStatus{ChainID: chn.ChainID}
@@ -670,10 +687,50 @@ func (c *Controller) enqueueIndexBlock(ctx context.Context, chainID string, heig
         return "", "", fmt.Errorf("temporal client unavailable")
     }
 
+    // Get latest head to determine queue routing (same logic as StartIndexWorkflow activity)
+    var taskQueue string
+    latest, err := c.App.AdminDB.LastIndexed(ctx, chainID)
+    if err != nil {
+        // Failed to get latest, check if we can get it from RPC
+        ch, err := c.App.AdminDB.GetChain(ctx, chainID)
+        if err == nil && len(ch.RPCEndpoints) > 0 {
+            cli := rpc.NewHTTPWithOpts(rpc.Opts{Endpoints: ch.RPCEndpoints})
+            if head, err := cli.ChainHead(ctx); err == nil {
+                latest = head
+            }
+        }
+        // If still no latest, default to historical queue for manual reindex
+        if latest == 0 {
+            c.App.Logger.Debug("Unable to determine latest head for queue routing, defaulting to historical queue",
+                zap.String("chain_id", chainID),
+                zap.Uint64("height", height),
+            )
+        }
+    }
+
+    // Determine target queue based on block age using the same logic as ops.go
+    if indexertypes.IsLiveBlock(latest, height) {
+        taskQueue = tc.GetIndexerLiveQueue(chainID)
+        c.App.Logger.Debug("Manual reindex routing to live queue",
+            zap.String("chain_id", chainID),
+            zap.String("task_queue", taskQueue),
+            zap.Uint64("latest", latest),
+            zap.Uint64("height", height),
+        )
+    } else {
+        taskQueue = tc.GetIndexerHistoricalQueue(chainID)
+        c.App.Logger.Debug("Manual reindex routing to historical queue",
+            zap.String("chain_id", chainID),
+            zap.String("task_queue", taskQueue),
+            zap.Uint64("latest", latest),
+            zap.Uint64("height", height),
+        )
+    }
+
     input := indexertypes.IndexBlockInput{ChainID: chainID, Height: height, Reindex: reindex, PriorityKey: 1}
     options := client.StartWorkflowOptions{
         ID:        c.App.TemporalClient.GetIndexBlockWorkflowIdWithTime(chainID, height),
-        TaskQueue: tc.GetIndexerQueue(chainID),
+        TaskQueue: taskQueue, // Use the dynamically determined queue
         RetryPolicy: &sdktemporal.RetryPolicy{
             InitialInterval:    time.Second,
             BackoffCoefficient: 1.2,
@@ -749,23 +806,88 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
         opsChannel <- queueResult{stats: stats, err: nil}
     }()
 
-    // Query indexer queue using the new common function
+    // Query BOTH live and historical queues and aggregate them for backward compatibility
     go func() {
-        queueName := temporalClient.GetIndexerQueue(chainID)
-        c.App.Logger.Debug("querying indexer queue", zap.String("chain_id", chainID), zap.String("queue_name", queueName))
+        // Get stats from both live and historical queues
+        liveQueue := temporalClient.GetIndexerLiveQueue(chainID)
+        historicalQueue := temporalClient.GetIndexerHistoricalQueue(chainID)
 
-        // Use the common GetQueueStats function with enhanced API
-        pendingWorkflows, pendingActivities, pollerCount, backlogAge, err := temporalClient.GetQueueStats(reqCtx, queueName)
-        if err != nil {
-            indexerChannel <- queueResult{stats: indexerStats, err: err}
+        c.App.Logger.Debug("querying both indexer queues",
+            zap.String("chain_id", chainID),
+            zap.String("live_queue", liveQueue),
+            zap.String("historical_queue", historicalQueue))
+
+        // Query live queue
+        livePendingWF, livePendingAct, livePollers, liveBacklogAge, liveErr := temporalClient.GetQueueStats(reqCtx, liveQueue)
+        if liveErr != nil {
+            c.App.Logger.Warn("failed to query live queue stats",
+                zap.String("chain_id", chainID),
+                zap.String("queue", liveQueue),
+                zap.Error(liveErr))
+            // Set to zero on error, continue with historical
+            livePendingWF = 0
+            livePendingAct = 0
+            livePollers = 0
+            liveBacklogAge = 0
+        }
+
+        // Query historical queue
+        histPendingWF, histPendingAct, histPollers, histBacklogAge, histErr := temporalClient.GetQueueStats(reqCtx, historicalQueue)
+        if histErr != nil {
+            c.App.Logger.Warn("failed to query historical queue stats",
+                zap.String("chain_id", chainID),
+                zap.String("queue", historicalQueue),
+                zap.Error(histErr))
+            // Set to zero on error
+            histPendingWF = 0
+            histPendingAct = 0
+            histPollers = 0
+            histBacklogAge = 0
+        }
+
+        // Return error only if BOTH queues failed
+        if liveErr != nil && histErr != nil {
+            indexerChannel <- queueResult{
+                stats: indexerStats,
+                err: fmt.Errorf("both queues failed: live=%v, historical=%v", liveErr, histErr),
+            }
             return
         }
 
+        // Aggregate stats from both queues
+        totalPendingWF := livePendingWF + histPendingWF
+        totalPendingAct := livePendingAct + histPendingAct
+        totalPollers := livePollers + histPollers
+
+        // Use max backlog age (worst case)
+        maxBacklogAge := liveBacklogAge
+        if histBacklogAge > maxBacklogAge {
+            maxBacklogAge = histBacklogAge
+        }
+
+        // Store individual queue stats in cache for visibility
+        if cached, ok := c.App.QueueStatsCache.Load(chainID); ok {
+            cached.LiveQueue = admintypes.QueueStatus{
+                PendingWorkflow: livePendingWF,
+                PendingActivity: livePendingAct,
+                Pollers:         livePollers,
+                BacklogAgeSecs:  liveBacklogAge,
+            }
+            cached.HistoricalQueue = admintypes.QueueStatus{
+                PendingWorkflow: histPendingWF,
+                PendingActivity: histPendingAct,
+                Pollers:         histPollers,
+                BacklogAgeSecs:  histBacklogAge,
+            }
+            c.App.QueueStatsCache.Store(chainID, cached)
+        }
+
+        // Return aggregated stats for backward compatibility
         stats := admintypes.QueueStatus{
-            PendingWorkflow: pendingWorkflows,
-            PendingActivity: pendingActivities,
-            Pollers:         pollerCount,
-            BacklogAgeSecs:  backlogAge,
+            PendingWorkflow: totalPendingWF,
+            PendingActivity: totalPendingAct,
+            Pollers:         totalPollers,
+            BacklogAgeSecs:  maxBacklogAge,
         }
         indexerChannel <- queueResult{stats: stats, err: nil}
     }()
@@ -784,12 +906,13 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
         return opsStats, indexerStats, fmt.Errorf("failed to describe ops queue: %w", opsResult.err)
     }
     if indexerResult.err != nil {
-        c.App.Logger.Error("failed to describe indexer queue",
+        c.App.Logger.Error("failed to describe indexer queues",
             zap.String("chain_id", chainID),
-            zap.String("queue_name", temporalClient.GetIndexerQueue(chainID)),
+            zap.String("live_queue", temporalClient.GetIndexerLiveQueue(chainID)),
+            zap.String("historical_queue", temporalClient.GetIndexerHistoricalQueue(chainID)),
             zap.Error(indexerResult.err),
         )
-        return opsStats, indexerStats, fmt.Errorf("failed to describe indexer queue: %w", indexerResult.err)
+        return opsStats, indexerStats, fmt.Errorf("failed to describe indexer queues: %w", indexerResult.err)
     }
 
     opsStats = opsResult.stats

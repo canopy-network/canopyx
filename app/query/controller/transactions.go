@@ -31,8 +31,11 @@ func (c *Controller) HandleTransactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Convert SortOrder to bool (true = DESC, false = ASC)
+	sortDesc := page.Sort == SortOrderDesc
+
 	// Query with limit+1 to detect if there are more pages
-	rows, err := store.QueryTransactions(ctx, page.Cursor, page.Limit+1)
+	rows, err := store.QueryTransactions(ctx, page.Cursor, page.Limit+1, sortDesc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -74,8 +77,11 @@ func (c *Controller) HandleTransactionsRaw(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Convert SortOrder to bool (true = DESC, false = ASC)
+	sortDesc := page.Sort == SortOrderDesc
+
 	// Query with limit+1 to detect if there are more pages
-	rows, err := store.QueryTransactionsRaw(ctx, page.Cursor, page.Limit+1)
+	rows, err := store.QueryTransactionsRaw(ctx, page.Cursor, page.Limit+1, sortDesc)
 	if err != nil {
 		c.App.Logger.Error("QueryTransactionsRaw failed", zap.Error(err), zap.String("chainID", chainID))
 		writeError(w, http.StatusInternalServerError, "query failed")

@@ -61,6 +61,37 @@ mysql:
 # Server config
 server:
   replicaCount: 3  # Scale to 3 replicas for higher throughput
+
+  # Add Prometheus annotations for all Temporal services (frontend, history, matching, worker)
+  # All services expose metrics on port 9090 by default
+  frontend:
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+      prometheus.io/job: "temporal-frontend"
+
+  history:
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+      prometheus.io/job: "temporal-history"
+
+  matching:
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+      prometheus.io/job: "temporal-matching"
+
+  worker:
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+      prometheus.io/job: "temporal-worker"
+
   config:
     numHistoryShards: 512
 

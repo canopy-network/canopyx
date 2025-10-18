@@ -21,7 +21,8 @@ type Transaction struct {
 	TxHash string `ch:"tx_hash" json:"tx_hash"`
 
 	// Time
-	Time time.Time `ch:"time,type:DateTime64(6)" json:"time"`
+	Time       time.Time `ch:"time,type:DateTime64(6)" json:"time"`
+	HeightTime time.Time `ch:"height_time,type:DateTime64(6)" json:"height_time"` // Block timestamp for time-range queries
 
 	// Classification
 	MessageType string `ch:"message_type,lc" json:"message_type"` // LowCardinality(String)
@@ -45,11 +46,13 @@ type Transaction struct {
 type TransactionRaw struct {
 	ch.CHModel `ch:"table:txs_raw"`
 
-	Height    uint64  `ch:"height"`
-	TxHash    string  `ch:"tx_hash"`
-	MsgRaw    *string `ch:"msg_raw"` // compact JSON for unknown/varied payloads
-	PublicKey *string `ch:"public_key"`
-	Signature *string `ch:"signature"`
+	Height     uint64    `ch:"height"`
+	TxHash     string    `ch:"tx_hash"`
+	HeightTime time.Time `ch:"height_time,type:DateTime64(6)"` // Block timestamp for time-range queries
+	MsgRaw     *string   `ch:"msg_raw"`                        // compact JSON for unknown/varied payloads
+	PublicKey  *string   `ch:"public_key"`
+	Signature  *string   `ch:"signature"`
+	CreatedAt  time.Time `ch:"created_at,default:now()"`
 }
 
 // ---------------------------
@@ -73,9 +76,10 @@ func InitTransactions(ctx context.Context, db *ch.DB, dbName string) error {
 	// Raw sidecar with TTL (use DDL to express TTL cleanly)
 	ddlRaw := fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS "%[1]s"."txs_raw" (
-  height    UInt64,
-  tx_hash   String,
-  msg_raw   Nullable(String),
+  height     UInt64,
+  tx_hash    String,
+  height_time DateTime64(6),
+  msg_raw    Nullable(String),
   public_key Nullable(String),
   signature  Nullable(String),
   created_at DateTime DEFAULT now()

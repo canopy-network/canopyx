@@ -35,3 +35,8 @@ AGENTS.md
 .gocache
 .pnpm-store
 
+# Local config
+tilt-config.yaml
+
+# Research/planning docs
+docs/research/

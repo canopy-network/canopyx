@@ -111,26 +111,24 @@ local_resource(
   labels=['clickhouse'],
 )
 
-k8s_attach(
-    name="clickhouse-web",
-    obj="deployment/clickhouse-hdx-oss-v2-app",
-    port_forwards=["%s:3000" % get_port('clickhouse_web', 8081)],
-    resource_deps=["clickhouse"],
-    labels=['clickhouse'],
+# Patch ClickHouse deployment with Prometheus scrape annotations
+local_resource(
+  'clickhouse-prometheus-patch',
+  cmd='''
+    echo "Adding Prometheus scrape annotations to ClickHouse deployment..."
+    kubectl patch deployment clickhouse-hdx-oss-v2-clickhouse -p '{"spec":{"template":{"metadata":{"annotations":{"prometheus.io/scrape":"true","prometheus.io/port":"9363","prometheus.io/path":"/metrics"}}}}}' && \\
+    echo "Prometheus annotations applied successfully!"
+  ''',
+  resource_deps=['clickhouse-config-patch'],
+  labels=['clickhouse'],
 )
 
+# HyperDX web UI, MongoDB, and OTEL collector are disabled in clickhouse-values.yaml
+# Only attach to the ClickHouse server itself
 k8s_attach(
     name="clickhouse-server",
     obj="deployment/clickhouse-hdx-oss-v2-clickhouse",
     port_forwards=["%s:8123" % get_port('clickhouse_server', 8123), "%s:9000" % get_port('clickhouse_native', 9000)],
-    resource_deps=["clickhouse"],
-    labels=['clickhouse'],
-)
-
-k8s_attach(
-    name="clickhouse-mongodb",
-    obj="deployment/clickhouse-hdx-oss-v2-mongodb",
-    port_forwards=["27017:27017"],
     resource_deps=["clickhouse"],
     labels=['clickhouse'],
 )
@@ -272,6 +270,19 @@ if components.get('monitoring', False):
         labels=['monitoring'],
     )
 
+    k8s_custom_deploy(
+      'cleanup-prometheus-data',
+      apply_cmd='true',
+      delete_cmd='''
+        echo "Cleaning up Prometheus persistent data..." && \
+        kubectl delete pvc -l app.kubernetes.io/name=prometheus --ignore-not-found --wait
+        echo "Prometheus data cleanup complete"
+      ''',
+      deps=[],
+    )
+
+    k8s_resource('cleanup-prometheus-data', resource_deps=['prometheus'], labels=['no-op'])
+
     # Load Grafana manifests and apply resource limits
     grafana_objects = decode_yaml_stream(kustomize("./deploy/k8s/grafana/overlays/local"))
 
@@ -364,6 +375,7 @@ docker_build_with_restart(
     dockerfile="./Dockerfile.admin",
     entrypoint=["/app/admin"],
     live_update=[sync("bin/admin", "/app/admin")],
+    ignore=['web/', 'docs/*.md', '*.png', '*.md', 'deploy/'],
 )
 
 # Load admin manifests and apply resource limits from profile
@@ -424,6 +436,7 @@ if components.get('query', True):
         dockerfile="./Dockerfile.query",
         entrypoint=["/app/query"],
         live_update=[sync("bin/query", "/app/query")],
+        ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
     )
 
     # Load query manifests and apply resource limits from profile
@@ -540,6 +553,7 @@ docker_build_with_restart(
     dockerfile="./Dockerfile.controller",
     entrypoint=["/app/controller"],
     live_update=[sync("bin/controller", "/app/controller")],
+    ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
 )
 
 # Load controller manifests and apply resource limits from profile
@@ -663,7 +677,7 @@ if components.get('canopy_node', False) and os.path.exists(canopy_path):
             name="add-canopy-local",
             cmd="""
             for i in {1..30}; do
-              if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["https://node1.canopy.us.nodefleet.net/rpc"], "image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":6}' 2>/dev/null; then
+              if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["http://canopy-node.default.svc.cluster.local:50002"], "image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
                 echo "Successfully registered canopy_local chain"
                 exit 0
               fi
@@ -758,16 +772,16 @@ k8s_custom_deploy(
 
 k8s_resource('cleanup-controller-spawns', resource_deps=['canopyx-controller'], labels=['no-op'])
 
-# Cleanup Temporal persistent data (Cassandra + Elasticsearch PVCs)
+# Cleanup persistent data which are not deleted by helm charts
 # This ensures fresh data on each tilt up by removing old workflow/visibility data
 k8s_custom_deploy(
   'cleanup-temporal-data',
   apply_cmd='true',
   delete_cmd='''
     echo "Cleaning up Temporal persistent data (Cassandra + Elasticsearch PVCs)..." && \
-    kubectl delete pvc -l app.kubernetes.io/instance=temporal,app.kubernetes.io/component=cassandra --ignore-not-found --wait && \
-    kubectl delete pvc -l app=elasticsearch-master --ignore-not-found --wait && \
-    echo "Temporal data cleanup complete"
+    kubectl delete pvc -l app=cassandra --ignore-not-found && \
+    kubectl delete pvc -l app=elasticsearch-master --ignore-not-found && \
+    echo "Temporal data cleanup initiated (will complete in background)"
   ''',
   deps=[],
 )

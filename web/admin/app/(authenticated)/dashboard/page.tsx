@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { apiFetch } from '../../lib/api'
 import { useToast } from '../../components/ToastProvider'
 import CreateChainDialog from '../../components/CreateChainDialog'
+import { QueueHealthBadge } from '../../components/QueueHealthBadge'
 
 // Updated types to match new API response
 type QueueStatus = {
@@ -41,6 +42,10 @@ type ChainStatus = {
   queue: QueueStatus // Deprecated
   ops_queue: QueueStatus // NEW: Ops queue
   indexer_queue: QueueStatus // NEW: Indexer queue
+  live_queue_depth: number // Live queue pending tasks
+  live_queue_backlog_age: number // Live queue oldest task age in seconds
+  historical_queue_depth: number // Historical queue pending tasks
+  historical_queue_backlog_age: number // Historical queue oldest task age in seconds
   reindex_history?: ReindexEntry[]
   health: HealthInfo
   rpc_health: HealthInfo
@@ -405,8 +410,8 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Stats Grid - 6 cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {/* Stats Grid - 4 cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <div className="card">
           <p className="text-xs font-medium text-slate-400">Total Chains</p>
           <p className="mt-2 text-2xl font-bold text-white">{totalChains}</p>
@@ -418,25 +423,13 @@ export default function DashboardPage() {
         </div>
 
         <div className="card">
-          <p className="text-xs font-medium text-slate-400">Avg Progress</p>
-          <p className="mt-2 text-2xl font-bold text-indigo-400">{avgProgress}%</p>
+          <p className="text-xs font-medium text-slate-400">Total Pending Workflows</p>
+          <p className="mt-2 text-2xl font-bold text-amber-400">{formatNumber(totalOpsQueue + totalIndexerQueue)}</p>
         </div>
 
         <div className="card">
           <p className="text-xs font-medium text-slate-400">With Issues</p>
           <p className="mt-2 text-2xl font-bold text-rose-400">{chainsWithIssues}</p>
-        </div>
-
-        <div className="card">
-          <p className="text-xs font-medium text-slate-400">Ops Queue</p>
-          <p className="mt-2 text-2xl font-bold text-amber-400">{formatNumber(totalOpsQueue)}</p>
-        </div>
-
-        <div className="card">
-          <p className="text-xs font-medium text-slate-400">Indexer Queue</p>
-          <p className="mt-2 text-2xl font-bold text-purple-400">
-            {formatNumber(totalIndexerQueue)}
-          </p>
         </div>
       </div>
 
@@ -513,31 +506,6 @@ export default function DashboardPage() {
                   <th className="w-12"></th>
                   <th>
                     <button
-                      onClick={() => handleSort('health')}
-                      className="flex items-center gap-1 hover:text-white"
-                    >
-                      Status
-                      {sortField === 'health' && (
-                        <svg
-                          className={`h-3 w-3 transition-transform ${
-                            sortDirection === 'desc' ? 'rotate-180' : ''
-                          }`}
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M5 15l7-7 7 7"
-                          />
-                        </svg>
-                      )}
-                    </button>
-                  </th>
-                  <th>
-                    <button
                       onClick={() => handleSort('name')}
                       className="flex items-center gap-1 hover:text-white"
                     >
@@ -566,7 +534,33 @@ export default function DashboardPage() {
                       onClick={() => handleSort('last_indexed')}
                       className="flex items-center gap-1 hover:text-white"
                     >
-                      Progress
+                      Latest Indexed
+                      {sortField === 'last_indexed' && (
+                        <svg
+                          className={`h-3 w-3 transition-transform ${
+                            sortDirection === 'desc' ? 'rotate-180' : ''
+                          }`}
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M5 15l7-7 7 7"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                  </th>
+                  <th className="text-center">Latest Head</th>
+                  <th>
+                    <button
+                      onClick={() => handleSort('last_indexed')}
+                      className="flex items-center gap-1 hover:text-white"
+                    >
+                      Sync Progress
                       {sortField === 'last_indexed' && (
                         <svg
                           className={`h-3 w-3 transition-transform ${
@@ -588,11 +582,11 @@ export default function DashboardPage() {
                   </th>
                   <th>
                     <button
-                      onClick={() => handleSort('ops_queue')}
+                      onClick={() => handleSort('health')}
                       className="flex items-center gap-1 hover:text-white"
                     >
-                      Ops Queue
-                      {sortField === 'ops_queue' && (
+                      Overall Health
+                      {sortField === 'health' && (
                         <svg
                           className={`h-3 w-3 transition-transform ${
                             sortDirection === 'desc' ? 'rotate-180' : ''
@@ -611,33 +605,7 @@ export default function DashboardPage() {
                       )}
                     </button>
                   </th>
-                  <th>
-                    <button
-                      onClick={() => handleSort('indexer_queue')}
-                      className="flex items-center gap-1 hover:text-white"
-                    >
-                      Indexer Queue
-                      {sortField === 'indexer_queue' && (
-                        <svg
-                          className={`h-3 w-3 transition-transform ${
-                            sortDirection === 'desc' ? 'rotate-180' : ''
-                          }`}
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M5 15l7-7 7 7"
-                          />
-                        </svg>
-                      )}
-                    </button>
-                  </th>
-                  <th>RPC Health</th>
-                  <th className="text-right">Actions</th>
+                  <th className="text-center w-20">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -671,9 +639,6 @@ export default function DashboardPage() {
                           </svg>
                         </td>
                         <td>
-                          <span className={getHealthStatusDotClass(chain.health?.status)}></span>
-                        </td>
-                        <td>
                           <div>
                             <div className="font-medium text-white">
                               {chain.chain_name || chain.chain_id}
@@ -682,107 +647,52 @@ export default function DashboardPage() {
                           </div>
                         </td>
                         <td>
-                          <div className="flex items-center gap-2">
-                            <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-800">
-                              <div
-                                className={`h-full ${
-                                  progress >= 99
-                                    ? 'bg-emerald-500'
-                                    : progress >= 90
-                                    ? 'bg-indigo-500'
-                                    : progress >= 50
-                                    ? 'bg-amber-500'
-                                    : 'bg-rose-500'
-                                }`}
-                                style={{ width: `${Math.min(progress, 100)}%` }}
-                              ></div>
+                          <span className="font-mono text-sm text-slate-300">
+                            {formatNumber(chain.last_indexed)}
+                          </span>
+                        </td>
+                        <td className="text-center">
+                          <span className="font-mono text-sm text-slate-300">
+                            {formatNumber(chain.head)}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 min-w-[100px]">
+                              <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                                <div
+                                  className={`h-full transition-all ${
+                                    progress >= 99
+                                      ? 'bg-emerald-500'
+                                      : progress >= 90
+                                      ? 'bg-indigo-500'
+                                      : progress >= 50
+                                      ? 'bg-amber-500'
+                                      : 'bg-rose-500'
+                                  }`}
+                                  style={{ width: `${Math.min(progress, 100)}%` }}
+                                ></div>
+                              </div>
                             </div>
-                            <span className="font-mono text-xs text-slate-400">
-                              {formatNumber(chain.last_indexed)} / {formatNumber(chain.head)}
+                            <span className="font-mono text-sm font-semibold text-slate-300 min-w-[45px] text-right">
+                              {progress.toFixed(1)}%
                             </span>
                           </div>
                         </td>
-                        <td className="font-mono text-sm">
-                          {formatNumber(chain.ops_queue?.pending_workflow || 0)}
-                        </td>
-                        <td className="font-mono text-sm">
-                          {formatNumber(chain.indexer_queue?.pending_workflow || 0)}
-                        </td>
                         <td>
-                          <span className={getHealthBadgeClass(chain.rpc_health?.status)}>
-                            {formatHealthStatus(chain.rpc_health?.status)}
+                          <span className={getHealthBadgeClass(chain.health?.status)}>
+                            {formatHealthStatus(chain.health?.status)}
                           </span>
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={(e) => handleHeadScan(chain, e)}
-                              className="btn-ghost p-1.5 text-xs"
-                              title="Head Scan"
-                            >
-                              <svg
-                                className="h-4 w-4"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                                />
-                              </svg>
-                            </button>
-                            <button
-                              onClick={(e) => handleGapScan(chain, e)}
-                              className="btn-ghost p-1.5 text-xs"
-                              title="Gap Scan"
-                            >
-                              <svg
-                                className="h-4 w-4"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                                />
-                              </svg>
-                            </button>
-                            <button
-                              onClick={(e) => handleTogglePause(chain, e)}
-                              className="btn-ghost p-1.5 text-xs"
-                              title={chain.paused ? 'Resume' : 'Pause'}
-                            >
-                              {chain.paused ? (
-                                <svg
-                                  className="h-4 w-4"
-                                  fill="currentColor"
-                                  viewBox="0 0 20 20"
-                                >
-                                  <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-                                </svg>
-                              ) : (
-                                <svg
-                                  className="h-4 w-4"
-                                  fill="currentColor"
-                                  viewBox="0 0 20 20"
-                                >
-                                  <path d="M5.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75A.75.75 0 007.25 3h-1.5zM12.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75a.75.75 0 00-.75-.75h-1.5z" />
-                                </svg>
-                              )}
-                            </button>
+                          <div className="flex items-center justify-center">
                             <Link
                               href={`/chains/${chain.chain_id}`}
-                              className="btn-ghost p-1.5 text-xs"
+                              className="btn-ghost p-2 text-xs hover:bg-indigo-500/10 hover:text-indigo-400"
                               title="View Details"
                             >
                               <svg
-                                className="h-4 w-4"
+                                className="h-5 w-5"
                                 fill="none"
                                 viewBox="0 0 24 24"
                                 stroke="currentColor"
@@ -791,7 +701,13 @@ export default function DashboardPage() {
                                   strokeLinecap="round"
                                   strokeLinejoin="round"
                                   strokeWidth={2}
-                                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                                />
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
                                 />
                               </svg>
                             </Link>
@@ -800,7 +716,7 @@ export default function DashboardPage() {
                       </tr>
                       {isExpanded && (
                         <tr className="bg-slate-900/50">
-                          <td colSpan={8}>
+t                          <td colSpan={7}>
                             <div className="grid gap-4 p-4 md:grid-cols-2 lg:grid-cols-3">
                               {/* Health Status Breakdown */}
                               <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
@@ -855,72 +771,20 @@ export default function DashboardPage() {
                                 </div>
                               </div>
 
-                              {/* Ops Queue Details */}
-                              <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
-                                <div className="mb-3 text-sm font-semibold text-white">
-                                  Ops Queue
-                                </div>
-                                <div className="space-y-2 text-xs">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-slate-400">Pending Workflows</span>
-                                    <span className="font-mono text-slate-300">
-                                      {formatNumber(chain.ops_queue?.pending_workflow || 0)}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-slate-400">Pending Activities</span>
-                                    <span className="font-mono text-slate-300">
-                                      {formatNumber(chain.ops_queue?.pending_activity || 0)}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-slate-400">Backlog Age</span>
-                                    <span className="font-mono text-slate-300">
-                                      {secondsToFriendly(chain.ops_queue?.backlog_age_secs || 0)}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-slate-400">Pollers</span>
-                                    <span className="font-mono text-slate-300">
-                                      {chain.ops_queue?.pollers || 0}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Indexer Queue Details */}
-                              <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
-                                <div className="mb-3 text-sm font-semibold text-white">
-                                  Indexer Queue
-                                </div>
-                                <div className="space-y-2 text-xs">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-slate-400">Pending Workflows</span>
-                                    <span className="font-mono text-slate-300">
-                                      {formatNumber(chain.indexer_queue?.pending_workflow || 0)}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-slate-400">Pending Activities</span>
-                                    <span className="font-mono text-slate-300">
-                                      {formatNumber(chain.indexer_queue?.pending_activity || 0)}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-slate-400">Backlog Age</span>
-                                    <span className="font-mono text-slate-300">
-                                      {secondsToFriendly(
-                                        chain.indexer_queue?.backlog_age_secs || 0
-                                      )}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-slate-400">Pollers</span>
-                                    <span className="font-mono text-slate-300">
-                                      {chain.indexer_queue?.pollers || 0}
-                                    </span>
-                                  </div>
-                                </div>
+                              {/* Queue Health - Compact View */}
+                              <div className="lg:col-span-2 rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+                                <div className="mb-3 text-sm font-semibold text-white">Queue Status</div>
+                                <QueueHealthBadge
+                                  liveDepth={chain.live_queue_depth || 0}
+                                  liveAge={chain.live_queue_backlog_age || 0}
+                                  historicalDepth={chain.historical_queue_depth || 0}
+                                  historicalAge={chain.historical_queue_backlog_age || 0}
+                                  opsQueue={{
+                                    pending_workflow: chain.ops_queue?.pending_workflow || 0,
+                                    backlog_age_secs: chain.ops_queue?.backlog_age_secs || 0,
+                                  }}
+                                  compact={true}
+                                />
                               </div>
 
                               {/* Chain Info */}

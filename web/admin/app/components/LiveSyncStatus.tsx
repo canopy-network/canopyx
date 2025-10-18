@@ -12,7 +12,7 @@ export function LiveSyncStatus({
   is_live_sync = false,
 }: LiveSyncStatusProps) {
   const progress = head > 0 ? (last_indexed / head) * 100 : 0
-  const lag = head - last_indexed
+  const lag = Math.max(0, head - last_indexed) // Prevent negative lag values
 
   return (
     <div className="space-y-4">

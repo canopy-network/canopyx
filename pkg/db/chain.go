@@ -68,10 +68,12 @@ func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transa
 }
 
 // InsertBlockSummary persists block summary data (entity counts) into the chain database.
-func (db *ChainDB) InsertBlockSummary(ctx context.Context, height uint64, numTxs uint32) error {
+// blockTime is the timestamp from the block, used to populate height_time for time-range queries.
+func (db *ChainDB) InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32) error {
 	summary := &indexer.BlockSummary{
-		Height: height,
-		NumTxs: numTxs,
+		Height:     height,
+		HeightTime: blockTime,
+		NumTxs:     numTxs,
 	}
 	_, err := db.Db.NewInsert().Model(summary).Exec(ctx)
 	return err
@@ -82,22 +84,33 @@ func (db *ChainDB) GetBlockSummary(ctx context.Context, height uint64) (*indexer
 	return indexer.GetBlockSummary(ctx, db.Db, height)
 }
 
-// QueryBlocks retrieves a paginated list of blocks ordered by height descending.
-// If cursor > 0, only blocks with height < cursor are returned.
+// QueryBlocks retrieves a paginated list of blocks ordered by height.
+// If sortDesc is true, orders by height DESC (newest first), otherwise ASC (oldest first).
+// If cursor > 0 and sortDesc is true, only blocks with height < cursor are returned.
+// If cursor > 0 and sortDesc is false, only blocks with height > cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
-func (db *ChainDB) QueryBlocks(ctx context.Context, cursor uint64, limit int) ([]indexer.Block, error) {
+func (db *ChainDB) QueryBlocks(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Block, error) {
 	conds := make([]string, 0)
 	args := make([]any, 0)
 	if cursor > 0 {
-		conds = append(conds, "height < ?")
+		if sortDesc {
+			conds = append(conds, "height < ?")
+		} else {
+			conds = append(conds, "height > ?")
+		}
 		args = append(args, cursor)
+	}
+
+	sortOrder := "DESC"
+	if !sortDesc {
+		sortOrder = "ASC"
 	}
 
 	query := fmt.Sprintf(`SELECT height, hash, parent_hash, time, proposer_address, size FROM "%s"."blocks"`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
-	query += " ORDER BY height DESC LIMIT ?"
+	query += fmt.Sprintf(" ORDER BY height %s LIMIT ?", sortOrder)
 	args = append(args, limit)
 
 	var blocks []indexer.Block
@@ -108,22 +121,33 @@ func (db *ChainDB) QueryBlocks(ctx context.Context, cursor uint64, limit int) ([
 	return blocks, nil
 }
 
-// QueryBlockSummaries retrieves a paginated list of block summaries ordered by height descending.
-// If cursor > 0, only summaries with height < cursor are returned.
+// QueryBlockSummaries retrieves a paginated list of block summaries ordered by height.
+// If sortDesc is true, orders by height DESC (newest first), otherwise ASC (oldest first).
+// If cursor > 0 and sortDesc is true, only summaries with height < cursor are returned.
+// If cursor > 0 and sortDesc is false, only summaries with height > cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
-func (db *ChainDB) QueryBlockSummaries(ctx context.Context, cursor uint64, limit int) ([]indexer.BlockSummary, error) {
+func (db *ChainDB) QueryBlockSummaries(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.BlockSummary, error) {
 	conds := make([]string, 0)
 	args := make([]any, 0)
 	if cursor > 0 {
-		conds = append(conds, "height < ?")
+		if sortDesc {
+			conds = append(conds, "height < ?")
+		} else {
+			conds = append(conds, "height > ?")
+		}
 		args = append(args, cursor)
 	}
 
-	query := fmt.Sprintf(`SELECT height, num_txs FROM "%s"."block_summaries" FINAL`, db.Name)
+	sortOrder := "DESC"
+	if !sortDesc {
+		sortOrder = "ASC"
+	}
+
+	query := fmt.Sprintf(`SELECT height, height_time, num_txs FROM "%s"."block_summaries" FINAL`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
-	query += " ORDER BY height DESC LIMIT ?"
+	query += fmt.Sprintf(" ORDER BY height %s LIMIT ?", sortOrder)
 	args = append(args, limit)
 
 	var rows []indexer.BlockSummary
@@ -134,22 +158,33 @@ func (db *ChainDB) QueryBlockSummaries(ctx context.Context, cursor uint64, limit
 	return rows, nil
 }
 
-// QueryTransactions retrieves a paginated list of transactions ordered by height descending.
-// If cursor > 0, only transactions with height < cursor are returned.
+// QueryTransactions retrieves a paginated list of transactions ordered by height.
+// If sortDesc is true, orders by height DESC (newest first), otherwise ASC (oldest first).
+// If cursor > 0 and sortDesc is true, only transactions with height < cursor are returned.
+// If cursor > 0 and sortDesc is false, only transactions with height > cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
-func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit int) ([]indexer.Transaction, error) {
+func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Transaction, error) {
 	conds := make([]string, 0)
 	args := make([]any, 0)
 	if cursor > 0 {
-		conds = append(conds, "height < ?")
+		if sortDesc {
+			conds = append(conds, "height < ?")
+		} else {
+			conds = append(conds, "height > ?")
+		}
 		args = append(args, cursor)
 	}
 
-	query := fmt.Sprintf(`SELECT height, tx_hash, time, message_type, counterparty, signer, amount, fee, created_height FROM "%s"."txs"`, db.Name)
+	sortOrder := "DESC"
+	if !sortDesc {
+		sortOrder = "ASC"
+	}
+
+	query := fmt.Sprintf(`SELECT height, tx_hash, time, height_time, message_type, counterparty, signer, amount, fee, created_height FROM "%s"."txs"`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
-	query += " ORDER BY height DESC LIMIT ?"
+	query += fmt.Sprintf(" ORDER BY height %s LIMIT ?", sortOrder)
 	args = append(args, limit)
 
 	var txs []indexer.Transaction
@@ -199,33 +234,35 @@ func (db *ChainDB) Exec(ctx context.Context, query string, args ...any) error {
 }
 
 // QueryTransactionsRaw retrieves raw transaction data with all columns.
-// If cursor > 0, only transactions with height < cursor are returned.
+// If sortDesc is true, orders by height DESC (newest first), otherwise ASC (oldest first).
+// If cursor > 0 and sortDesc is true, only transactions with height < cursor are returned.
+// If cursor > 0 and sortDesc is false, only transactions with height > cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
-func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int) ([]map[string]interface{}, error) {
-	type rowInternal struct {
-		Height    uint64    `ch:"height"`
-		TxHash    string    `ch:"tx_hash"`
-		MsgRaw    *string   `ch:"msg_raw"`
-		PublicKey *string   `ch:"public_key"`
-		Signature *string   `ch:"signature"`
-		CreatedAt time.Time `ch:"created_at"`
-	}
-
+func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]map[string]interface{}, error) {
 	conds := make([]string, 0)
 	args := make([]any, 0)
 	if cursor > 0 {
-		conds = append(conds, "height < ?")
+		if sortDesc {
+			conds = append(conds, "height < ?")
+		} else {
+			conds = append(conds, "height > ?")
+		}
 		args = append(args, cursor)
 	}
 
-	query := fmt.Sprintf(`SELECT height, tx_hash, msg_raw, public_key, signature, created_at FROM "%s"."txs_raw"`, db.Name)
+	sortOrder := "DESC"
+	if !sortDesc {
+		sortOrder = "ASC"
+	}
+
+	query := fmt.Sprintf(`SELECT height, tx_hash, height_time, msg_raw, public_key, signature, created_at FROM "%s"."txs_raw"`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
-	query += " ORDER BY height DESC LIMIT ?"
+	query += fmt.Sprintf(" ORDER BY height %s LIMIT ?", sortOrder)
 	args = append(args, limit)
 
-	rows := make([]rowInternal, 0, limit)
+	rows := make([]indexer.TransactionRaw, 0, limit)
 	if err := db.Db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
 		return nil, fmt.Errorf("query transactions raw failed: %w", err)
 	}
@@ -234,12 +271,13 @@ func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limi
 	results := make([]map[string]interface{}, len(rows))
 	for i, row := range rows {
 		results[i] = map[string]interface{}{
-			"height":     row.Height,
-			"tx_hash":    row.TxHash,
-			"msg_raw":    row.MsgRaw,
-			"public_key": row.PublicKey,
-			"signature":  row.Signature,
-			"created_at": row.CreatedAt.UTC().Format(time.RFC3339),
+			"height":      row.Height,
+			"tx_hash":     row.TxHash,
+			"height_time": row.HeightTime.UTC().Format(time.RFC3339),
+			"msg_raw":     row.MsgRaw,
+			"public_key":  row.PublicKey,
+			"signature":   row.Signature,
+			"created_at":  row.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}
 

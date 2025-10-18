@@ -395,7 +395,9 @@ func (a *App) Start(ctx context.Context) {
 }
 
 func (a *App) populateChain(ctx context.Context, ch *Chain) {
-	ch.TaskQueue = a.Temporal.GetIndexerQueue(ch.ID)
+	// With dual-queue architecture, we have both live and historical queues
+	// For backward compatibility with display/logging, we'll show both queue names
+	ch.TaskQueue = fmt.Sprintf("%s,%s", a.Temporal.GetIndexerLiveQueue(ch.ID), a.Temporal.GetIndexerHistoricalQueue(ch.ID))
 
 	if ch.Paused || ch.Deleted {
 		ch.Replicas = 0

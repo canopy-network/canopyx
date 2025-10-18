@@ -11,7 +11,7 @@ import (
 
 // IndexTransactions indexes transactions for a given block.
 // Returns output containing the number of indexed transactions and execution duration in milliseconds.
-func (c *Context) IndexTransactions(ctx context.Context, in types.IndexBlockInput) (types.IndexTransactionsOutput, error) {
+func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransactionsInput) (types.IndexTransactionsOutput, error) {
 	start := time.Now()
 
 	ch, err := c.IndexerDB.GetChain(ctx, in.ChainID)
@@ -29,6 +29,14 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexBlockInpu
 	txs, txsRaw, err := cli.TxsByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexTransactionsOutput{}, err
+	}
+
+	// Populate HeightTime field for all transactions using the block timestamp
+	for i := range txs {
+		txs[i].HeightTime = in.BlockTime
+	}
+	for i := range txsRaw {
+		txsRaw[i].HeightTime = in.BlockTime
 	}
 
 	numTxs := uint32(len(txs))

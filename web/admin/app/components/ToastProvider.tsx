@@ -56,24 +56,26 @@ export function ToastProvider({children}: {children: React.ReactNode}) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed top-4 right-4 z-50 flex max-w-sm flex-col gap-2">
+      <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex max-w-sm flex-col-reverse gap-2">
         {toasts.map((toast) => (
           <div
             key={toast.id}
             className={clsx(
-              'pointer-events-auto flex items-start gap-3 rounded border px-4 py-3 shadow-lg',
+              'pointer-events-auto flex items-start gap-3 rounded-lg border px-4 py-3 shadow-xl backdrop-blur-sm',
               toast.tone === 'error'
-                ? 'border-rose-500/40 bg-rose-500/10 text-rose-100'
-                : 'border-sky-500/40 bg-sky-500/10 text-sky-100',
+                ? 'border-rose-500/60 bg-rose-500/90 text-white'
+                : 'border-sky-500/60 bg-sky-500/90 text-white',
             )}
           >
-            <span className="flex-1 text-sm">{toast.text}</span>
+            <span className="flex-1 text-sm font-medium">{toast.text}</span>
             <button
               type="button"
-              className="text-xs text-slate-400 transition hover:text-slate-200"
+              className="text-white/80 transition hover:text-white"
               onClick={() => dismiss(toast.id)}
             >
-              Close
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
           </div>
         ))}

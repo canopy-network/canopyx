@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
@@ -23,16 +24,16 @@ type ChainStore interface {
 	ChainKey() string
 	InsertBlock(ctx context.Context, block *indexer.Block) error
 	InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raw []*indexer.TransactionRaw) error
-	InsertBlockSummary(ctx context.Context, height uint64, numTxs uint32) error
+	InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32) error
 	GetBlockSummary(ctx context.Context, height uint64) (*indexer.BlockSummary, error)
 	HasBlock(ctx context.Context, height uint64) (bool, error)
 	DeleteBlock(ctx context.Context, height uint64) error
 	DeleteTransactions(ctx context.Context, height uint64) error
 	Exec(ctx context.Context, query string, args ...any) error
-	QueryBlocks(ctx context.Context, cursor uint64, limit int) ([]indexer.Block, error)
-	QueryBlockSummaries(ctx context.Context, cursor uint64, limit int) ([]indexer.BlockSummary, error)
-	QueryTransactions(ctx context.Context, cursor uint64, limit int) ([]indexer.Transaction, error)
-	QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int) ([]map[string]interface{}, error)
+	QueryBlocks(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Block, error)
+	QueryBlockSummaries(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.BlockSummary, error)
+	QueryTransactions(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Transaction, error)
+	QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]map[string]interface{}, error)
 	DescribeTable(ctx context.Context, tableName string) ([]Column, error)
 	Close() error
 }

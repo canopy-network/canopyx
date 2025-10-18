@@ -98,12 +98,6 @@ func (c *Client) GetManagerQueue() string { return c.ManagerQueue }
 // GetGlobalReportsQueue returns the global reports queue.
 func (c *Client) GetGlobalReportsQueue() string { return c.ReportsQueue }
 
-// GetIndexerQueue returns the indexer queue for the given chain.
-// DEPRECATED: Keep for backward compatibility, use GetIndexerLiveQueue or GetIndexerHistoricalQueue instead.
-func (c *Client) GetIndexerQueue(chainID string) string {
-	return fmt.Sprintf(c.IndexerQueue, chainID)
-}
-
 // GetIndexerLiveQueue returns the live indexer queue for the given chain.
 // This queue is for blocks within the LiveBlockThreshold of the chain head.
 func (c *Client) GetIndexerLiveQueue(chainID string) string {

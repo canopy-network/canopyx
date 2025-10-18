@@ -20,12 +20,18 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
         MaximumInterval:    2 * time.Second,        // Cap at 2s for faster retries when block isn't ready
         MaximumAttempts:    0,                      // zero means unlimited - we want it keeps trying to index a block until it succeeds
     }
+
+    // Extract the task queue from workflow info - activities must run on the same queue as the workflow
+    // This ensures activities run on the correct queue (live or historical) that the workflow was scheduled to
+    info := workflow.GetInfo(ctx)
+    taskQueue := info.TaskQueueName
+
     ao := workflow.ActivityOptions{
         // NOTE: this should never reach 2 minutes to index a block, but WHO knows...
         StartToCloseTimeout: 2 * time.Minute,
         RetryPolicy:         retry,
-        // his own queue to avoid blocking a single queue for all chains
-        TaskQueue: wc.TemporalClient.GetIndexerQueue(in.ChainID),
+        // Use the same task queue as the workflow (live or historical)
+        TaskQueue: taskQueue,
     }
     ctx = workflow.WithActivityOptions(ctx, ao)
 
@@ -82,8 +88,14 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 
     // 4. IndexTransactions - fetch and index transactions
     // Now safe to index entities since block existence is confirmed
+    // Pass the block input which includes the block data with timestamp
+    indexTxInput := types.IndexTransactionsInput{
+        ChainID:   in.ChainID,
+        Height:    in.Height,
+        BlockTime: fetchOut.Block.Time,
+    }
     var txOut types.IndexTransactionsOutput
-    if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, in).Get(ctx, &txOut); err != nil {
+    if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexTxInput).Get(ctx, &txOut); err != nil {
         return err
     }
     timings["index_transactions_ms"] = txOut.DurationMs
@@ -100,6 +112,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
     saveInput := types.SaveBlockSummaryInput{
         ChainID:   in.ChainID,
         Height:    in.Height,
+        BlockTime: fetchOut.Block.Time,
         Summaries: summaries,
     }
     var saveSummaryOut types.SaveBlockSummaryOutput

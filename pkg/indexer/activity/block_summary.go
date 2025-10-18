@@ -21,7 +21,7 @@ func (c *Context) SaveBlockSummary(ctx context.Context, in types.SaveBlockSummar
 	}
 
 	// Insert block summary with all entity counts
-	if err := chainDb.InsertBlockSummary(ctx, in.Height, in.Summaries.NumTxs); err != nil {
+	if err := chainDb.InsertBlockSummary(ctx, in.Height, in.BlockTime, in.Summaries.NumTxs); err != nil {
 		return types.SaveBlockSummaryOutput{}, err
 	}
 

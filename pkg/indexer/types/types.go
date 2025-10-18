@@ -1,6 +1,8 @@
 package types
 
 import (
+	"time"
+
 	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
@@ -78,6 +80,13 @@ type IndexBlockOutput struct {
 	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
 }
 
+// IndexTransactionsInput contains the parameters for indexing transactions.
+type IndexTransactionsInput struct {
+	ChainID   string    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
 // IndexTransactionsOutput contains the number of indexed transactions along with execution duration.
 type IndexTransactionsOutput struct {
 	NumTxs     uint32  `json:"numTxs"`     // Number of transactions indexed
@@ -88,6 +97,7 @@ type IndexTransactionsOutput struct {
 type SaveBlockSummaryInput struct {
 	ChainID   string         `json:"chainId"`
 	Height    uint64         `json:"height"`
+	BlockTime time.Time      `json:"blockTime"` // Block timestamp for time-range queries
 	Summaries BlockSummaries `json:"summaries"`
 }
 

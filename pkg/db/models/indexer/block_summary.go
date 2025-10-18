@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"time"
 
 	"github.com/uptrace/go-clickhouse/ch"
 )
@@ -12,8 +13,9 @@ import (
 type BlockSummary struct {
 	ch.CHModel `ch:"table:block_summaries"`
 
-	Height uint64 `ch:"height,pk" json:"height"`
-	NumTxs uint32 `ch:"num_txs,default:0" json:"num_txs"`
+	Height     uint64    `ch:"height,pk" json:"height"`
+	HeightTime time.Time `ch:"height_time,type:DateTime64(6)" json:"height_time"` // Block timestamp for time-range queries
+	NumTxs     uint32    `ch:"num_txs,default:0" json:"num_txs"`
 	// TODO: Add more entity counts here as we index more entities
 	// NumEvents uint32 `ch:"num_events,default:0" json:"num_events"`
 	// NumLogs   uint32 `ch:"num_logs,default:0" json:"num_logs"`

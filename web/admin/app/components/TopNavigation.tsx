@@ -3,6 +3,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '../lib/auth-context'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { useState } from 'react'
 
 const navigation = [
   {
@@ -24,6 +26,7 @@ const navigation = [
 export default function TopNavigation() {
   const pathname = usePathname()
   const { logout } = useAuth()
+  const [dropdownOpen, setDropdownOpen] = useState(false)
 
   return (
     <header className="flex h-16 items-center justify-between border-b border-slate-800 bg-slate-900 px-6">
@@ -81,32 +84,46 @@ export default function TopNavigation() {
         </nav>
       </div>
 
-      {/* Right side - User section */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-3 rounded-lg bg-slate-800/50 px-3 py-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-xs font-semibold text-white">
-            A
-          </div>
-          <div>
-            <p className="text-sm font-medium text-white">Admin</p>
-            <p className="text-xs text-slate-400">Administrator</p>
-          </div>
-        </div>
-        <button
-          onClick={() => logout()}
-          className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2 text-sm font-medium text-slate-300 transition-all hover:border-slate-600 hover:bg-slate-800 hover:text-white"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-            />
-          </svg>
-          Sign Out
-        </button>
-      </div>
+      {/* Right side - User Dropdown */}
+      <DropdownMenu.Root open={dropdownOpen} onOpenChange={setDropdownOpen}>
+        <DropdownMenu.Trigger asChild>
+          <button className="flex items-center gap-3 rounded-lg bg-slate-800/50 px-3 py-2 transition-all hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-xs font-semibold text-white">
+              A
+            </div>
+            <div className="text-left">
+              <p className="text-sm font-medium text-white">Admin</p>
+              <p className="text-xs text-slate-400">Administrator</p>
+            </div>
+            <svg
+              className={`h-4 w-4 text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </DropdownMenu.Trigger>
+
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            className="min-w-[140px] rounded-lg border border-slate-800 bg-slate-900 p-1 shadow-xl"
+            sideOffset={5}
+            align="end"
+          >
+            <DropdownMenu.Item
+              className="flex items-center gap-2 rounded px-3 py-2 text-sm text-rose-400 outline-none cursor-pointer hover:bg-rose-500/10 focus:bg-rose-500/10"
+              onSelect={() => logout()}
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Sign Out
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
     </header>
   )
 }

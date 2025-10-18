@@ -9,6 +9,7 @@ import { useToast } from '../../../components/ToastProvider'
 import IndexingProgressChart from './IndexingProgressChart'
 import { LiveSyncStatus } from '../../../components/LiveSyncStatus'
 import { GapRangesDisplay } from '../../../components/GapRangesDisplay'
+import { QueueHealthBadge } from '../../../components/QueueHealthBadge'
 
 // Types
 type QueueStatus = {
@@ -60,6 +61,10 @@ type ChainStatus = {
   head: number
   ops_queue: QueueStatus
   indexer_queue: QueueStatus
+  live_queue_depth: number // Live queue pending tasks
+  live_queue_backlog_age: number // Live queue oldest task age in seconds
+  historical_queue_depth: number // Historical queue pending tasks
+  historical_queue_backlog_age: number // Historical queue oldest task age in seconds
   reindex_history?: ReindexEntry[]
   health: HealthInfo
   rpc_health: HealthInfo
@@ -161,6 +166,23 @@ function formatTimestamp(timestamp?: string): string {
   } catch {
     return 'Invalid date'
   }
+}
+
+// Parse live replicas from deployment health message
+// Message formats: "2/2 replicas ready", "1/2 replicas ready (expected 2)", etc.
+function parseLiveReplicas(deploymentHealthMessage?: string): { ready: number; total: number } | null {
+  if (!deploymentHealthMessage) return null
+
+  // Match patterns like "2/2 replicas ready" or "1/2 replicas ready"
+  const match = deploymentHealthMessage.match(/(\d+)\/(\d+)\s+replicas/)
+  if (match) {
+    return {
+      ready: parseInt(match[1], 10),
+      total: parseInt(match[2], 10)
+    }
+  }
+
+  return null
 }
 
 export default function ChainDetailPage() {
@@ -340,6 +362,23 @@ export default function ChainDetailPage() {
                 <span className="text-slate-500">Progress:</span>
                 <span className="font-mono font-semibold text-indigo-400">{progress.toFixed(2)}%</span>
               </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Allowed:</span>
+                <span className="font-mono font-semibold text-slate-300">
+                  {config.min_replicas}-{config.max_replicas}
+                </span>
+              </div>
+              {(() => {
+                const liveReplicas = parseLiveReplicas(status.deployment_health?.message)
+                return liveReplicas ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500">Live:</span>
+                    <span className="font-mono font-semibold text-emerald-400">
+                      {liveReplicas.ready}/{liveReplicas.total}
+                    </span>
+                  </div>
+                ) : null
+              })()}
               {status.head > status.last_indexed && (
                 <div className="flex items-center gap-2">
                   <span className="text-slate-500">Lag:</span>
@@ -353,7 +392,19 @@ export default function ChainDetailPage() {
         </div>
 
         {/* Quick Actions */}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button onClick={handleHeadScan} className="btn text-sm">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            Head Scan
+          </button>
+          <button onClick={handleGapScan} className="btn text-sm">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            Gap Scan
+          </button>
           <button onClick={handleTogglePause} className="btn-secondary text-sm">
             {config.paused ? (
               <>
@@ -520,34 +571,6 @@ function OverviewTab({
         />
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <div className="card">
-          <p className="text-xs font-medium text-slate-400">Last Indexed</p>
-          <p className="mt-2 font-mono text-2xl font-bold text-white">
-            {formatNumber(status?.last_indexed ?? 0)}
-          </p>
-        </div>
-        <div className="card">
-          <p className="text-xs font-medium text-slate-400">Head</p>
-          <p className="mt-2 font-mono text-2xl font-bold text-white">
-            {formatNumber(status?.head ?? 0)}
-          </p>
-        </div>
-        <div className="card">
-          <p className="text-xs font-medium text-slate-400">Progress</p>
-          <p className="mt-2 font-mono text-2xl font-bold text-indigo-400">
-            {progress.toFixed(2)}%
-          </p>
-        </div>
-        <div className="card">
-          <p className="text-xs font-medium text-slate-400">Lag (blocks)</p>
-          <p className="mt-2 font-mono text-2xl font-bold text-amber-400">
-            {formatNumber((status?.head ?? 0) - (status?.last_indexed ?? 0))}
-          </p>
-        </div>
-      </div>
-
       {/* Configuration Card */}
       <div className="card">
         <div className="card-header">
@@ -572,6 +595,21 @@ function OverviewTab({
             <p className="text-xs text-slate-400">Updated</p>
             <p className="mt-1 text-sm text-slate-200">{formatTimestamp(config.updated_at)}</p>
           </div>
+          {config.rpc_endpoints && config.rpc_endpoints.length > 0 && (
+            <div className="md:col-span-2">
+              <p className="text-xs text-slate-400">RPC Endpoints</p>
+              <div className="mt-2 space-y-1">
+                {config.rpc_endpoints.map((endpoint, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <svg className="h-3 w-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <p className="font-mono text-xs text-slate-300">{endpoint}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {config.notes && (
             <div className="md:col-span-2">
               <p className="text-xs text-slate-400">Notes</p>
@@ -635,28 +673,6 @@ function OverviewTab({
         </div>
       )}
 
-      {/* Action Buttons */}
-      <div className="flex gap-3">
-        <button onClick={onHeadScan} className="btn">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-          Trigger Head Scan
-        </button>
-        <button onClick={onGapScan} className="btn">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          Trigger Gap Scan
-        </button>
-        <button onClick={() => setReindexDialogOpen(true)} className="btn-secondary">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Trigger Reindex
-        </button>
-      </div>
-
       <ReindexDialog
         open={reindexDialogOpen}
         onOpenChange={setReindexDialogOpen}
@@ -719,107 +735,19 @@ function QueuesTab({
         </button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Ops Queue */}
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Ops Queue</h3>
-            <span className="font-mono text-xs text-slate-500">admin:{status?.chain_id}</span>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span className="text-sm text-slate-400">Pending Workflows</span>
-              <span className="font-mono text-2xl font-bold text-amber-400">
-                {formatNumber(status?.ops_queue?.pending_workflow ?? 0)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span className="text-sm text-slate-400">Pending Activities</span>
-              <span className="font-mono text-2xl font-bold text-purple-400">
-                {formatNumber(status?.ops_queue?.pending_activity ?? 0)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span className="text-sm text-slate-400">Backlog Age</span>
-              <span className="font-mono text-xl font-semibold text-slate-300">
-                {secondsToFriendly(status?.ops_queue?.backlog_age_secs ?? 0)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-400">Worker Instances</span>
-              <span className="font-mono text-xl font-semibold text-slate-300">
-                {status?.ops_queue?.pollers ?? 0}
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-lg bg-slate-950/50 p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-400">Health Status</span>
-              <span className={getHealthBadgeClass(status?.queue_health?.status)}>
-                {formatHealthStatus(status?.queue_health?.status)}
-              </span>
-            </div>
-            {status?.queue_health?.message && (
-              <p className="mt-2 text-xs text-slate-500">{status.queue_health.message}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Indexer Queue */}
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Indexer Queue</h3>
-            <span className="font-mono text-xs text-slate-500">index:{status?.chain_id}</span>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span className="text-sm text-slate-400">Pending Workflows</span>
-              <span className="font-mono text-2xl font-bold text-amber-400">
-                {formatNumber(status?.indexer_queue?.pending_workflow ?? 0)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span className="text-sm text-slate-400">Pending Activities</span>
-              <span className="font-mono text-2xl font-bold text-purple-400">
-                {formatNumber(status?.indexer_queue?.pending_activity ?? 0)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span className="text-sm text-slate-400">Backlog Age</span>
-              <span className="font-mono text-xl font-semibold text-slate-300">
-                {secondsToFriendly(status?.indexer_queue?.backlog_age_secs ?? 0)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-400">Worker Instances</span>
-              <span className="font-mono text-xl font-semibold text-slate-300">
-                {status?.indexer_queue?.pollers ?? 0}
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-lg bg-slate-950/50 p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-400">Health Status</span>
-              <span className={getHealthBadgeClass(status?.queue_health?.status)}>
-                {formatHealthStatus(status?.queue_health?.status)}
-              </span>
-            </div>
-            {status?.queue_health?.message && (
-              <p className="mt-2 text-xs text-slate-500">{status.queue_health.message}</p>
-            )}
-          </div>
-        </div>
-      </div>
+      {status && (
+        <QueueHealthBadge
+          liveDepth={status.live_queue_depth || 0}
+          liveAge={status.live_queue_backlog_age || 0}
+          historicalDepth={status.historical_queue_depth || 0}
+          historicalAge={status.historical_queue_backlog_age || 0}
+          opsQueue={{
+            pending_workflow: status.ops_queue?.pending_workflow || 0,
+            backlog_age_secs: status.ops_queue?.backlog_age_secs || 0,
+          }}
+          compact={false}
+        />
+      )}
     </div>
   )
 }
@@ -834,8 +762,8 @@ function ExplorerTab({ chainId }: { chainId: string }) {
   const [nextCursor, setNextCursor] = useState<number | null>(null)
   const [cursors, setCursors] = useState<(number | null)[]>([null]) // Stack of cursors for navigation
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
-
-  const ITEMS_PER_PAGE = 50
+  const [itemsPerPage, setItemsPerPage] = useState(50)
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc') // Default descending
 
   // Map UI table names to API table names
   const TABLE_NAME_MAP: Record<ExplorerTable, string> = {
@@ -886,7 +814,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
         const cursorParam = cursor !== null ? `&cursor=${cursor}` : ''
 
         const response = await fetch(
-          `/api/query/chains/${chainId}/${tableName}?limit=${ITEMS_PER_PAGE}${cursorParam}`
+          `/api/query/chains/${chainId}/${tableName}?limit=${itemsPerPage}&sort=${sortOrder}${cursorParam}`
         )
 
         if (!response.ok) {
@@ -909,7 +837,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     if (schema.length > 0) {
       fetchData()
     }
-  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length])
+  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, itemsPerPage, sortOrder])
 
   const handleTableChange = (newTable: ExplorerTable) => {
     setSelectedTable(newTable)
@@ -918,6 +846,12 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     setData([])
     setNextCursor(null)
     setError('')
+  }
+
+  const handleItemsPerPageChange = (newLimit: number) => {
+    setItemsPerPage(newLimit)
+    setCursors([null])
+    setCurrentPageIndex(0)
   }
 
   const handleNextPage = () => {
@@ -951,10 +885,10 @@ function ExplorerTab({ chainId }: { chainId: string }) {
         </div>
       )}
 
-      {/* Table Selector */}
+      {/* Table Selector and Controls */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-slate-300">Select Table:</label>
+          <label className="text-sm font-medium text-slate-300">Table:</label>
           <select
             value={selectedTable}
             onChange={(e) => handleTableChange(e.target.value as ExplorerTable)}
@@ -966,6 +900,40 @@ function ExplorerTab({ chainId }: { chainId: string }) {
             <option value="txs">Transactions</option>
             <option value="txs_raw">Transactions Raw</option>
           </select>
+
+          <div className="h-6 w-px bg-slate-700"></div>
+
+          <label className="text-sm font-medium text-slate-300">Items:</label>
+          <select
+            value={itemsPerPage}
+            onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+            className="input w-auto"
+            disabled={loading}
+          >
+            <option value={10}>10</option>
+            <option value={25}>25</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+
+          <div className="h-6 w-px bg-slate-700"></div>
+
+          <button
+            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+            className="btn-secondary text-sm"
+            disabled={loading}
+            title={`Sort ${sortOrder === 'asc' ? 'descending' : 'ascending'}`}
+          >
+            <svg
+              className={`h-4 w-4 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+            </svg>
+            {sortOrder === 'asc' ? 'Oldest First' : 'Newest First'}
+          </button>
         </div>
 
         {/* Pagination Controls */}

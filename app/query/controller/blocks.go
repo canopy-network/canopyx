@@ -35,8 +35,11 @@ func (c *Controller) HandleBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Convert SortOrder to bool (true = DESC, false = ASC)
+	sortDesc := page.Sort == SortOrderDesc
+
 	// Query with limit+1 to detect if there are more pages
-	rows, err := store.QueryBlocks(ctx, page.Cursor, page.Limit+1)
+	rows, err := store.QueryBlocks(ctx, page.Cursor, page.Limit+1, sortDesc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -78,8 +81,11 @@ func (c *Controller) HandleBlockSummaries(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Convert SortOrder to bool (true = DESC, false = ASC)
+	sortDesc := page.Sort == SortOrderDesc
+
 	// Query with limit+1 to detect if there are more pages
-	rows, err := store.QueryBlockSummaries(ctx, page.Cursor, page.Limit+1)
+	rows, err := store.QueryBlockSummaries(ctx, page.Cursor, page.Limit+1, sortDesc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return

@@ -1,6 +1,16 @@
 global:
   storageClassName: "standard"
 
+# Disable unnecessary HyperDX components - we only need ClickHouse
+hyperdx:
+  replicas: 0  # Disable the HyperDX web UI (no enabled flag available)
+
+mongodb:
+  enabled: false  # Disable MongoDB - not needed for our use case
+
+otel:
+  enabled: false  # Disable OTEL collector - not needed for our use case
+
 clickhouse:
   # Enable automatic PVC deletion on helm uninstall
   persistentVolumeClaimRetentionPolicy:
