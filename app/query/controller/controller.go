@@ -54,12 +54,20 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	// WebSocket endpoint for real-time events
 	r.HandleFunc("/ws", c.HandleWebSocket).Methods("GET")
 
+	// Entity metadata endpoint
+	r.HandleFunc("/entities", c.HandleEntities).Methods("GET")
+
 	r.HandleFunc("/chains/{id}/stats/hour", c.StatsHour).Methods("GET")
 	r.HandleFunc("/chains/{id}/stats/day", c.StatsDay).Methods("GET")
 	r.HandleFunc("/chains/{id}/stats/24h", c.Stats24h).Methods("GET")
 	r.HandleFunc("/chains/{id}/blocks", c.HandleBlocks).Methods("GET")
+	r.HandleFunc("/chains/{id}/blocks/{height}", c.HandleBlockByHeight).Methods("GET")
 	r.HandleFunc("/chains/{id}/block_summaries", c.HandleBlockSummaries).Methods("GET")
+	r.HandleFunc("/chains/{id}/block_summaries/{height}", c.HandleBlockSummaryByHeight).Methods("GET")
 	r.HandleFunc("/chains/{id}/transactions", c.HandleTransactions).Methods("GET")
+	r.HandleFunc("/chains/{id}/transactions/{hash}", c.HandleTransactionByHash).Methods("GET")
+	r.HandleFunc("/chains/{id}/accounts", c.HandleAccounts).Methods("GET")
+	r.HandleFunc("/chains/{id}/accounts/{address}", c.HandleAccountByAddress).Methods("GET")
 	r.HandleFunc("/chains/{id}/schema", c.HandleSchema).Methods("GET")
 	r.HandleFunc("/chains/{id}/transactions_raw", c.HandleTransactionsRaw).Methods("GET")
 

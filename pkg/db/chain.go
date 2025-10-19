@@ -196,6 +196,22 @@ func (db *ChainDB) GetBlock(ctx context.Context, height uint64) (*indexer.Block,
 	return block, nil
 }
 
+// GetTransactionByHash retrieves a transaction by its hash.
+// Uses FINAL to deduplicate with ReplacingMergeTree.
+func (db *ChainDB) GetTransactionByHash(ctx context.Context, txHash string) (*indexer.Transaction, error) {
+	query := fmt.Sprintf(`SELECT height, tx_hash, time, height_time, message_type, counterparty, signer, amount, fee, created_height FROM "%s"."txs" FINAL WHERE tx_hash = ? LIMIT 1`, db.Name)
+
+	var tx indexer.Transaction
+	if err := db.Db.NewRaw(query, txHash).Scan(ctx, &tx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("transaction not found: %s", txHash)
+		}
+		return nil, fmt.Errorf("query transaction failed: %w", err)
+	}
+
+	return &tx, nil
+}
+
 // InsertTransactions persists indexed transactions and raw payloads into the chain database.
 func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raws []*indexer.TransactionRaw) error {
 	return indexer.InsertTransactions(ctx, db.Db, txs, raws)
@@ -327,6 +343,70 @@ func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit i
 	}
 
 	return txs, nil
+}
+
+// QueryAccounts retrieves a paginated list of accounts ordered by height.
+// If sortDesc is true, orders by height DESC (newest first), otherwise ASC (oldest first).
+// If cursor > 0 and sortDesc is true, only accounts with height < cursor are returned.
+// If cursor > 0 and sortDesc is false, only accounts with height > cursor are returned.
+// The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
+func (db *ChainDB) QueryAccounts(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Account, error) {
+	conds := make([]string, 0)
+	args := make([]any, 0)
+	if cursor > 0 {
+		if sortDesc {
+			conds = append(conds, "height < ?")
+		} else {
+			conds = append(conds, "height > ?")
+		}
+		args = append(args, cursor)
+	}
+
+	sortOrder := "DESC"
+	if !sortDesc {
+		sortOrder = "ASC"
+	}
+
+	query := fmt.Sprintf(`SELECT address, amount, height, height_time, created_height FROM "%s"."accounts" FINAL`, db.Name)
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	query += fmt.Sprintf(" ORDER BY height %s LIMIT ?", sortOrder)
+	args = append(args, limit)
+
+	var accounts []indexer.Account
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &accounts); err != nil {
+		return nil, fmt.Errorf("query accounts failed: %w", err)
+	}
+
+	return accounts, nil
+}
+
+// GetAccountByAddress retrieves an account by address at a specific height.
+// Uses FINAL to deduplicate with ReplacingMergeTree.
+// If height is nil, returns the latest state.
+// If height is specified, returns the account state at or before that height.
+// Returns sql.ErrNoRows wrapped in an error if the account doesn't exist.
+func (db *ChainDB) GetAccountByAddress(ctx context.Context, address string, height *uint64) (*indexer.Account, error) {
+	query := fmt.Sprintf(`SELECT address, amount, height, height_time, created_height FROM "%s"."accounts" FINAL WHERE address = ?`, db.Name)
+	args := []any{address}
+
+	if height != nil {
+		query += " AND height <= ? ORDER BY height DESC LIMIT 1"
+		args = append(args, *height)
+	} else {
+		query += " ORDER BY height DESC LIMIT 1"
+	}
+
+	var account indexer.Account
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &account); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("account not found: %s", address)
+		}
+		return nil, fmt.Errorf("query account failed: %w", err)
+	}
+
+	return &account, nil
 }
 
 // HasBlock reports whether a block exists at the specified height.

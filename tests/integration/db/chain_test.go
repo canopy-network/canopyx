@@ -6,45 +6,47 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"github.com/uptrace/go-clickhouse/ch"
-	"go.uber.org/zap/zaptest"
-
+	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/tests/integration/helpers"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // TestPromoteEntity_Success verifies that data is successfully moved from staging to production
 func TestPromoteEntity_Success(t *testing.T) {
 	ctx := context.Background()
-	logger := zaptest.NewLogger(t)
+	if helpers.SkipIfNoDB(ctx, t) {
+		return
+	}
 
 	// Setup test database
-	db := setupTestChainDB(t, logger)
-	defer cleanupTestDB(t, db)
+	chainDB, cleanup := setupTestChainDB(t)
+	defer cleanup()
 
 	// Create test tables (blocks and blocks_staging)
-	err := createTestTables(ctx, db, entities.Blocks)
+	err := createTestTables(ctx, chainDB, entities.Blocks)
 	require.NoError(t, err)
 
 	// Insert test data into staging
 	testHeight := uint64(1000)
-	err = insertTestStagingData(ctx, db, entities.Blocks, testHeight)
+	err = insertTestStagingData(ctx, chainDB, entities.Blocks, testHeight)
 	require.NoError(t, err)
 
 	// Execute promotion
-	err = db.PromoteEntity(ctx, entities.Blocks, testHeight)
+	err = chainDB.PromoteEntity(ctx, entities.Blocks, testHeight)
 	assert.NoError(t, err)
 
 	// Verify data exists in production table
-	exists, err := verifyProductionData(ctx, db, entities.Blocks, testHeight)
+	exists, err := verifyProductionData(ctx, chainDB, entities.Blocks, testHeight)
 	assert.NoError(t, err)
 	assert.True(t, exists, "Data should exist in production table after promotion")
 
 	// Verify data still exists in staging (promotion doesn't delete)
-	exists, err = verifyStagingData(ctx, db, entities.Blocks, testHeight)
+	exists, err = verifyStagingData(ctx, chainDB, entities.Blocks, testHeight)
 	assert.NoError(t, err)
 	assert.True(t, exists, "Data should still exist in staging after promotion")
 }

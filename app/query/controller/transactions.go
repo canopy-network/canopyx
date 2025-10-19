@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/gorilla/mux"
@@ -100,4 +101,36 @@ func (c *Controller) HandleTransactionsRaw(w http.ResponseWriter, r *http.Reques
 		Limit:      page.Limit,
 		NextCursor: nextCursor,
 	})
+}
+
+// HandleTransactionByHash returns a single transaction by hash.
+// Returns 404 if transaction not found, 400 for invalid parameters.
+func (c *Controller) HandleTransactionByHash(w http.ResponseWriter, r *http.Request) {
+	chainID := mux.Vars(r)["id"]
+	txHash := mux.Vars(r)["hash"]
+
+	if chainID == "" || txHash == "" {
+		writeError(w, http.StatusBadRequest, "missing chain id or transaction hash")
+		return
+	}
+
+	ctx := context.Background()
+
+	store, ok := c.App.LoadChainStore(ctx, chainID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "chain not indexed")
+		return
+	}
+
+	tx, err := store.GetTransactionByHash(ctx, txHash)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "query failed")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, tx)
 }

@@ -86,7 +86,17 @@ type ReindexPayload = {
 }
 
 // Explorer tab types
-type ExplorerTable = 'blocks' | 'block_summaries' | 'txs' | 'txs_raw'
+type ExplorerTable = 'blocks' | 'block_summaries' | 'txs' | 'txs_raw' | 'accounts'
+
+type EntityInfo = {
+  name: string
+  table_name: string
+  staging_name: string
+}
+
+type EntitiesResponse = {
+  entities: EntityInfo[]
+}
 
 type SchemaColumn = {
   name: string
@@ -789,24 +799,94 @@ function QueuesTab({
 
 // Explorer Tab Component
 function ExplorerTab({ chainId }: { chainId: string }) {
-  const [selectedTable, setSelectedTable] = useState<ExplorerTable>('blocks')
+  const { notify } = useToast()
+
+  // Entities state
+  const [entities, setEntities] = useState<string[]>([])
+  const [loadingEntities, setLoadingEntities] = useState(true)
+
+  // Table browsing state
+  const [selectedTable, setSelectedTable] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const [schema, setSchema] = useState<string[]>([])
   const [data, setData] = useState<any[]>([])
   const [nextCursor, setNextCursor] = useState<number | null>(null)
-  const [cursors, setCursors] = useState<(number | null)[]>([null]) // Stack of cursors for navigation
+  const [cursors, setCursors] = useState<(number | null)[]>([null])
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
   const [itemsPerPage, setItemsPerPage] = useState(50)
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc') // Default descending
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  // Map UI table names to API table names
-  const TABLE_NAME_MAP: Record<ExplorerTable, string> = {
+  // Single entity lookup state
+  const [lookupEntity, setLookupEntity] = useState<string>('')
+  const [lookupId, setLookupId] = useState('')
+  const [lookupHeight, setLookupHeight] = useState('')
+  const [lookupResult, setLookupResult] = useState<any>(null)
+  const [lookupError, setLookupError] = useState('')
+  const [lookupLoading, setLookupLoading] = useState(false)
+
+  // ID field configuration for different entities
+  type EntityIdConfig = {
+    field: string
+    type: 'number' | 'text'
+    label: string
+    endpoint: string
+  }
+
+  const entityIdFields: Record<string, EntityIdConfig> = {
+    blocks: { field: 'height', type: 'number', label: 'Height', endpoint: 'blocks' },
+    block_summaries: { field: 'height', type: 'number', label: 'Height', endpoint: 'block_summaries' },
+    transactions: { field: 'hash', type: 'text', label: 'Transaction Hash', endpoint: 'transactions' },
+    transactions_raw: { field: 'hash', type: 'text', label: 'Transaction Hash', endpoint: 'transactions' },
+    txs: { field: 'hash', type: 'text', label: 'Transaction Hash', endpoint: 'transactions' },
+    txs_raw: { field: 'hash', type: 'text', label: 'Transaction Hash', endpoint: 'transactions' },
+    accounts: { field: 'address', type: 'text', label: 'Address', endpoint: 'accounts' },
+  }
+
+  // Map display names to API endpoint names
+  const TABLE_NAME_MAP: Record<string, string> = {
     blocks: 'blocks',
     block_summaries: 'block_summaries',
     txs: 'transactions',
+    transactions: 'transactions',
     txs_raw: 'transactions_raw',
+    transactions_raw: 'transactions_raw',
+    accounts: 'accounts',
   }
+
+  // Fetch entities on mount
+  useEffect(() => {
+    const fetchEntities = async () => {
+      setLoadingEntities(true)
+      try {
+        const response = await fetch('/api/query/entities')
+        if (!response.ok) {
+          throw new Error('Failed to fetch entities')
+        }
+        const data: EntitiesResponse = await response.json()
+        const entityNames = data.entities.map((e) => e.name)
+        setEntities(entityNames)
+
+        // Set default selected table to first entity
+        if (entityNames.length > 0) {
+          setSelectedTable(entityNames[0])
+          setLookupEntity(entityNames[0])
+        }
+      } catch (err: any) {
+        console.error('Entities fetch error:', err)
+        notify('Failed to load entities list', 'error')
+        // Fallback to hardcoded entities
+        const fallbackEntities = ['blocks', 'block_summaries', 'transactions', 'accounts']
+        setEntities(fallbackEntities)
+        setSelectedTable('blocks')
+        setLookupEntity('blocks')
+      } finally {
+        setLoadingEntities(false)
+      }
+    }
+
+    fetchEntities()
+  }, [])
 
   // Fetch schema when table changes
   useEffect(() => {
@@ -874,13 +954,85 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     }
   }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, itemsPerPage, sortOrder])
 
-  const handleTableChange = (newTable: ExplorerTable) => {
+  const handleTableChange = (newTable: string) => {
     setSelectedTable(newTable)
     setCursors([null])
     setCurrentPageIndex(0)
     setData([])
     setNextCursor(null)
     setError('')
+  }
+
+  // Single entity lookup handler
+  const handleLookup = async () => {
+    setLookupResult(null)
+    setLookupError('')
+    setLookupLoading(true)
+
+    const idConfig = entityIdFields[lookupEntity]
+    if (!idConfig) {
+      setLookupError('Unknown entity type')
+      setLookupLoading(false)
+      return
+    }
+
+    if (!lookupId) {
+      notify(`Please enter ${idConfig.label}`, 'error')
+      setLookupLoading(false)
+      return
+    }
+
+    // Build URL based on entity type
+    try {
+      let url: string
+      const tableName = TABLE_NAME_MAP[lookupEntity] || lookupEntity
+
+      // Build query to find the specific entity using single entity endpoints
+      if (lookupEntity === 'blocks') {
+        // GET /chains/{id}/blocks/{height}
+        url = `/api/query/chains/${chainId}/blocks/${lookupId}`
+      } else if (lookupEntity === 'block_summaries') {
+        // GET /chains/{id}/block_summaries/{height}
+        url = `/api/query/chains/${chainId}/block_summaries/${lookupId}`
+      } else if (lookupEntity === 'transactions' || lookupEntity === 'txs') {
+        // GET /chains/{id}/transactions/{hash}
+        url = `/api/query/chains/${chainId}/transactions/${lookupId}`
+      } else if (lookupEntity === 'accounts') {
+        // GET /chains/{id}/accounts/{address}?height={height}
+        url = `/api/query/chains/${chainId}/accounts/${lookupId}`
+        if (lookupHeight) {
+          url += `?height=${lookupHeight}`
+        }
+      } else {
+        // Fallback for unknown entities
+        setLookupError(`Single entity lookup not supported for ${lookupEntity}`)
+        notify(`Lookup not supported for ${lookupEntity}`, 'error')
+        setLookupLoading(false)
+        return
+      }
+
+      const response = await fetch(url)
+
+      if (response.ok) {
+        const responseData = await response.json()
+        setLookupResult(responseData)
+        notify('Entity found', 'success')
+      } else if (response.status === 404) {
+        const errorData = await response.json().catch(() => ({ error: 'Entity not found' }))
+        setLookupError(errorData.error || 'Entity not found')
+        notify(errorData.error || 'Entity not found', 'error')
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Query failed' }))
+        setLookupError(errorData.error || 'Query failed')
+        notify(errorData.error || 'Query failed', 'error')
+      }
+    } catch (err: any) {
+      console.error('Lookup error:', err)
+      setLookupError('Network error')
+      notify('Network error', 'error')
+    } finally {
+      setLookupLoading(false)
+    }
   }
 
   const handleItemsPerPageChange = (newLimit: number) => {
@@ -920,20 +1072,148 @@ function ExplorerTab({ chainId }: { chainId: string }) {
         </div>
       )}
 
+      {/* Single Entity Lookup Section */}
+      {!loadingEntities && entities.length > 0 && (
+        <div className="card border-indigo-500/20 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
+          <div className="card-header">
+            <h3 className="card-title">Single Entity Lookup</h3>
+            <p className="text-xs text-slate-500">Find a specific block, transaction, or account</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Entity Type</label>
+              <select
+                value={lookupEntity}
+                onChange={(e) => setLookupEntity(e.target.value)}
+                className="input w-full"
+                disabled={lookupLoading}
+              >
+                {entities.map((entity) => (
+                  <option key={entity} value={entity}>
+                    {entity}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className={lookupEntity === 'accounts' ? 'md:col-span-2' : 'md:col-span-3'}>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                {entityIdFields[lookupEntity]?.label || 'ID'}
+              </label>
+              <input
+                type={entityIdFields[lookupEntity]?.type || 'text'}
+                value={lookupId}
+                onChange={(e) => setLookupId(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+                placeholder={`Enter ${entityIdFields[lookupEntity]?.label || 'ID'}`}
+                className="input w-full"
+                disabled={lookupLoading}
+              />
+            </div>
+
+            {lookupEntity === 'accounts' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Height <span className="text-xs text-slate-500">(optional)</span>
+                </label>
+                <input
+                  type="number"
+                  value={lookupHeight}
+                  onChange={(e) => setLookupHeight(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+                  placeholder="Latest"
+                  className="input w-full"
+                  disabled={lookupLoading}
+                />
+              </div>
+            )}
+
+            <div className="flex items-end">
+              <button
+                onClick={handleLookup}
+                disabled={lookupLoading}
+                className="btn w-full disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {lookupLoading ? (
+                  <>
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
+                    Searching...
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    Search
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Lookup Result Display */}
+          {lookupResult && (
+            <div className="mt-4 rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-emerald-200">Result Found</h4>
+                <button
+                  onClick={() => setLookupResult(null)}
+                  className="text-xs text-emerald-300 hover:text-emerald-100"
+                >
+                  Clear
+                </button>
+              </div>
+              <pre className="text-xs overflow-auto max-h-96 rounded bg-slate-900/50 p-3 text-slate-200">
+                {JSON.stringify(lookupResult, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {/* Lookup Error Display */}
+          {lookupError && (
+            <div className="mt-4 rounded-lg border border-rose-500/50 bg-rose-500/10 p-4">
+              <div className="flex items-start gap-3">
+                <svg className="h-5 w-5 flex-shrink-0 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="flex-1">
+                  <p className="font-semibold text-rose-200">Lookup Failed</p>
+                  <p className="mt-1 text-sm text-rose-300">{lookupError}</p>
+                </div>
+                <button
+                  onClick={() => setLookupError('')}
+                  className="text-rose-300 hover:text-rose-100"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Table Selector and Controls */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <label className="text-sm font-medium text-slate-300">Table:</label>
           <select
             value={selectedTable}
-            onChange={(e) => handleTableChange(e.target.value as ExplorerTable)}
+            onChange={(e) => handleTableChange(e.target.value)}
             className="input w-auto"
-            disabled={loading}
+            disabled={loading || loadingEntities}
           >
-            <option value="blocks">Blocks</option>
-            <option value="block_summaries">Block Summaries</option>
-            <option value="txs">Transactions</option>
-            <option value="txs_raw">Transactions Raw</option>
+            {loadingEntities ? (
+              <option>Loading...</option>
+            ) : (
+              entities.map((entity) => (
+                <option key={entity} value={entity}>
+                  {entity}
+                </option>
+              ))
+            )}
           </select>
 
           <div className="h-6 w-px bg-slate-700"></div>

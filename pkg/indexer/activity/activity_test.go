@@ -429,6 +429,18 @@ func (*fakeChainStore) GetFullyIndexedHeight(context.Context) (uint64, error) {
 	return 0, nil
 }
 
+func (*fakeChainStore) GetAccountByAddress(context.Context, string, *uint64) (*indexermodels.Account, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) QueryAccounts(context.Context, uint64, int, bool) ([]indexermodels.Account, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) GetTransactionByHash(context.Context, string) (*indexermodels.Transaction, error) {
+	return nil, nil
+}
+
 func (*fakeChainStore) Close() error { return nil }
 
 type fakeRPCFactory struct {
@@ -455,4 +467,12 @@ func (f *fakeRPCClient) BlockByHeight(context.Context, uint64) (*indexermodels.B
 
 func (f *fakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels.Transaction, []*indexermodels.TransactionRaw, error) {
 	return f.txs, f.raws, nil
+}
+
+func (f *fakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.RpcAccount, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) GetGenesisState(context.Context, uint64) (*rpc.GenesisState, error) {
+	return nil, nil
 }

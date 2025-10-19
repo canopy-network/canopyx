@@ -145,6 +145,30 @@ func (m *MockChainStore) GetFullyIndexedHeight(ctx context.Context) (uint64, err
 	return args.Get(0).(uint64), args.Error(1)
 }
 
+func (m *MockChainStore) GetAccountByAddress(ctx context.Context, address string, height *uint64) (*indexer.Account, error) {
+	args := m.Called(ctx, address, height)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*indexer.Account), args.Error(1)
+}
+
+func (m *MockChainStore) QueryAccounts(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Account, error) {
+	args := m.Called(ctx, cursor, limit, sortDesc)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]indexer.Account), args.Error(1)
+}
+
+func (m *MockChainStore) GetTransactionByHash(ctx context.Context, hash string) (*indexer.Transaction, error) {
+	args := m.Called(ctx, hash)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*indexer.Transaction), args.Error(1)
+}
+
 func (m *MockChainStore) Close() error {
 	args := m.Called()
 	return args.Error(0)

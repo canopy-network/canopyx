@@ -2,7 +2,11 @@ package controller
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/gorilla/mux"
@@ -103,4 +107,80 @@ func (c *Controller) HandleBlockSummaries(w http.ResponseWriter, r *http.Request
 		Limit:      page.Limit,
 		NextCursor: nextCursor,
 	})
+}
+
+// HandleBlockByHeight returns a single block by height.
+// Returns 404 if block not found, 400 for invalid parameters.
+func (c *Controller) HandleBlockByHeight(w http.ResponseWriter, r *http.Request) {
+	chainID := mux.Vars(r)["id"]
+	heightStr := mux.Vars(r)["height"]
+
+	if chainID == "" || heightStr == "" {
+		writeError(w, http.StatusBadRequest, "missing chain id or height")
+		return
+	}
+
+	height, err := strconv.ParseUint(heightStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid height")
+		return
+	}
+
+	ctx := context.Background()
+
+	store, ok := c.App.LoadChainStore(ctx, chainID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "chain not indexed")
+		return
+	}
+
+	block, err := store.GetBlock(ctx, height)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") || errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "block not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "query failed")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, block)
+}
+
+// HandleBlockSummaryByHeight returns a single block summary by height.
+// Returns 404 if block summary not found, 400 for invalid parameters.
+func (c *Controller) HandleBlockSummaryByHeight(w http.ResponseWriter, r *http.Request) {
+	chainID := mux.Vars(r)["id"]
+	heightStr := mux.Vars(r)["height"]
+
+	if chainID == "" || heightStr == "" {
+		writeError(w, http.StatusBadRequest, "missing chain id or height")
+		return
+	}
+
+	height, err := strconv.ParseUint(heightStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid height")
+		return
+	}
+
+	ctx := context.Background()
+
+	store, ok := c.App.LoadChainStore(ctx, chainID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "chain not indexed")
+		return
+	}
+
+	summary, err := store.GetBlockSummary(ctx, height)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") || errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "block summary not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "query failed")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, summary)
 }

@@ -26,6 +26,7 @@ type ChainStore interface {
 	InsertBlock(ctx context.Context, block *indexer.Block) error
 	GetBlock(ctx context.Context, height uint64) (*indexer.Block, error)
 	InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raw []*indexer.TransactionRaw) error
+	GetTransactionByHash(ctx context.Context, txHash string) (*indexer.Transaction, error)
 	InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32) error
 	GetBlockSummary(ctx context.Context, height uint64) (*indexer.BlockSummary, error)
 	HasBlock(ctx context.Context, height uint64) (bool, error)
@@ -35,6 +36,8 @@ type ChainStore interface {
 	QueryBlocks(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Block, error)
 	QueryBlockSummaries(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.BlockSummary, error)
 	QueryTransactions(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Transaction, error)
+	QueryAccounts(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Account, error)
+	GetAccountByAddress(ctx context.Context, address string, height *uint64) (*indexer.Account, error)
 	QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]map[string]interface{}, error)
 	DescribeTable(ctx context.Context, tableName string) ([]Column, error)
 	PromoteEntity(ctx context.Context, entity entities.Entity, height uint64) error
