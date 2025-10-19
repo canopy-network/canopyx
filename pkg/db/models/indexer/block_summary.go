@@ -11,7 +11,7 @@ import (
 // This table is separate from blocks to keep the blocks table immutable
 // and avoid updating it with summary data after entity indexing completes.
 type BlockSummary struct {
-	ch.CHModel `ch:"table:block_summaries"`
+	ch.CHModel `ch:"table:block_summaries,engine:ReplacingMergeTree(height)"`
 
 	Height     uint64    `ch:"height,pk" json:"height"`
 	HeightTime time.Time `ch:"height_time,type:DateTime64(6)" json:"height_time"` // Block timestamp for time-range queries
@@ -26,8 +26,6 @@ func InitBlockSummaries(ctx context.Context, db *ch.DB) error {
 	_, err := db.NewCreateTable().
 		Model((*BlockSummary)(nil)).
 		IfNotExists().
-		Engine("ReplacingMergeTree").
-		Order("height").
 		Exec(ctx)
 	return err
 }

@@ -128,3 +128,31 @@ type BatchScheduleOutput struct {
 	Failed     int     `json:"failed"`     // Number of workflows that failed to schedule
 	DurationMs float64 `json:"durationMs"` // Total execution time in milliseconds
 }
+
+// PromoteDataInput contains parameters for promoting entity data from staging to production
+type PromoteDataInput struct {
+	ChainID string `json:"chainId"`
+	Entity  string `json:"entity"`  // Entity name: "blocks", "txs", "accounts", etc.
+	Height  uint64 `json:"height"`
+}
+
+// PromoteDataOutput contains the result of data promotion
+type PromoteDataOutput struct {
+	Entity     string  `json:"entity"`
+	Height     uint64  `json:"height"`
+	DurationMs float64 `json:"durationMs"`
+}
+
+// CleanPromotedDataInput contains parameters for cleaning staging data
+type CleanPromotedDataInput struct {
+	ChainID string `json:"chainId"`
+	Entity  string `json:"entity"`
+	Height  uint64 `json:"height"`
+}
+
+// CleanPromotedDataOutput contains the result of staging cleanup
+type CleanPromotedDataOutput struct {
+	Entity     string  `json:"entity"`
+	Height     uint64  `json:"height"`
+	DurationMs float64 `json:"durationMs"`
+}

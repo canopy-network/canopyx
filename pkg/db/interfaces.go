@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
@@ -36,6 +37,10 @@ type ChainStore interface {
 	QueryTransactions(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Transaction, error)
 	QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]map[string]interface{}, error)
 	DescribeTable(ctx context.Context, tableName string) ([]Column, error)
+	PromoteEntity(ctx context.Context, entity entities.Entity, height uint64) error
+	CleanEntityStaging(ctx context.Context, entity entities.Entity, height uint64) error
+	ValidateQueryHeight(ctx context.Context, requestedHeight *uint64) (uint64, error)
+	GetFullyIndexedHeight(ctx context.Context) (uint64, error)
 	Close() error
 }
 

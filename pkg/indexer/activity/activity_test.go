@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db"
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
@@ -349,13 +350,20 @@ func (f *fakeChainStore) InsertTransactions(_ context.Context, txs []*indexermod
 	return nil
 }
 
-func (f *fakeChainStore) InsertBlockSummary(_ context.Context, height uint64, numTxs uint32) error {
+func (f *fakeChainStore) InsertBlockSummary(_ context.Context, height uint64, _ time.Time, numTxs uint32) error {
 	f.insertBlockSummaryCalls++
 	f.lastBlockSummary = &indexermodels.BlockSummary{
 		Height: height,
 		NumTxs: numTxs,
 	}
 	return nil
+}
+
+func (f *fakeChainStore) GetBlock(_ context.Context, height uint64) (*indexermodels.Block, error) {
+	if f.lastBlock != nil && f.lastBlock.Height == height {
+		return f.lastBlock, nil
+	}
+	return nil, nil
 }
 
 func (f *fakeChainStore) GetBlockSummary(_ context.Context, height uint64) (*indexermodels.BlockSummary, error) {
@@ -385,24 +393,40 @@ func (f *fakeChainStore) Exec(_ context.Context, query string, args ...any) erro
 	return nil
 }
 
-func (*fakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.Block, error) {
+func (*fakeChainStore) QueryBlocks(context.Context, uint64, int, bool) ([]indexermodels.Block, error) {
 	return nil, nil
 }
 
-func (*fakeChainStore) QueryBlockSummaries(context.Context, uint64, int) ([]indexermodels.BlockSummary, error) {
+func (*fakeChainStore) QueryBlockSummaries(context.Context, uint64, int, bool) ([]indexermodels.BlockSummary, error) {
 	return nil, nil
 }
 
-func (*fakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.Transaction, error) {
+func (*fakeChainStore) QueryTransactions(context.Context, uint64, int, bool) ([]indexermodels.Transaction, error) {
 	return nil, nil
 }
 
-func (*fakeChainStore) QueryTransactionsRaw(context.Context, uint64, int) ([]map[string]interface{}, error) {
+func (*fakeChainStore) QueryTransactionsRaw(context.Context, uint64, int, bool) ([]map[string]interface{}, error) {
 	return nil, nil
 }
 
 func (*fakeChainStore) DescribeTable(context.Context, string) ([]db.Column, error) {
 	return nil, nil
+}
+
+func (*fakeChainStore) PromoteEntity(context.Context, entities.Entity, uint64) error {
+	return nil
+}
+
+func (*fakeChainStore) CleanEntityStaging(context.Context, entities.Entity, uint64) error {
+	return nil
+}
+
+func (*fakeChainStore) ValidateQueryHeight(context.Context, *uint64) (uint64, error) {
+	return 0, nil
+}
+
+func (*fakeChainStore) GetFullyIndexedHeight(context.Context) (uint64, error) {
+	return 0, nil
 }
 
 func (*fakeChainStore) Close() error { return nil }

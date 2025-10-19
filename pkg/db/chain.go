@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.uber.org/zap"
 )
@@ -43,6 +44,98 @@ func (db *ChainDB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
+	// Create staging tables for all entities
+	db.Logger.Debug("Creating staging tables", zap.String("name", db.Name))
+	if err := db.createStagingTables(ctx); err != nil {
+		return fmt.Errorf("create staging tables: %w", err)
+	}
+
+	return nil
+}
+
+// createStagingTables creates staging tables for all entities defined in entities.All().
+// Staging tables have the same schema as production tables but are used for temporary data
+// before promotion to production.
+func (db *ChainDB) createStagingTables(ctx context.Context) error {
+	// Create blocks_staging table
+	// Schema matches the Block model in pkg/db/models/indexer/block.go
+	blocksStaging := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."blocks_staging" (
+			height UInt64,
+			hash String,
+			time DateTime64(6),
+			parent_hash String,
+			proposer_address String,
+			size Int32
+		) ENGINE = ReplacingMergeTree(height)
+		ORDER BY (height)
+	`, db.Name)
+
+	if err := db.Exec(ctx, blocksStaging); err != nil {
+		return fmt.Errorf("create blocks_staging: %w", err)
+	}
+
+	// Create txs_staging table
+	// Schema matches the Transaction model in pkg/db/models/indexer/tx.go
+	txsStaging := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."txs_staging" (
+			height UInt64,
+			tx_hash String,
+			time DateTime64(6),
+			height_time DateTime64(6),
+			message_type LowCardinality(String),
+			counterparty Nullable(String),
+			signer String,
+			amount Nullable(UInt64),
+			fee UInt64,
+			created_height UInt64
+		) ENGINE = ReplacingMergeTree(height)
+		ORDER BY (height, tx_hash)
+	`, db.Name)
+
+	if err := db.Exec(ctx, txsStaging); err != nil {
+		return fmt.Errorf("create txs_staging: %w", err)
+	}
+
+	// Create txs_raw_staging table
+	// Schema matches the TransactionRaw model in pkg/db/models/indexer/tx.go
+	// Note: TTL is only applied to production table, not staging
+	txsRawStaging := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."txs_raw_staging" (
+			height UInt64,
+			tx_hash String,
+			height_time DateTime64(6),
+			msg_raw Nullable(String),
+			public_key Nullable(String),
+			signature Nullable(String),
+			created_at DateTime DEFAULT now()
+		) ENGINE = ReplacingMergeTree(height)
+		ORDER BY (height, tx_hash)
+	`, db.Name)
+
+	if err := db.Exec(ctx, txsRawStaging); err != nil {
+		return fmt.Errorf("create txs_raw_staging: %w", err)
+	}
+
+	// Create block_summaries_staging table
+	// Schema matches the BlockSummary model in pkg/db/models/indexer/block_summary.go
+	blockSummariesStaging := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."block_summaries_staging" (
+			height UInt64,
+			height_time DateTime64(6),
+			num_txs UInt32 DEFAULT 0
+		) ENGINE = ReplacingMergeTree(height)
+		ORDER BY (height)
+	`, db.Name)
+
+	if err := db.Exec(ctx, blockSummariesStaging); err != nil {
+		return fmt.Errorf("create block_summaries_staging: %w", err)
+	}
+
+	db.Logger.Info("Staging tables created successfully",
+		zap.String("database", db.Name),
+		zap.Strings("tables", []string{"blocks_staging", "txs_staging", "txs_raw_staging", "block_summaries_staging"}))
+
 	return nil
 }
 
@@ -68,6 +161,7 @@ func (db *ChainDB) GetBlock(ctx context.Context, height uint64) (*indexer.Block,
 	err := db.Db.NewSelect().
 		Model(block).
 		Where("height = ?", height).
+		Final(). // CRITICAL: Use FINAL with ReplacingMergeTree to deduplicate
 		Scan(ctx)
 	if err != nil {
 		return nil, err
@@ -119,7 +213,7 @@ func (db *ChainDB) QueryBlocks(ctx context.Context, cursor uint64, limit int, so
 		sortOrder = "ASC"
 	}
 
-	query := fmt.Sprintf(`SELECT height, hash, parent_hash, time, proposer_address, size FROM "%s"."blocks"`, db.Name)
+	query := fmt.Sprintf(`SELECT height, hash, parent_hash, time, proposer_address, size FROM "%s"."blocks" FINAL`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
@@ -193,7 +287,7 @@ func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit i
 		sortOrder = "ASC"
 	}
 
-	query := fmt.Sprintf(`SELECT height, tx_hash, time, height_time, message_type, counterparty, signer, amount, fee, created_height FROM "%s"."txs"`, db.Name)
+	query := fmt.Sprintf(`SELECT height, tx_hash, time, height_time, message_type, counterparty, signer, amount, fee, created_height FROM "%s"."txs" FINAL`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
@@ -268,7 +362,7 @@ func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limi
 		sortOrder = "ASC"
 	}
 
-	query := fmt.Sprintf(`SELECT height, tx_hash, height_time, msg_raw, public_key, signature, created_at FROM "%s"."txs_raw"`, db.Name)
+	query := fmt.Sprintf(`SELECT height, tx_hash, height_time, msg_raw, public_key, signature, created_at FROM "%s"."txs_raw" FINAL`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
@@ -336,4 +430,123 @@ func (db *ChainDB) DescribeTable(ctx context.Context, tableName string) ([]Colum
 // Close terminates the underlying ClickHouse connection.
 func (db *ChainDB) Close() error {
 	return db.Db.Close()
+}
+
+// PromoteEntity promotes entity data from staging to production table.
+// Uses entity constants for type-safe table names.
+// The operation is idempotent - safe to retry if it fails.
+func (db *ChainDB) PromoteEntity(ctx context.Context, entity entities.Entity, height uint64) error {
+	// Validate entity is known
+	if !entity.IsValid() {
+		return fmt.Errorf("invalid entity: %q", entity)
+	}
+
+	// Build promotion query: INSERT INTO production SELECT * FROM staging WHERE height = ?
+	query := fmt.Sprintf(
+		`INSERT INTO "%s"."%s" SELECT * FROM "%s"."%s" WHERE height = ?`,
+		db.Name, entity.TableName(),
+		db.Name, entity.StagingTableName(),
+	)
+
+	if _, err := db.Db.ExecContext(ctx, query, height); err != nil {
+		return fmt.Errorf("promote %s at height %d: %w", entity, height, err)
+	}
+
+	db.Logger.Debug("Promoted entity data",
+		zap.String("entity", entity.String()),
+		zap.Uint64("height", height),
+		zap.String("database", db.Name))
+
+	return nil
+}
+
+// CleanEntityStaging removes promoted data from staging table.
+// Uses ALTER TABLE DELETE for efficient deletion in ClickHouse.
+// The operation is idempotent - safe to retry if it fails.
+func (db *ChainDB) CleanEntityStaging(ctx context.Context, entity entities.Entity, height uint64) error {
+	// Validate entity is known
+	if !entity.IsValid() {
+		return fmt.Errorf("invalid entity: %q", entity)
+	}
+
+	// Build cleanup query: ALTER TABLE staging DELETE WHERE height = ?
+	query := fmt.Sprintf(
+		`ALTER TABLE "%s"."%s" DELETE WHERE height = ?`,
+		db.Name, entity.StagingTableName(),
+	)
+
+	if _, err := db.Db.ExecContext(ctx, query, height); err != nil {
+		// Log warning but don't fail - cleanup is non-critical
+		db.Logger.Warn("Failed to clean staging data",
+			zap.String("entity", entity.String()),
+			zap.Uint64("height", height),
+			zap.String("database", db.Name),
+			zap.Error(err))
+		return fmt.Errorf("clean %s staging at height %d: %w", entity, height, err)
+	}
+
+	db.Logger.Debug("Cleaned staging data",
+		zap.String("entity", entity.String()),
+		zap.Uint64("height", height),
+		zap.String("database", db.Name))
+
+	return nil
+}
+
+// ValidateQueryHeight validates that the requested height is fully indexed.
+// Returns the validated height (or latest if nil), or error if not indexed.
+// This MUST be called before any query to ensure consistency.
+func (db *ChainDB) ValidateQueryHeight(ctx context.Context, requestedHeight *uint64) (uint64, error) {
+	// Get the fully indexed height from index_progress
+	fullyIndexed, err := db.GetFullyIndexedHeight(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("get fully indexed height: %w", err)
+	}
+
+	// If no height specified, use latest fully indexed height
+	if requestedHeight == nil {
+		return fullyIndexed, nil
+	}
+
+	// Validate the requested height is not beyond what's indexed
+	if *requestedHeight > fullyIndexed {
+		return 0, fmt.Errorf("height %d not fully indexed (latest indexed: %d)", *requestedHeight, fullyIndexed)
+	}
+
+	return *requestedHeight, nil
+}
+
+// GetFullyIndexedHeight returns the latest fully indexed height from index_progress.
+// This uses the admin database's index_progress table which tracks completed indexing.
+func (db *ChainDB) GetFullyIndexedHeight(ctx context.Context) (uint64, error) {
+	// We need to query the admin database's index_progress table
+	// First, try the aggregate table for performance
+	adminDbName := "admin" // The admin database name is always "admin"
+
+	var height uint64
+	query := fmt.Sprintf(
+		`SELECT maxMerge(max_height) FROM "%s"."index_progress_agg" WHERE chain_id = ?`,
+		adminDbName,
+	)
+
+	err := db.Db.NewRaw(query, db.ChainID).Scan(ctx, &height)
+	if err == nil && height > 0 {
+		return height, nil
+	}
+
+	// Fallback to querying the base table if aggregate is empty
+	fallbackQuery := fmt.Sprintf(
+		`SELECT max(height) FROM "%s"."index_progress" WHERE chain_id = ?`,
+		adminDbName,
+	)
+
+	var fallbackHeight uint64
+	if err := db.Db.NewRaw(fallbackQuery, db.ChainID).Scan(ctx, &fallbackHeight); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("no indexed heights found for chain %s", db.ChainID)
+		}
+		return 0, fmt.Errorf("query index progress: %w", err)
+	}
+
+	return fallbackHeight, nil
 }

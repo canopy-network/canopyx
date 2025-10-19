@@ -14,7 +14,7 @@ import (
 
 // Transaction (core, small, query‑friendly)
 type Transaction struct {
-	ch.CHModel `ch:"table:txs,engine:MergeTree(),order_by:(height,tx_hash)"`
+	ch.CHModel `ch:"table:txs,engine:ReplacingMergeTree(height),order_by:(height,tx_hash)"`
 
 	// Position
 	Height uint64 `ch:"height" json:"height"`
@@ -62,18 +62,16 @@ type TransactionRaw struct {
 // InitTransactions creates the core table via builder, and the raw table with TTL via DDL.
 // dbName must be the ClickHouse database (since ExecContext needs a fully qualified name).
 func InitTransactions(ctx context.Context, db *ch.DB, dbName string) error {
-	// Core fact table (builder)
+	// Core fact table (builder) - engine is specified in CHModel tag
 	if _, err := db.NewCreateTable().
 		Model((*Transaction)(nil)).
 		IfNotExists().
-		Engine("MergeTree").
-		// the tag already has order_by:(height,tx_hash); being explicit keeps it obvious:
-		Order("height,tx_hash").
 		Exec(ctx); err != nil {
 		return err
 	}
 
 	// Raw sidecar with TTL (use DDL to express TTL cleanly)
+	// Using ReplacingMergeTree(height) for consistency with other tables
 	ddlRaw := fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS "%[1]s"."txs_raw" (
   height     UInt64,
@@ -83,7 +81,7 @@ CREATE TABLE IF NOT EXISTS "%[1]s"."txs_raw" (
   public_key Nullable(String),
   signature  Nullable(String),
   created_at DateTime DEFAULT now()
-) ENGINE = MergeTree
+) ENGINE = ReplacingMergeTree(height)
 ORDER BY (height, tx_hash)
 TTL created_at + INTERVAL 30 DAY DELETE
 `, dbName)

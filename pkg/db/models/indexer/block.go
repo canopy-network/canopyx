@@ -8,7 +8,7 @@ import (
 )
 
 type Block struct {
-	ch.CHModel `ch:"table:blocks"`
+	ch.CHModel `ch:"table:blocks,engine:ReplacingMergeTree(height)"`
 
 	Height          uint64    `ch:"height,pk" json:"height"`
 	Hash            string    `ch:"hash" json:"hash"`
@@ -23,8 +23,6 @@ func InitBlocks(ctx context.Context, db *ch.DB) error {
 	_, err := db.NewCreateTable().
 		Model((*Block)(nil)).
 		IfNotExists().
-		Engine("MergeTree").
-		Order("height").
 		Exec(ctx)
 	return err
 }
@@ -36,6 +34,7 @@ func GetBlock(ctx context.Context, db *ch.DB, height uint64) (*Block, error) {
 	err := db.NewSelect().
 		Model(&b).
 		Where("height = ?", height).
+		Final(). // CRITICAL: Use FINAL with ReplacingMergeTree to deduplicate
 		Limit(1).
 		Scan(ctx)
 
