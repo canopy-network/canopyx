@@ -30,15 +30,14 @@ func (c *Controller) HandleSchema(w http.ResponseWriter, r *http.Request) {
 
 	// Validate table name to prevent SQL injection
 	validTables := map[string]string{
-		"blocks":           "blocks",
-		"block_summaries":  "block_summaries",
-		"transactions":     "txs",
-		"transactions_raw": "txs_raw",
+		"blocks":          "blocks",
+		"block_summaries": "block_summaries",
+		"transactions":    "txs",
 	}
 
 	actualTable, ok := validTables[tableName]
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid table name. Must be one of: blocks, block_summaries, transactions, transactions_raw")
+		writeError(w, http.StatusBadRequest, "invalid table name. Must be one of: blocks, block_summaries, transactions")
 		return
 	}
 

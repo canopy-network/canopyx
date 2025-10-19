@@ -38,9 +38,6 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 		txs: []*indexermodels.Transaction{
 			{TxHash: "tx1"}, {TxHash: "tx2"},
 		},
-		raws: []*indexermodels.TransactionRaw{
-			{TxHash: "tx1"}, {TxHash: "tx2"},
-		},
 	}
 	activityCtx := &Context{
 		Logger:     logger,
@@ -53,9 +50,10 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 
 	env.RegisterActivity(activityCtx.IndexTransactions)
-	future, err := env.ExecuteActivity(activityCtx.IndexTransactions, types.IndexBlockInput{
-		ChainID: "chain-A",
-		Height:  10,
+	future, err := env.ExecuteActivity(activityCtx.IndexTransactions, types.IndexTransactionsInput{
+		ChainID:   "chain-A",
+		Height:    10,
+		BlockTime: time.Now().UTC(),
 	})
 	require.NoError(t, err)
 
@@ -327,7 +325,6 @@ type fakeChainStore struct {
 	lastBlock               *indexermodels.Block
 	lastBlockSummary        *indexermodels.BlockSummary
 	lastTxs                 []*indexermodels.Transaction
-	lastRaws                []*indexermodels.TransactionRaw
 	execCalls               []string
 	hasBlock                bool
 	deletedBlocks           []uint64
@@ -343,18 +340,18 @@ func (f *fakeChainStore) InsertBlock(_ context.Context, block *indexermodels.Blo
 	return nil
 }
 
-func (f *fakeChainStore) InsertTransactions(_ context.Context, txs []*indexermodels.Transaction, raws []*indexermodels.TransactionRaw) error {
+func (f *fakeChainStore) InsertTransactions(_ context.Context, txs []*indexermodels.Transaction) error {
 	f.insertTransactionCalls++
 	f.lastTxs = txs
-	f.lastRaws = raws
 	return nil
 }
 
-func (f *fakeChainStore) InsertBlockSummary(_ context.Context, height uint64, _ time.Time, numTxs uint32) error {
+func (f *fakeChainStore) InsertBlockSummary(_ context.Context, height uint64, _ time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
 	f.insertBlockSummaryCalls++
 	f.lastBlockSummary = &indexermodels.BlockSummary{
-		Height: height,
-		NumTxs: numTxs,
+		Height:         height,
+		NumTxs:         numTxs,
+		TxCountsByType: txCountsByType,
 	}
 	return nil
 }
@@ -441,6 +438,10 @@ func (*fakeChainStore) GetTransactionByHash(context.Context, string) (*indexermo
 	return nil, nil
 }
 
+func (*fakeChainStore) QueryTransactionsWithFilter(context.Context, uint64, int, bool, string) ([]indexermodels.Transaction, error) {
+	return nil, nil
+}
+
 func (*fakeChainStore) Close() error { return nil }
 
 type fakeRPCFactory struct {
@@ -454,7 +455,6 @@ func (f *fakeRPCFactory) NewClient(_ []string) rpc.Client {
 type fakeRPCClient struct {
 	block *indexermodels.Block
 	txs   []*indexermodels.Transaction
-	raws  []*indexermodels.TransactionRaw
 }
 
 func (f *fakeRPCClient) ChainHead(context.Context) (uint64, error) {
@@ -465,8 +465,8 @@ func (f *fakeRPCClient) BlockByHeight(context.Context, uint64) (*indexermodels.B
 	return f.block, nil
 }
 
-func (f *fakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels.Transaction, []*indexermodels.TransactionRaw, error) {
-	return f.txs, f.raws, nil
+func (f *fakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels.Transaction, error) {
+	return f.txs, nil
 }
 
 func (f *fakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.RpcAccount, error) {

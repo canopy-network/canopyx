@@ -614,6 +614,127 @@ canopy-scale-down: ## Scale Canopy node to 0 replicas (preserves data)
 	@echo ">> Done. Data is preserved. Scale back up with 'kubectl scale deployment canopy-node --replicas=1'"
 
 # ----------------------------
+# Canopy transaction generators
+# ----------------------------
+
+CANOPY_TX_DATA_DIR        ?= $(PWD)/tmp/canopy-local-data
+CANOPY_TX_CLI             ?= canopy
+CANOPY_TX_PASSWORD        ?= test
+CANOPY_TX_NICKNAME        ?= test
+CANOPY_TX_SIGNER          ?= $(CANOPY_TX_NICKNAME)
+CANOPY_TX_STAKE_SIGNER    ?= $(CANOPY_TX_SIGNER)
+CANOPY_TX_RECEIVER        ?= a5d1e3bb22cf77a5d85b03e367f31270407056bb
+CANOPY_TX_OUTPUT          ?= 29d19c74ac51b199cc070181886bea5cad3f88c3
+CANOPY_TX_CHAIN_ID        ?= 1
+CANOPY_TX_FEE             ?= 10000
+CANOPY_TX_SIMULATE        ?= true
+CANOPY_TX_SEND_AMOUNT     ?= 100000
+CANOPY_TX_STAKE_AMOUNT    ?= 1000000000
+CANOPY_TX_EDIT_STAKE_AMT  ?= $(CANOPY_TX_STAKE_AMOUNT)
+CANOPY_TX_SUBSIDY_AMOUNT  ?= 500000000
+CANOPY_TX_DAO_AMOUNT      ?= 250000000
+CANOPY_TX_SELL_AMOUNT     ?= 100000
+CANOPY_TX_RECEIVE_AMOUNT  ?= 50000
+CANOPY_TX_COMMITTEES      ?= 1
+CANOPY_TX_NET_ADDR        ?= tcp://localhost:9001
+CANOPY_TX_SUBSIDY_OPCODE  ?= reward
+CANOPY_TX_ORDER_ID        ?= 0000000000000000000000000000000000000000000000000000000000000001
+CANOPY_TX_LOCK_RECEIVE    ?= $(CANOPY_TX_OUTPUT)
+CANOPY_TX_CREATE_DATA     ?=
+CANOPY_TX_DELEGATE        ?= false
+CANOPY_TX_EARLY_WITHDRAWAL ?= false
+CANOPY_TX_PARAM_SPACE     ?= cons
+CANOPY_TX_PARAM_KEY       ?= protocolVersion
+CANOPY_TX_PARAM_VALUE     ?= 1/0
+CANOPY_TX_PARAM_START     ?= 1
+CANOPY_TX_PARAM_END       ?= 100
+CANOPY_TX_POLL_FILE       ?= fixtures/canopy/sample_poll.json
+
+CANOPY_TX_RUN = $(CANOPY_TX_CLI) --data-dir $(CANOPY_TX_DATA_DIR) --nickname $(CANOPY_TX_NICKNAME) --password $(CANOPY_TX_PASSWORD) admin
+CANOPY_TX_DELEGATE_FLAG = $(if $(filter true,$(CANOPY_TX_DELEGATE)),--delegate,)
+CANOPY_TX_EARLY_FLAG    = $(if $(filter true,$(CANOPY_TX_EARLY_WITHDRAWAL)),--early-withdrawal,)
+
+.PHONY: canopy-tx-prepare-data canopy-tx-check-cli canopy-tx-env
+
+canopy-tx-prepare-data:
+	@python3 scripts/canopy_prepare_data.py --output $(CANOPY_TX_DATA_DIR)
+
+canopy-tx-check-cli:
+	@command -v $(CANOPY_TX_CLI) >/dev/null 2>&1 || (echo "canopy CLI not found: set CANOPY_TX_CLI to the canopy binary path"; exit 1)
+
+canopy-tx-env:
+	@echo "CLI:        $(CANOPY_TX_CLI)"
+	@echo "Data Dir:   $(CANOPY_TX_DATA_DIR)"
+	@echo "Signer:     $(CANOPY_TX_SIGNER)"
+	@echo "Receiver:   $(CANOPY_TX_RECEIVER)"
+	@echo "Simulate:   $(CANOPY_TX_SIMULATE)"
+
+.PHONY: canopy-tx-send canopy-tx-stake canopy-tx-edit-stake canopy-tx-unstake canopy-tx-pause \
+	canopy-tx-unpause canopy-tx-change-param canopy-tx-dao-transfer canopy-tx-subsidy \
+	canopy-tx-create-order canopy-tx-edit-order canopy-tx-delete-order canopy-tx-lock-order \
+	canopy-tx-close-order canopy-tx-start-poll canopy-tx-approve-poll canopy-tx-reject-poll \
+	canopy-tx-sim-basic canopy-tx-sim-all
+
+canopy-tx-send: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-send $(CANOPY_TX_SIGNER) $(CANOPY_TX_RECEIVER) $(CANOPY_TX_SEND_AMOUNT) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-stake: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-stake $(CANOPY_TX_SIGNER) $(CANOPY_TX_NET_ADDR) $(CANOPY_TX_STAKE_AMOUNT) $(CANOPY_TX_COMMITTEES) $(CANOPY_TX_OUTPUT) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE) $(CANOPY_TX_DELEGATE_FLAG) $(CANOPY_TX_EARLY_FLAG)
+
+canopy-tx-edit-stake: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-edit-stake $(CANOPY_TX_SIGNER) $(CANOPY_TX_NET_ADDR) $(CANOPY_TX_EDIT_STAKE_AMT) $(CANOPY_TX_COMMITTEES) $(CANOPY_TX_OUTPUT) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE) $(CANOPY_TX_DELEGATE_FLAG) $(CANOPY_TX_EARLY_FLAG)
+
+canopy-tx-unstake: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-unstake $(CANOPY_TX_SIGNER) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-pause: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-pause $(CANOPY_TX_SIGNER) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-unpause: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-unpause $(CANOPY_TX_SIGNER) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-change-param: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-change-param $(CANOPY_TX_SIGNER) $(CANOPY_TX_PARAM_SPACE) $(CANOPY_TX_PARAM_KEY) $(CANOPY_TX_PARAM_VALUE) $(CANOPY_TX_PARAM_START) $(CANOPY_TX_PARAM_END) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-dao-transfer: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-dao-transfer $(CANOPY_TX_SIGNER) $(CANOPY_TX_DAO_AMOUNT) $(CANOPY_TX_PARAM_START) $(CANOPY_TX_PARAM_END) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-subsidy: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-subsidy $(CANOPY_TX_SIGNER) $(CANOPY_TX_SUBSIDY_AMOUNT) $(CANOPY_TX_CHAIN_ID) $(CANOPY_TX_SUBSIDY_OPCODE) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-create-order: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-create-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_SELL_AMOUNT) $(CANOPY_TX_RECEIVE_AMOUNT) $(CANOPY_TX_CHAIN_ID) $(CANOPY_TX_RECEIVER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE) $(if $(CANOPY_TX_CREATE_DATA),--data=$(CANOPY_TX_CREATE_DATA),)
+
+canopy-tx-edit-order: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-edit-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_SELL_AMOUNT) $(CANOPY_TX_RECEIVE_AMOUNT) $(CANOPY_TX_ORDER_ID) $(CANOPY_TX_CHAIN_ID) $(CANOPY_TX_RECEIVER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-delete-order: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-delete-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_ORDER_ID) $(CANOPY_TX_CHAIN_ID) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-lock-order: canopy-tx-prepare-data canopy-tx-check-cli
+	@test -n "$(CANOPY_TX_ORDER_ID)" || (echo "Set CANOPY_TX_ORDER_ID before running tx-lock-order"; exit 1)
+	$(CANOPY_TX_RUN) tx-lock-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_LOCK_RECEIVE) $(CANOPY_TX_ORDER_ID) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-close-order: canopy-tx-prepare-data canopy-tx-check-cli
+	@test -n "$(CANOPY_TX_ORDER_ID)" || (echo "Set CANOPY_TX_ORDER_ID before running tx-close-order"; exit 1)
+	$(CANOPY_TX_RUN) tx-close-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_ORDER_ID) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-start-poll: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-start-poll $(CANOPY_TX_SIGNER) "$$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' $(CANOPY_TX_POLL_FILE))" --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-approve-poll: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) approve-tx-vote-poll $(CANOPY_TX_SIGNER) "$$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' $(CANOPY_TX_POLL_FILE))" --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-reject-poll: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) reject-tx-vote-poll $(CANOPY_TX_SIGNER) "$$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' $(CANOPY_TX_POLL_FILE))" --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+CANOPY_TX_BASIC_TARGETS = canopy-tx-send canopy-tx-stake canopy-tx-edit-stake canopy-tx-unstake canopy-tx-pause canopy-tx-unpause canopy-tx-change-param canopy-tx-dao-transfer canopy-tx-subsidy canopy-tx-create-order canopy-tx-edit-order canopy-tx-delete-order canopy-tx-start-poll canopy-tx-approve-poll canopy-tx-reject-poll
+
+canopy-tx-sim-basic: $(CANOPY_TX_BASIC_TARGETS)
+
+canopy-tx-sim-all: canopy-tx-sim-basic canopy-tx-lock-order canopy-tx-close-order
+
+# ----------------------------
 # Tilt
 # ----------------------------
 

@@ -139,7 +139,8 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 
 	// Collect all summaries for aggregation
 	summaries := types.BlockSummaries{
-		NumTxs: txOut.NumTxs,
+		NumTxs:         txOut.NumTxs,
+		TxCountsByType: txOut.TxCountsByType,
 	}
 
 	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries
@@ -157,7 +158,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 
 	// Phase 3: Promote all entities in parallel from staging to production
 	// This follows the two-phase commit pattern for data consistency
-	promoteEntities := []string{"blocks", "txs", "txs_raw", "block_summaries", "accounts"}
+	promoteEntities := []string{"blocks", "txs", "block_summaries", "accounts"}
 	promoteFutures := make([]workflow.Future, 0, len(promoteEntities))
 
 	for _, entity := range promoteEntities {

@@ -20,8 +20,8 @@ func (c *Context) SaveBlockSummary(ctx context.Context, in types.SaveBlockSummar
 		return types.SaveBlockSummaryOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	// Insert block summary with all entity counts
-	if err := chainDb.InsertBlockSummary(ctx, in.Height, in.BlockTime, in.Summaries.NumTxs); err != nil {
+	// Insert block summary with all entity counts including transaction type breakdown
+	if err := chainDb.InsertBlockSummary(ctx, in.Height, in.BlockTime, in.Summaries.NumTxs, in.Summaries.TxCountsByType); err != nil {
 		return types.SaveBlockSummaryOutput{}, err
 	}
 

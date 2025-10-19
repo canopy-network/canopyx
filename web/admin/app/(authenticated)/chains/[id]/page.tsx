@@ -11,6 +11,8 @@ import { LiveSyncStatus } from '../../../components/LiveSyncStatus'
 import { GapRangesDisplay } from '../../../components/GapRangesDisplay'
 import { QueueHealthBadge } from '../../../components/QueueHealthBadge'
 import { useBlockEvents } from '../../../hooks/useBlockEvents'
+import { TransactionTypeBreakdown } from './TransactionTypeBreakdown'
+import { TransactionList } from './TransactionList'
 
 // Types
 type QueueStatus = {
@@ -111,6 +113,25 @@ type PaginatedResponse<T> = {
   data: T[]
   limit: number
   next_cursor: number | null
+}
+
+// Transaction and Block Summary types
+type BlockSummary = {
+  height: number
+  height_time: string
+  num_txs: number
+  tx_counts_by_type: { [key: string]: number }
+}
+
+type Transaction = {
+  height: number
+  tx_hash: string
+  message_type: string
+  signer: string
+  counterparty?: string | null
+  amount?: number | null
+  fee: number
+  time: string
 }
 
 // Utility functions
@@ -542,6 +563,43 @@ function OverviewTab({
   const { notify } = useToast()
   const [reindexDialogOpen, setReindexDialogOpen] = useState(false)
 
+  // Transaction data state
+  const [blockSummary, setBlockSummary] = useState<BlockSummary | null>(null)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loadingTxData, setLoadingTxData] = useState(false)
+
+  // Fetch transaction data on mount and when chain status changes
+  useEffect(() => {
+    const fetchTransactionData = async () => {
+      if (!status || status.last_indexed === 0) return
+
+      setLoadingTxData(true)
+      try {
+        // Fetch latest block summary for tx_counts_by_type
+        const summaryRes = await fetch(`/api/query/chains/${config.chain_id}/block_summaries?limit=1&sort=desc`)
+        if (summaryRes.ok) {
+          const summaryData: PaginatedResponse<BlockSummary> = await summaryRes.json()
+          if (summaryData.data && summaryData.data.length > 0) {
+            setBlockSummary(summaryData.data[0])
+          }
+        }
+
+        // Fetch recent transactions
+        const txRes = await fetch(`/api/query/chains/${config.chain_id}/transactions?limit=10&sort=desc`)
+        if (txRes.ok) {
+          const txData: PaginatedResponse<Transaction> = await txRes.json()
+          setTransactions(txData.data || [])
+        }
+      } catch (err) {
+        console.error('Failed to fetch transaction data:', err)
+      } finally {
+        setLoadingTxData(false)
+      }
+    }
+
+    fetchTransactionData()
+  }, [config.chain_id, status?.last_indexed])
+
   const handleReindex = async (payload: ReindexPayload) => {
     try {
       const res = await apiFetch(`/api/chains/${config.chain_id}/reindex`, {
@@ -666,6 +724,14 @@ function OverviewTab({
 
       {/* Indexing Progress Chart */}
       <IndexingProgressChart chainId={config.chain_id} />
+
+      {/* Transaction Type Breakdown - NEW */}
+      {blockSummary && blockSummary.tx_counts_by_type && (
+        <div className="grid gap-6 md:grid-cols-2">
+          <TransactionTypeBreakdown txCounts={blockSummary.tx_counts_by_type} />
+          <TransactionList transactions={transactions} loading={loadingTxData} />
+        </div>
+      )}
 
       {/* Reindex History */}
       {status?.reindex_history && status.reindex_history.length > 0 && (

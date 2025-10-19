@@ -86,7 +86,7 @@ func (db *ChainDB) createStagingTables(ctx context.Context) error {
 	}
 
 	// Create txs_staging table
-	// Schema matches the Transaction model in pkg/db/models/indexer/tx.go
+	// Schema matches the Transaction model in pkg/db/models/indexer/tx.go (single-table design)
 	txsStaging := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."txs_staging" (
 			height UInt64,
@@ -98,6 +98,9 @@ func (db *ChainDB) createStagingTables(ctx context.Context) error {
 			signer String,
 			amount Nullable(UInt64),
 			fee UInt64,
+			msg String CODEC(ZSTD(3)),
+			public_key Nullable(String) CODEC(ZSTD(3)),
+			signature Nullable(String) CODEC(ZSTD(3)),
 			created_height UInt64
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height, tx_hash)
@@ -107,33 +110,14 @@ func (db *ChainDB) createStagingTables(ctx context.Context) error {
 		return fmt.Errorf("create txs_staging: %w", err)
 	}
 
-	// Create txs_raw_staging table
-	// Schema matches the TransactionRaw model in pkg/db/models/indexer/tx.go
-	// Note: TTL is only applied to production table, not staging
-	txsRawStaging := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."txs_raw_staging" (
-			height UInt64,
-			tx_hash String,
-			height_time DateTime64(6),
-			msg_raw Nullable(String),
-			public_key Nullable(String),
-			signature Nullable(String),
-			created_at DateTime DEFAULT now()
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (height, tx_hash)
-	`, db.Name)
-
-	if err := db.Exec(ctx, txsRawStaging); err != nil {
-		return fmt.Errorf("create txs_raw_staging: %w", err)
-	}
-
 	// Create block_summaries_staging table
 	// Schema matches the BlockSummary model in pkg/db/models/indexer/block_summary.go
 	blockSummariesStaging := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."block_summaries_staging" (
 			height UInt64,
 			height_time DateTime64(6),
-			num_txs UInt32 DEFAULT 0
+			num_txs UInt32 DEFAULT 0,
+			tx_counts_by_type Map(LowCardinality(String), UInt32)
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height)
 	`, db.Name)
@@ -161,7 +145,7 @@ func (db *ChainDB) createStagingTables(ctx context.Context) error {
 
 	db.Logger.Info("Staging tables created successfully",
 		zap.String("database", db.Name),
-		zap.Strings("tables", []string{"blocks_staging", "txs_staging", "txs_raw_staging", "block_summaries_staging", "accounts_staging"}))
+		zap.Strings("tables", []string{"blocks_staging", "txs_staging", "block_summaries_staging", "accounts_staging"}))
 
 	return nil
 }
@@ -196,10 +180,10 @@ func (db *ChainDB) GetBlock(ctx context.Context, height uint64) (*indexer.Block,
 	return block, nil
 }
 
-// GetTransactionByHash retrieves a transaction by its hash.
+// GetTransactionByHash retrieves a transaction by its hash, including the msg JSON field.
 // Uses FINAL to deduplicate with ReplacingMergeTree.
 func (db *ChainDB) GetTransactionByHash(ctx context.Context, txHash string) (*indexer.Transaction, error) {
-	query := fmt.Sprintf(`SELECT height, tx_hash, time, height_time, message_type, counterparty, signer, amount, fee, created_height FROM "%s"."txs" FINAL WHERE tx_hash = ? LIMIT 1`, db.Name)
+	query := fmt.Sprintf(`SELECT height, tx_hash, time, height_time, message_type, counterparty, signer, amount, fee, msg, public_key, signature, created_height FROM "%s"."txs" FINAL WHERE tx_hash = ? LIMIT 1`, db.Name)
 
 	var tx indexer.Transaction
 	if err := db.Db.NewRaw(query, txHash).Scan(ctx, &tx); err != nil {
@@ -212,18 +196,24 @@ func (db *ChainDB) GetTransactionByHash(ctx context.Context, txHash string) (*in
 	return &tx, nil
 }
 
-// InsertTransactions persists indexed transactions and raw payloads into the chain database.
-func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raws []*indexer.TransactionRaw) error {
-	return indexer.InsertTransactions(ctx, db.Db, txs, raws)
+// InsertTransactions persists indexed transactions into the single transactions table.
+func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transaction) error {
+	if len(txs) == 0 {
+		return nil
+	}
+	_, err := db.Db.NewInsert().Model(&txs).Exec(ctx)
+	return err
 }
 
 // InsertBlockSummary persists block summary data (entity counts) into the chain database.
 // blockTime is the timestamp from the block, used to populate height_time for time-range queries.
-func (db *ChainDB) InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32) error {
+// txCountsByType contains a breakdown of transaction counts by message type.
+func (db *ChainDB) InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
 	summary := &indexer.BlockSummary{
-		Height:     height,
-		HeightTime: blockTime,
-		NumTxs:     numTxs,
+		Height:         height,
+		HeightTime:     blockTime,
+		NumTxs:         numTxs,
+		TxCountsByType: txCountsByType,
 	}
 	_, err := db.Db.NewInsert().Model(summary).Exec(ctx)
 	return err
@@ -314,8 +304,20 @@ func (db *ChainDB) QueryBlockSummaries(ctx context.Context, cursor uint64, limit
 // If cursor > 0 and sortDesc is false, only transactions with height > cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
 func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Transaction, error) {
+	return db.QueryTransactionsWithFilter(ctx, cursor, limit, sortDesc, "")
+}
+
+// QueryTransactionsWithFilter retrieves a paginated list of transactions with optional message type filtering.
+// If messageType is non-empty, only transactions matching that message type are returned.
+// If sortDesc is true, orders by height DESC (newest first), otherwise ASC (oldest first).
+// If cursor > 0 and sortDesc is true, only transactions with height < cursor are returned.
+// If cursor > 0 and sortDesc is false, only transactions with height > cursor are returned.
+// The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
+func (db *ChainDB) QueryTransactionsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, messageType string) ([]indexer.Transaction, error) {
 	conds := make([]string, 0)
 	args := make([]any, 0)
+
+	// Apply cursor filtering
 	if cursor > 0 {
 		if sortDesc {
 			conds = append(conds, "height < ?")
@@ -323,6 +325,12 @@ func (db *ChainDB) QueryTransactions(ctx context.Context, cursor uint64, limit i
 			conds = append(conds, "height > ?")
 		}
 		args = append(args, cursor)
+	}
+
+	// Apply message type filtering if specified
+	if messageType != "" {
+		conds = append(conds, "message_type = ?")
+		args = append(args, messageType)
 	}
 
 	sortOrder := "DESC"
@@ -428,17 +436,11 @@ func (db *ChainDB) DeleteBlock(ctx context.Context, height uint64) error {
 	return err
 }
 
-// DeleteTransactions removes transaction rows for the specified height from both fact and raw tables.
+// DeleteTransactions removes transaction rows for the specified height from the transactions table.
 func (db *ChainDB) DeleteTransactions(ctx context.Context, height uint64) error {
-	coreStmt := fmt.Sprintf(`ALTER TABLE "%s"."txs" DELETE WHERE height = ?`, db.Name)
-	if _, err := db.Db.ExecContext(ctx, coreStmt, height); err != nil {
-		return err
-	}
-	rawStmt := fmt.Sprintf(`ALTER TABLE "%s"."txs_raw" DELETE WHERE height = ?`, db.Name)
-	if _, err := db.Db.ExecContext(ctx, rawStmt, height); err != nil {
-		return err
-	}
-	return nil
+	stmt := fmt.Sprintf(`ALTER TABLE "%s"."txs" DELETE WHERE height = ?`, db.Name)
+	_, err := db.Db.ExecContext(ctx, stmt, height)
+	return err
 }
 
 // Exec executes an arbitrary query against the chain database.
@@ -447,12 +449,10 @@ func (db *ChainDB) Exec(ctx context.Context, query string, args ...any) error {
 	return err
 }
 
-// QueryTransactionsRaw retrieves raw transaction data with all columns.
-// If sortDesc is true, orders by height DESC (newest first), otherwise ASC (oldest first).
-// If cursor > 0 and sortDesc is true, only transactions with height < cursor are returned.
-// If cursor > 0 and sortDesc is false, only transactions with height > cursor are returned.
-// The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
+// QueryTransactionsRaw is deprecated - use GetTransactionByHash to get msg, public_key, signature fields.
+// Single-table design includes all fields in the txs table.
 func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]map[string]interface{}, error) {
+	// For backward compatibility, query from txs table which now includes msg, public_key, signature
 	conds := make([]string, 0)
 	args := make([]any, 0)
 	if cursor > 0 {
@@ -469,29 +469,28 @@ func (db *ChainDB) QueryTransactionsRaw(ctx context.Context, cursor uint64, limi
 		sortOrder = "ASC"
 	}
 
-	query := fmt.Sprintf(`SELECT height, tx_hash, height_time, msg_raw, public_key, signature, created_at FROM "%s"."txs_raw" FINAL`, db.Name)
+	query := fmt.Sprintf(`SELECT height, tx_hash, height_time, msg, public_key, signature FROM "%s"."txs" FINAL`, db.Name)
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
 	query += fmt.Sprintf(" ORDER BY height %s LIMIT ?", sortOrder)
 	args = append(args, limit)
 
-	rows := make([]indexer.TransactionRaw, 0, limit)
-	if err := db.Db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
-		return nil, fmt.Errorf("query transactions raw failed: %w", err)
+	var txs []indexer.Transaction
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &txs); err != nil {
+		return nil, fmt.Errorf("query transactions failed: %w", err)
 	}
 
 	// Convert to map[string]interface{} for flexible JSON response
-	results := make([]map[string]interface{}, len(rows))
-	for i, row := range rows {
+	results := make([]map[string]interface{}, len(txs))
+	for i, tx := range txs {
 		results[i] = map[string]interface{}{
-			"height":      row.Height,
-			"tx_hash":     row.TxHash,
-			"height_time": row.HeightTime.UTC().Format(time.RFC3339),
-			"msg_raw":     row.MsgRaw,
-			"public_key":  row.PublicKey,
-			"signature":   row.Signature,
-			"created_at":  row.CreatedAt.UTC().Format(time.RFC3339),
+			"height":      tx.Height,
+			"tx_hash":     tx.TxHash,
+			"height_time": tx.HeightTime.UTC().Format(time.RFC3339),
+			"msg":         tx.Msg,
+			"public_key":  tx.PublicKey,
+			"signature":   tx.Signature,
 		}
 	}
 

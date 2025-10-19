@@ -10,7 +10,7 @@ import (
 )
 
 // IndexTransactions indexes transactions for a given block.
-// Returns output containing the number of indexed transactions and execution duration in milliseconds.
+// Returns output containing the number of indexed transactions, counts by type, and execution duration in milliseconds.
 func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransactionsInput) (types.IndexTransactionsOutput, error) {
 	start := time.Now()
 
@@ -25,8 +25,9 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransacti
 		return types.IndexTransactionsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
+	// Fetch and parse transactions from RPC (single-table design)
 	cli := c.rpcClient(ch.RPCEndpoints)
-	txs, txsRaw, err := cli.TxsByHeight(ctx, in.Height)
+	txs, err := cli.TxsByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexTransactionsOutput{}, err
 	}
@@ -35,20 +36,28 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransacti
 	for i := range txs {
 		txs[i].HeightTime = in.BlockTime
 	}
-	for i := range txsRaw {
-		txsRaw[i].HeightTime = in.BlockTime
+
+	// Count transactions by type for analytics
+	txCountsByType := make(map[string]uint32)
+	for _, tx := range txs {
+		txCountsByType[tx.MessageType]++
 	}
 
 	numTxs := uint32(len(txs))
 	c.Logger.Debug("IndexTransactions fetched from RPC",
 		zap.Uint64("height", in.Height),
 		zap.Uint32("numTxs", numTxs),
-		zap.Int("txsRaw_len", len(txsRaw)))
+		zap.Any("txCountsByType", txCountsByType))
 
-	if err := chainDb.InsertTransactions(ctx, txs, txsRaw); err != nil {
+	// Insert transactions (single table)
+	if err := chainDb.InsertTransactions(ctx, txs); err != nil {
 		return types.IndexTransactionsOutput{}, err
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.IndexTransactionsOutput{NumTxs: numTxs, DurationMs: durationMs}, nil
+	return types.IndexTransactionsOutput{
+		NumTxs:         numTxs,
+		TxCountsByType: txCountsByType,
+		DurationMs:     durationMs,
+	}, nil
 }

@@ -47,13 +47,13 @@ func (m *MockChainStore) GetBlock(ctx context.Context, height uint64) (*indexer.
 	return args.Get(0).(*indexer.Block), args.Error(1)
 }
 
-func (m *MockChainStore) InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raw []*indexer.TransactionRaw) error {
-	args := m.Called(ctx, txs, raw)
+func (m *MockChainStore) InsertTransactions(ctx context.Context, txs []*indexer.Transaction) error {
+	args := m.Called(ctx, txs)
 	return args.Error(0)
 }
 
-func (m *MockChainStore) InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32) error {
-	args := m.Called(ctx, height, blockTime, numTxs)
+func (m *MockChainStore) InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
+	args := m.Called(ctx, height, blockTime, numTxs, txCountsByType)
 	return args.Error(0)
 }
 
@@ -167,6 +167,14 @@ func (m *MockChainStore) GetTransactionByHash(ctx context.Context, hash string) 
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*indexer.Transaction), args.Error(1)
+}
+
+func (m *MockChainStore) QueryTransactionsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, messageType string) ([]indexer.Transaction, error) {
+	args := m.Called(ctx, cursor, limit, sortDesc, messageType)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]indexer.Transaction), args.Error(1)
 }
 
 func (m *MockChainStore) Close() error {

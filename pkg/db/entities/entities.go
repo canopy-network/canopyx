@@ -62,11 +62,6 @@ const (
 	// Staging table: txs_staging
 	Transactions Entity = "txs"
 
-	// TransactionsRaw represents the raw transaction data entity.
-	// Production table: txs_raw
-	// Staging table: txs_raw_staging
-	TransactionsRaw Entity = "txs_raw"
-
 	// BlockSummaries represents the block summary aggregations.
 	// Production table: block_summaries
 	// Staging table: block_summaries_staging
@@ -92,7 +87,6 @@ const (
 var allEntities = []Entity{
 	Blocks,
 	Transactions,
-	TransactionsRaw,
 	BlockSummaries,
 	Accounts,
 }

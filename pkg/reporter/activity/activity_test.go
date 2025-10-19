@@ -87,7 +87,7 @@ func (f *reporterFakeChainStore) InsertBlock(context.Context, *indexermodels.Blo
 	return nil
 }
 
-func (f *reporterFakeChainStore) InsertTransactions(context.Context, []*indexermodels.Transaction, []*indexermodels.TransactionRaw) error {
+func (f *reporterFakeChainStore) InsertTransactions(context.Context, []*indexermodels.Transaction) error {
 	return nil
 }
 

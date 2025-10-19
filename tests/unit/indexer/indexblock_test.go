@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db"
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/indexer/activity"
@@ -39,9 +40,6 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 	rpcClient := &wfFakeRPCClient{
 		block: &indexermodels.Block{Height: 21},
 		txs: []*indexermodels.Transaction{
-			{TxHash: "tx1"},
-		},
-		raws: []*indexermodels.TransactionRaw{
 			{TxHash: "tx1"},
 		},
 	}
@@ -155,18 +153,26 @@ func (f *wfFakeChainStore) InsertBlock(_ context.Context, block *indexermodels.B
 	return nil
 }
 
-func (f *wfFakeChainStore) InsertTransactions(_ context.Context, _ []*indexermodels.Transaction, _ []*indexermodels.TransactionRaw) error {
+func (f *wfFakeChainStore) InsertTransactions(_ context.Context, _ []*indexermodels.Transaction) error {
 	f.insertTransactionCalls++
 	return nil
 }
 
-func (f *wfFakeChainStore) InsertBlockSummary(_ context.Context, height uint64, numTxs uint32) error {
+func (f *wfFakeChainStore) InsertBlockSummary(_ context.Context, height uint64, _ time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
 	f.insertBlockSummaryCalls++
 	f.lastBlockSummary = &indexermodels.BlockSummary{
-		Height: height,
-		NumTxs: numTxs,
+		Height:         height,
+		NumTxs:         numTxs,
+		TxCountsByType: txCountsByType,
 	}
 	return nil
+}
+
+func (f *wfFakeChainStore) GetBlock(_ context.Context, height uint64) (*indexermodels.Block, error) {
+	if f.lastBlock != nil && f.lastBlock.Height == height {
+		return f.lastBlock, nil
+	}
+	return nil, nil
 }
 
 func (f *wfFakeChainStore) GetBlockSummary(_ context.Context, height uint64) (*indexermodels.BlockSummary, error) {
@@ -193,23 +199,55 @@ func (f *wfFakeChainStore) DeleteTransactions(_ context.Context, height uint64) 
 
 func (*wfFakeChainStore) Exec(context.Context, string, ...any) error { return nil }
 
-func (*wfFakeChainStore) QueryBlocks(context.Context, uint64, int) ([]indexermodels.Block, error) {
+func (*wfFakeChainStore) QueryBlocks(context.Context, uint64, int, bool) ([]indexermodels.Block, error) {
 	return nil, nil
 }
 
-func (*wfFakeChainStore) QueryBlockSummaries(context.Context, uint64, int) ([]indexermodels.BlockSummary, error) {
+func (*wfFakeChainStore) QueryBlockSummaries(context.Context, uint64, int, bool) ([]indexermodels.BlockSummary, error) {
 	return nil, nil
 }
 
-func (*wfFakeChainStore) QueryTransactions(context.Context, uint64, int) ([]indexermodels.Transaction, error) {
+func (*wfFakeChainStore) QueryTransactions(context.Context, uint64, int, bool) ([]indexermodels.Transaction, error) {
 	return nil, nil
 }
 
-func (*wfFakeChainStore) QueryTransactionsRaw(context.Context, uint64, int) ([]map[string]interface{}, error) {
+func (*wfFakeChainStore) QueryTransactionsRaw(context.Context, uint64, int, bool) ([]map[string]interface{}, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryTransactionsWithFilter(context.Context, uint64, int, bool, string) ([]indexermodels.Transaction, error) {
 	return nil, nil
 }
 
 func (*wfFakeChainStore) DescribeTable(context.Context, string) ([]db.Column, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) PromoteEntity(context.Context, entities.Entity, uint64) error {
+	return nil
+}
+
+func (*wfFakeChainStore) CleanEntityStaging(context.Context, entities.Entity, uint64) error {
+	return nil
+}
+
+func (*wfFakeChainStore) ValidateQueryHeight(context.Context, *uint64) (uint64, error) {
+	return 0, nil
+}
+
+func (*wfFakeChainStore) GetFullyIndexedHeight(context.Context) (uint64, error) {
+	return 0, nil
+}
+
+func (*wfFakeChainStore) GetAccountByAddress(context.Context, string, *uint64) (*indexermodels.Account, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryAccounts(context.Context, uint64, int, bool) ([]indexermodels.Account, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) GetTransactionByHash(context.Context, string) (*indexermodels.Transaction, error) {
 	return nil, nil
 }
 
@@ -226,7 +264,6 @@ func (f *wfFakeRPCFactory) NewClient(_ []string) rpc.Client {
 type wfFakeRPCClient struct {
 	block *indexermodels.Block
 	txs   []*indexermodels.Transaction
-	raws  []*indexermodels.TransactionRaw
 }
 
 func (f *wfFakeRPCClient) ChainHead(context.Context) (uint64, error) { return 0, nil }
@@ -235,6 +272,14 @@ func (f *wfFakeRPCClient) BlockByHeight(context.Context, uint64) (*indexermodels
 	return f.block, nil
 }
 
-func (f *wfFakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels.Transaction, []*indexermodels.TransactionRaw, error) {
-	return f.txs, f.raws, nil
+func (f *wfFakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels.Transaction, error) {
+	return f.txs, nil
+}
+
+func (f *wfFakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.RpcAccount, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) GetGenesisState(context.Context, uint64) (*rpc.GenesisState, error) {
+	return nil, nil
 }

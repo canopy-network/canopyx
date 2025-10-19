@@ -10,7 +10,7 @@ import (
 type Client interface {
 	ChainHead(ctx context.Context) (uint64, error)
 	BlockByHeight(ctx context.Context, height uint64) (*indexer.Block, error)
-	TxsByHeight(ctx context.Context, height uint64) ([]*indexer.Transaction, []*indexer.TransactionRaw, error)
+	TxsByHeight(ctx context.Context, height uint64) ([]*indexer.Transaction, error)
 	AccountsByHeight(ctx context.Context, height uint64) ([]*RpcAccount, error)
 	GetGenesisState(ctx context.Context, height uint64) (*GenesisState, error)
 }

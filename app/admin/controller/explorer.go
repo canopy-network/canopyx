@@ -16,7 +16,6 @@ import (
 const (
 	ExplorerTableBlocks = "blocks"
 	ExplorerTableTxs    = "txs"
-	ExplorerTableTxsRaw = "txs_raw"
 )
 
 // Default and maximum limits for data queries
@@ -66,7 +65,7 @@ func NewExplorerService(c *Controller) ExplorerService {
 // validateTableName ensures the table name is valid to prevent SQL injection
 func (s *explorerService) validateTableName(tableName string) error {
 	switch tableName {
-	case ExplorerTableBlocks, ExplorerTableTxs, ExplorerTableTxsRaw:
+	case ExplorerTableBlocks, ExplorerTableTxs:
 		return nil
 	default:
 		return fmt.Errorf("invalid table name: %s", tableName)

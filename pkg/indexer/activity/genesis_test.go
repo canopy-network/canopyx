@@ -39,12 +39,12 @@ func (m *mockGenesisRPCClient) BlockByHeight(ctx context.Context, height uint64)
 	return args.Get(0).(*indexermodels.Block), args.Error(1)
 }
 
-func (m *mockGenesisRPCClient) TxsByHeight(ctx context.Context, height uint64) ([]*indexermodels.Transaction, []*indexermodels.TransactionRaw, error) {
+func (m *mockGenesisRPCClient) TxsByHeight(ctx context.Context, height uint64) ([]*indexermodels.Transaction, error) {
 	args := m.Called(ctx, height)
 	if args.Get(0) == nil {
-		return nil, nil, args.Error(2)
+		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*indexermodels.Transaction), args.Get(1).([]*indexermodels.TransactionRaw), args.Error(2)
+	return args.Get(0).([]*indexermodels.Transaction), args.Error(1)
 }
 
 func (m *mockGenesisRPCClient) AccountsByHeight(ctx context.Context, height uint64) ([]*rpc.RpcAccount, error) {
@@ -80,11 +80,11 @@ func (m *mockGenesisChainDB) InsertBlock(ctx context.Context, block *indexermode
 	return nil
 }
 
-func (m *mockGenesisChainDB) InsertTransactions(ctx context.Context, txs []*indexermodels.Transaction, raws []*indexermodels.TransactionRaw) error {
+func (m *mockGenesisChainDB) InsertTransactions(ctx context.Context, txs []*indexermodels.Transaction) error {
 	return nil
 }
 
-func (m *mockGenesisChainDB) InsertBlockSummary(ctx context.Context, height uint64, timestamp time.Time, numTxs uint32) error {
+func (m *mockGenesisChainDB) InsertBlockSummary(ctx context.Context, height uint64, timestamp time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
 	return nil
 }
 
@@ -158,6 +158,10 @@ func (m *mockGenesisChainDB) QueryAccounts(ctx context.Context, cursor uint64, l
 }
 
 func (m *mockGenesisChainDB) GetTransactionByHash(ctx context.Context, hash string) (*indexermodels.Transaction, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) QueryTransactionsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, messageType string) ([]indexermodels.Transaction, error) {
 	return nil, nil
 }
 

@@ -31,7 +31,8 @@ type ChainIdInput struct {
 
 // BlockSummaries - Any summary of a block that is needed for indexing.
 type BlockSummaries struct {
-	NumTxs uint32 `json:"numTxs"`
+	NumTxs         uint32            `json:"numTxs"`
+	TxCountsByType map[string]uint32 `json:"txCountsByType"` // Count per type: {"send": 5, "delegate": 2}
 }
 
 type IndexBlockInput struct {
@@ -89,8 +90,9 @@ type IndexTransactionsInput struct {
 
 // IndexTransactionsOutput contains the number of indexed transactions along with execution duration.
 type IndexTransactionsOutput struct {
-	NumTxs     uint32  `json:"numTxs"`     // Number of transactions indexed
-	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
+	NumTxs         uint32            `json:"numTxs"`         // Number of transactions indexed
+	TxCountsByType map[string]uint32 `json:"txCountsByType"` // Count per type: {"send": 5, "delegate": 2}
+	DurationMs     float64           `json:"durationMs"`     // Execution time in milliseconds
 }
 
 // EnsureGenesisCachedInput contains the parameters for caching genesis state.

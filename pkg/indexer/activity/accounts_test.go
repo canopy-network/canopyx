@@ -37,12 +37,12 @@ func (m *mockAccountsRPCClient) BlockByHeight(ctx context.Context, height uint64
 	return args.Get(0).(*indexermodels.Block), args.Error(1)
 }
 
-func (m *mockAccountsRPCClient) TxsByHeight(ctx context.Context, height uint64) ([]*indexermodels.Transaction, []*indexermodels.TransactionRaw, error) {
+func (m *mockAccountsRPCClient) TxsByHeight(ctx context.Context, height uint64) ([]*indexermodels.Transaction, error) {
 	args := m.Called(ctx, height)
 	if args.Get(0) == nil {
-		return nil, nil, args.Error(2)
+		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*indexermodels.Transaction), args.Get(1).([]*indexermodels.TransactionRaw), args.Error(2)
+	return args.Get(0).([]*indexermodels.Transaction), args.Error(1)
 }
 
 func (m *mockAccountsRPCClient) AccountsByHeight(ctx context.Context, height uint64) ([]*rpc.RpcAccount, error) {
@@ -77,13 +77,13 @@ func (m *mockAccountsChainStore) InsertBlock(ctx context.Context, block *indexer
 	return args.Error(0)
 }
 
-func (m *mockAccountsChainStore) InsertTransactions(ctx context.Context, txs []*indexermodels.Transaction, raws []*indexermodels.TransactionRaw) error {
-	args := m.Called(ctx, txs, raws)
+func (m *mockAccountsChainStore) InsertTransactions(ctx context.Context, txs []*indexermodels.Transaction) error {
+	args := m.Called(ctx, txs)
 	return args.Error(0)
 }
 
-func (m *mockAccountsChainStore) InsertBlockSummary(ctx context.Context, height uint64, timestamp time.Time, numTxs uint32) error {
-	args := m.Called(ctx, height, timestamp, numTxs)
+func (m *mockAccountsChainStore) InsertBlockSummary(ctx context.Context, height uint64, timestamp time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
+	args := m.Called(ctx, height, timestamp, numTxs, txCountsByType)
 	return args.Error(0)
 }
 
@@ -205,6 +205,14 @@ func (m *mockAccountsChainStore) GetTransactionByHash(ctx context.Context, hash 
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*indexermodels.Transaction), args.Error(1)
+}
+
+func (m *mockAccountsChainStore) QueryTransactionsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, messageType string) ([]indexermodels.Transaction, error) {
+	args := m.Called(ctx, cursor, limit, sortDesc, messageType)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]indexermodels.Transaction), args.Error(1)
 }
 
 func (m *mockAccountsChainStore) Close() error {
