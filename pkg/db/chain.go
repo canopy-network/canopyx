@@ -429,6 +429,58 @@ func (db *ChainDB) QueryAccounts(ctx context.Context, cursor uint64, limit int, 
 	return accounts, nil
 }
 
+// QueryEvents retrieves a paginated list of events ordered by height.
+// Delegates to QueryEventsWithFilter with an empty event type filter.
+func (db *ChainDB) QueryEvents(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Event, error) {
+	return db.QueryEventsWithFilter(ctx, cursor, limit, sortDesc, "")
+}
+
+// QueryEventsWithFilter retrieves a paginated list of events with optional event type filtering.
+// If sortDesc is true, orders by height DESC (newest first), otherwise ASC (oldest first).
+// If cursor > 0 and sortDesc is true, only events with height < cursor are returned.
+// If cursor > 0 and sortDesc is false, only events with height > cursor are returned.
+// If eventType is non-empty, filters to only events of that type.
+// The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
+func (db *ChainDB) QueryEventsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, eventType string) ([]indexer.Event, error) {
+	conds := make([]string, 0)
+	args := make([]any, 0)
+
+	// Apply cursor filtering
+	if cursor > 0 {
+		if sortDesc {
+			conds = append(conds, "height < ?")
+		} else {
+			conds = append(conds, "height > ?")
+		}
+		args = append(args, cursor)
+	}
+
+	// Apply event type filtering if specified
+	if eventType != "" {
+		conds = append(conds, "event_type = ?")
+		args = append(args, eventType)
+	}
+
+	sortOrder := "DESC"
+	if !sortDesc {
+		sortOrder = "ASC"
+	}
+
+	query := fmt.Sprintf(`SELECT height, address, reference, event_type, amount, sold_amount, bought_amount, local_amount, remote_amount, success, local_origin, order_id, height_time FROM "%s"."events" FINAL`, db.Name)
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+	query += fmt.Sprintf(" ORDER BY height %s LIMIT ?", sortOrder)
+	args = append(args, limit)
+
+	var events []indexer.Event
+	if err := db.Db.NewRaw(query, args...).Scan(ctx, &events); err != nil {
+		return nil, fmt.Errorf("query events failed: %w", err)
+	}
+
+	return events, nil
+}
+
 // GetAccountByAddress retrieves an account by address at a specific height.
 // Uses FINAL to deduplicate with ReplacingMergeTree.
 // If height is nil, returns the latest state.

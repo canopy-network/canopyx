@@ -66,6 +66,7 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.HandleFunc("/chains/{id}/block_summaries/{height}", c.HandleBlockSummaryByHeight).Methods("GET")
 	r.HandleFunc("/chains/{id}/transactions", c.HandleTransactions).Methods("GET")
 	r.HandleFunc("/chains/{id}/transactions/{hash}", c.HandleTransactionByHash).Methods("GET")
+	r.HandleFunc("/chains/{id}/events", c.HandleEvents).Methods("GET")
 	r.HandleFunc("/chains/{id}/accounts", c.HandleAccounts).Methods("GET")
 	r.HandleFunc("/chains/{id}/accounts/{address}", c.HandleAccountByAddress).Methods("GET")
 	r.HandleFunc("/chains/{id}/schema", c.HandleSchema).Methods("GET")

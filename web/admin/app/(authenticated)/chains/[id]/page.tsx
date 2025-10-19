@@ -13,6 +13,8 @@ import { QueueHealthBadge } from '../../../components/QueueHealthBadge'
 import { useBlockEvents } from '../../../hooks/useBlockEvents'
 import { TransactionTypeBreakdown } from './TransactionTypeBreakdown'
 import { TransactionList } from './TransactionList'
+import { EventTypeBreakdown } from './EventTypeBreakdown'
+import { EventList } from './EventList'
 
 // Types
 type QueueStatus = {
@@ -79,6 +81,8 @@ type ChainStatus = {
   largest_gap_start?: number
   largest_gap_end?: number
   is_live_sync?: boolean
+  // event tracking
+  event_counts_by_type?: { [key: string]: number }
 }
 
 type ReindexPayload = {
@@ -88,7 +92,7 @@ type ReindexPayload = {
 }
 
 // Explorer tab types
-type ExplorerTable = 'blocks' | 'block_summaries' | 'txs' | 'txs_raw' | 'accounts'
+type ExplorerTable = 'blocks' | 'block_summaries' | 'txs' | 'txs_raw' | 'accounts' | 'events'
 
 type EntityInfo = {
   name: string
@@ -725,12 +729,17 @@ function OverviewTab({
       {/* Indexing Progress Chart */}
       <IndexingProgressChart chainId={config.chain_id} />
 
-      {/* Transaction Type Breakdown - NEW */}
+      {/* Transaction Type Breakdown */}
       {blockSummary && blockSummary.tx_counts_by_type && (
         <div className="grid gap-6 md:grid-cols-2">
           <TransactionTypeBreakdown txCounts={blockSummary.tx_counts_by_type} />
           <TransactionList transactions={transactions} loading={loadingTxData} />
         </div>
+      )}
+
+      {/* Event Type Breakdown */}
+      {status?.event_counts_by_type && (
+        <EventTypeBreakdown eventCounts={status.event_counts_by_type} />
       )}
 
       {/* Reindex History */}
@@ -1121,22 +1130,55 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     }
   }
 
+  // Sub-tab for explorer views
+  const [explorerView, setExplorerView] = useState<ExplorerTable | 'events'>('blocks')
+
   return (
     <div className="space-y-6">
-      {/* Error Banner */}
-      {error && (
-        <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-rose-200">
-          <div className="flex items-start gap-3">
-            <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div>
-              <p className="font-semibold">Error Loading Explorer Data</p>
-              <p className="mt-1 text-sm text-rose-300">{error}</p>
+      {/* Explorer View Selector */}
+      <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+        <button
+          onClick={() => setExplorerView('events')}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            explorerView === 'events'
+              ? 'bg-indigo-500 text-white'
+              : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+          }`}
+        >
+          Events
+        </button>
+        <button
+          onClick={() => setExplorerView('blocks')}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            explorerView !== 'events'
+              ? 'bg-indigo-500 text-white'
+              : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+          }`}
+        >
+          Tables
+        </button>
+      </div>
+
+      {/* Events View */}
+      {explorerView === 'events' && <EventList chainId={chainId} />}
+
+      {/* Table Browser View */}
+      {explorerView !== 'events' && (
+        <>
+          {/* Error Banner */}
+          {error && (
+            <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-rose-200">
+              <div className="flex items-start gap-3">
+                <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p className="font-semibold">Error Loading Explorer Data</p>
+                  <p className="mt-1 text-sm text-rose-300">{error}</p>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
       {/* Single Entity Lookup Section */}
       {!loadingEntities && entities.length > 0 && (
@@ -1415,6 +1457,8 @@ function ExplorerTab({ chainId }: { chainId: string }) {
           Showing {data.length} {data.length === 1 ? 'row' : 'rows'}
           {nextCursor !== null && ' • More results available'}
         </div>
+      )}
+        </>
       )}
     </div>
   )

@@ -38,6 +38,8 @@ type ChainStore interface {
 	QueryTransactions(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Transaction, error)
 	QueryTransactionsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, messageType string) ([]indexer.Transaction, error)
 	QueryAccounts(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Account, error)
+	QueryEvents(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Event, error)
+	QueryEventsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, eventType string) ([]indexer.Event, error)
 	GetAccountByAddress(ctx context.Context, address string, height *uint64) (*indexer.Account, error)
 	QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]map[string]interface{}, error)
 	DescribeTable(ctx context.Context, tableName string) ([]Column, error)
