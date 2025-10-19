@@ -96,6 +96,8 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 		{Name: "TEMPORAL_NAMESPACE", Value: mustEnv("TEMPORAL_NAMESPACE")},
 
 		{Name: "CLICKHOUSE_ADDR", Value: mustEnv("CLICKHOUSE_ADDR")},
+
+		{Name: "REDIS_HOST", Value: mustEnv("REDIS_HOST")},
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "LOG_LEVEL", Value: v})
@@ -108,6 +110,15 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 	}
 	if v := os.Getenv("REPORTS_DB"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "REPORTS_DB", Value: v})
+	}
+	if v := os.Getenv("REDIS_PORT"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "REDIS_PORT", Value: v})
+	}
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "REDIS_PASSWORD", Value: v})
+	}
+	if v := os.Getenv("REDIS_DB"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "REDIS_DB", Value: v})
 	}
 
 	// Optional CPU/Memory

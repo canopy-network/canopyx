@@ -6,6 +6,7 @@ import { apiFetch } from '../../lib/api'
 import { useToast } from '../../components/ToastProvider'
 import CreateChainDialog from '../../components/CreateChainDialog'
 import { QueueHealthBadge } from '../../components/QueueHealthBadge'
+import { useAllBlockEvents } from '../../hooks/useAllBlockEvents'
 
 // Updated types to match new API response
 type QueueStatus = {
@@ -168,6 +169,40 @@ export default function DashboardPage() {
     const interval = setInterval(loadStatus, 30_000) // 30 seconds
     return () => clearInterval(interval)
   }, [loadStatus])
+
+  // Subscribe to WebSocket events for all chains
+  const { chainEvents, isConnected: wsConnected } = useAllBlockEvents({
+    enabled: !loading && Object.keys(status).length > 0,
+  })
+
+  // Update chain status when new block events arrive via WebSocket
+  // Trust the indexer: if it indexed a block, update both last_indexed and head
+  useEffect(() => {
+    if (Object.keys(chainEvents).length === 0) return
+
+    setStatus((prev) => {
+      const updated = { ...prev }
+      let hasChanges = false
+
+      Object.entries(chainEvents).forEach(([chainId, event]) => {
+        // Skip if chain doesn't exist or event is not newer
+        if (!prev[chainId] || event.height <= prev[chainId].last_indexed) {
+          return
+        }
+
+        hasChanges = true
+        updated[chainId] = {
+          ...prev[chainId],
+          last_indexed: event.height,
+          // Trust the indexer: if it indexed this block, update head too
+          head: Math.max(event.height, prev[chainId].head),
+        }
+      })
+
+      // Only return new object if there were actual changes
+      return hasChanges ? updated : prev
+    })
+  }, [chainEvents])
 
   // Compute metrics
   const chains = useMemo(() => Object.values(status), [status])

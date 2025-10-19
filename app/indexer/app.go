@@ -8,6 +8,7 @@ import (
 	"github.com/canopy-network/canopyx/pkg/indexer/activity"
 	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
 	"github.com/canopy-network/canopyx/pkg/logging"
+	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/canopy-network/canopyx/pkg/utils"
@@ -78,6 +79,12 @@ func Initialize(ctx context.Context) *App {
 		logger.Fatal("Unable to establish temporal connection", zap.Error(err))
 	}
 
+	// Initialize Redis client for real-time event publishing
+	redisClient, err := redis.NewClient(ctx, logger)
+	if err != nil {
+		logger.Fatal("Unable to establish Redis connection", zap.Error(err))
+	}
+
 	chainID := utils.Env("CHAIN_ID", "")
 	if chainID == "" {
 		logger.Fatal("CHAIN_ID environment variable is required")
@@ -115,6 +122,7 @@ func Initialize(ctx context.Context) *App {
 		RPCFactory:              rpc.NewHTTPFactory(rpcOpts),
 		RPCOpts:                 rpcOpts,
 		TemporalClient:          temporalClient,
+		RedisClient:             redisClient,
 		SchedulerMaxParallelism: utils.EnvInt("SCHEDULER_BATCH_MAX_PARALLELISM", 0),
 	}
 	workflowContext := workflow.Context{

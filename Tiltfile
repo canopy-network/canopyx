@@ -203,6 +203,43 @@ k8s_attach(
 )
 
 # ------------------------------------------
+# REDIS (Always Required)
+# ------------------------------------------
+# Redis is used for real-time event notifications (Pub/Sub)
+
+helm_resource(
+  name='redis',
+  chart='bitnami/redis',
+  release_name='redis',
+  flags=['--values=./deploy/helm/redis-values.yaml'],
+  pod_readiness='wait',
+  resource_deps=['helm-repo-bitnami'],
+  labels=['redis']
+)
+
+k8s_attach(
+    name="redis-master",
+    obj="statefulset/redis-master",
+    port_forwards=["%s:6379" % get_port('redis', 6379)],
+    resource_deps=["redis"],
+    labels=['redis'],
+)
+
+# Cleanup Redis data on tilt down
+k8s_custom_deploy(
+  'cleanup-redis-data',
+  apply_cmd='true',
+  delete_cmd='''
+    echo "Cleaning up Redis persistent data..." && \
+    kubectl delete pvc -l app.kubernetes.io/name=redis --ignore-not-found --wait && \
+    echo "Redis data cleanup complete"
+  ''',
+  deps=[],
+)
+
+k8s_resource('cleanup-redis-data', resource_deps=['redis'], labels=['no-op'])
+
+# ------------------------------------------
 # MONITORING (Optional - Prometheus + Grafana)
 # ------------------------------------------
 
@@ -535,9 +572,26 @@ if components.get('admin_web', True):
 
     k8s_resource(
         "canopyx-admin-web",
-        port_forwards=["%s:3003" % get_port('admin_web', 3003)],
         labels=['apps'],
         resource_deps=["canopyx-admin"],
+        pod_readiness='wait',
+    )
+
+    # Admin Web Proxy - nginx routes all API requests
+    # /api/query/ws  -> Query service WebSocket
+    # /api/query/*   -> Query service REST API
+    # /api/admin/*   -> Admin API
+    # /api/*         -> Admin API (legacy)
+    # /*             -> Admin Web (Next.js)
+    print("Admin Web Proxy enabled - unified API routing via nginx")
+
+    k8s_yaml(kustomize("./deploy/k8s/admin-web-proxy/overlays/local"))
+
+    k8s_resource(
+        "admin-web-proxy",
+        port_forwards=["%s:80" % get_port('admin_web', 3003)],
+        labels=['apps'],
+        resource_deps=["canopyx-admin-web", "canopyx-query", "canopyx-admin"],
         pod_readiness='wait',
     )
 else:

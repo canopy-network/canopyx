@@ -1,0 +1,50 @@
+# Redis for real-time event notifications (Pub/Sub)
+# Using Bitnami Redis chart: https://github.com/bitnami/charts/tree/main/bitnami/redis
+
+# Architecture: Standalone (no replication needed for Pub/Sub)
+architecture: standalone
+
+auth:
+  enabled: true
+  password: "canopy-redis-dev"  # TODO: Change in production
+
+# Master configuration
+master:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  persistence:
+    enabled: false  # Pub/Sub doesn't need persistence (events are ephemeral)
+
+  service:
+    type: ClusterIP
+    ports:
+      redis: 6379
+
+# No replicas needed (Pub/Sub is ephemeral, no data durability required)
+replica:
+  replicaCount: 0
+
+# Metrics (optional, disabled for now)
+metrics:
+  enabled: false
+
+# Redis configuration optimized for Pub/Sub
+# No persistence, minimal memory footprint
+commonConfiguration: |-
+  # Disable persistence (events are ephemeral)
+  save ""
+  appendonly no
+
+  # Memory limits
+  maxmemory 256mb
+  maxmemory-policy noeviction
+
+  # Pub/Sub optimizations
+  timeout 0
+  tcp-keepalive 300

@@ -142,9 +142,9 @@ func TestSchedulerQueueSizeBounds(t *testing.T) {
 		{1, 1},
 		{512, 750000},
 		{256, 1000000},
-		{-1, 100},    // Invalid inputs
-		{100, -1},    // Invalid inputs
-		{0, 0},       // Invalid inputs
+		{-1, 100}, // Invalid inputs
+		{100, -1}, // Invalid inputs
+		{0, 0},    // Invalid inputs
 	}
 
 	for _, tc := range testCases {

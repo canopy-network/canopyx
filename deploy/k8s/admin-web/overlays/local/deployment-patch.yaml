@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopyx-admin-web
+spec:
+  template:
+    spec:
+      containers:
+        - name: admin-web
+          env:
+            # Override NODE_ENV for development mode
+            - name: NODE_ENV
+              value: "development"
+          # Relaxed health checks for Next.js dev mode
+          # Dev mode compiles on first request which can take 10-30 seconds
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3003
+            initialDelaySeconds: 30  # Wait for Next.js to start
+            periodSeconds: 30        # Check every 30 seconds
+            timeoutSeconds: 10       # Allow 10 seconds for compilation
+            failureThreshold: 3      # Allow 3 failures before restart
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3003
+            initialDelaySeconds: 20  # Wait for Next.js to be ready
+            periodSeconds: 10        # Check every 10 seconds
+            timeoutSeconds: 10       # Allow 10 seconds for compilation
+            failureThreshold: 3      # Allow 3 failures before marking unready

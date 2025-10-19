@@ -42,6 +42,11 @@ spec:
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
             - { name: REPORTS_DB, value: "canopyx_reports" }
+            # Redis (real-time event notifications)
+            - { name: REDIS_HOST, value: "redis-master.default.svc.cluster.local" }
+            - { name: REDIS_PORT, value: "6379" }
+            - { name: REDIS_PASSWORD, value: "canopy-redis-dev" }
+            - { name: REDIS_DB, value: "0" }
             # Kind of Provider:
             # Switch this to fake if you want to locally run the indexer or run it manually controller act
             - { name: PROVIDER, value: "k8s" }

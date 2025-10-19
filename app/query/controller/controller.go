@@ -51,6 +51,9 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 
 	r.Handle("/health", http.HandlerFunc(c.HandleHealth)).Methods("GET")
 
+	// WebSocket endpoint for real-time events
+	r.HandleFunc("/ws", c.HandleWebSocket).Methods("GET")
+
 	r.HandleFunc("/chains/{id}/stats/hour", c.StatsHour).Methods("GET")
 	r.HandleFunc("/chains/{id}/stats/day", c.StatsDay).Methods("GET")
 	r.HandleFunc("/chains/{id}/stats/24h", c.Stats24h).Methods("GET")

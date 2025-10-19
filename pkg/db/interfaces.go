@@ -23,6 +23,7 @@ type ChainStore interface {
 	DatabaseName() string
 	ChainKey() string
 	InsertBlock(ctx context.Context, block *indexer.Block) error
+	GetBlock(ctx context.Context, height uint64) (*indexer.Block, error)
 	InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raw []*indexer.TransactionRaw) error
 	InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32) error
 	GetBlockSummary(ctx context.Context, height uint64) (*indexer.BlockSummary, error)

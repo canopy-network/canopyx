@@ -6,14 +6,16 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db"
+	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/puzpuzpuz/xsync/v4"
 	"go.uber.org/zap"
 )
 
 type App struct {
-	IndexerDB *db.AdminDB
-	ReportDB  *db.ReportsDB
-	ChainsDB  *xsync.Map[string, db.ChainStore]
+	IndexerDB   *db.AdminDB
+	ReportDB    *db.ReportsDB
+	ChainsDB    *xsync.Map[string, db.ChainStore]
+	RedisClient *redis.Client // For real-time WebSocket events
 	// Zap Logger
 	Logger *zap.Logger
 	// Server represents the HTTP server instance used to handle incoming client requests and manage HTTP routes.
@@ -53,6 +55,13 @@ func (a *App) Start(ctx context.Context) {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// Close Redis connection if initialized
+	if a.RedisClient != nil {
+		if err := a.RedisClient.Close(); err != nil {
+			a.Logger.Error("Failed to close Redis connection", zap.Error(err))
+		}
+	}
 
 	err := a.ReportDB.Close()
 	if err != nil {

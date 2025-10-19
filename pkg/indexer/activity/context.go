@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/canopy-network/canopyx/pkg/db"
+	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	temporalclient "github.com/canopy-network/canopyx/pkg/temporal"
 )
@@ -21,6 +22,7 @@ type Context struct {
 	RPCFactory     rpc.Factory
 	RPCOpts        rpc.Opts
 	TemporalClient *temporalclient.Client
+	RedisClient    *redis.Client // For publishing real-time events
 	// SchedulerMaxParallelism allows overriding the default scheduling pool size.
 	SchedulerMaxParallelism int
 

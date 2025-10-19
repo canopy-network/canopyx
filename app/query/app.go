@@ -6,6 +6,8 @@ import (
 	"github.com/canopy-network/canopyx/app/query/types"
 	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/logging"
+	"github.com/canopy-network/canopyx/pkg/redis"
+	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.uber.org/zap"
 )
 
@@ -32,11 +34,27 @@ func Initialize(ctx context.Context) *types.App {
 		logger.Fatal("Unable to initialize chains database", zap.Error(chainsDbErr))
 	}
 
+	// Initialize Redis client for real-time WebSocket events (optional)
+	var redisClient *redis.Client
+	if utils.Env("REDIS_ENABLED", "false") == "true" {
+		redisClient, err = redis.NewClient(ctx, logger)
+		if err != nil {
+			logger.Warn("Failed to initialize Redis client - WebSocket real-time events will be disabled",
+				zap.Error(err))
+			redisClient = nil
+		} else {
+			logger.Info("Redis client initialized for WebSocket real-time events")
+		}
+	} else {
+		logger.Info("Redis disabled - WebSocket real-time events will not be available")
+	}
+
 	app := &types.App{
-		IndexerDB: indexerDb,
-		ReportDB:  reportsDb,
-		ChainsDB:  chainsDb,
-		Logger:    logger,
+		IndexerDB:   indexerDb,
+		ReportDB:    reportsDb,
+		ChainsDB:    chainsDb,
+		RedisClient: redisClient,
+		Logger:      logger,
 	}
 
 	return app

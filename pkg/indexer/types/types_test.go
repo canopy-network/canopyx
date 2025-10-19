@@ -224,11 +224,11 @@ func BenchmarkIsLiveBlock(b *testing.B) {
 func BenchmarkIsLiveBlock_Mixed(b *testing.B) {
 	latest := uint64(1000000)
 	heights := []uint64{
-		1000000,  // live
-		999900,   // live
-		999700,   // historical
-		500000,   // historical
-		1000001,  // future (live)
+		1000000, // live
+		999900,  // live
+		999700,  // historical
+		500000,  // historical
+		1000001, // future (live)
 	}
 
 	b.ResetTimer()

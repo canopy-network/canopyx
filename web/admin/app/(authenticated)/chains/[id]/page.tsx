@@ -10,6 +10,7 @@ import IndexingProgressChart from './IndexingProgressChart'
 import { LiveSyncStatus } from '../../../components/LiveSyncStatus'
 import { GapRangesDisplay } from '../../../components/GapRangesDisplay'
 import { QueueHealthBadge } from '../../../components/QueueHealthBadge'
+import { useBlockEvents } from '../../../hooks/useBlockEvents'
 
 // Types
 type QueueStatus = {
@@ -204,6 +205,26 @@ export default function ChainDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
 
+  // Subscribe to WebSocket block events for this chain
+  const { lastHeight, isConnected: wsConnected, error: wsError } = useBlockEvents({
+    chainId: chainId,
+    enabled: !loading && !!config, // Only enable after initial load
+  })
+
+  // Update last_indexed and head when new block events arrive via WebSocket
+  // If indexer indexed a block, that block exists - trust the indexer
+  useEffect(() => {
+    if (lastHeight && status && lastHeight > status.last_indexed) {
+      setStatus({
+        ...status,
+        last_indexed: lastHeight,
+        // If indexer is ahead of head scan, update head to match
+        // The indexer wouldn't have indexed it if it didn't exist
+        head: Math.max(lastHeight, status.head),
+      })
+    }
+  }, [lastHeight, status])
+
   // Update URL when tab changes
   const handleTabChange = (tab: 'overview' | 'queues' | 'explorer' | 'settings') => {
     setActiveTab(tab)
@@ -315,7 +336,7 @@ export default function ChainDetailPage() {
     )
   }
 
-  const progress = status && status.head > 0 ? (status.last_indexed / status.head) * 100 : 0
+  const progress = status && status.head > 0 ? Math.min((status.last_indexed / status.head) * 100, 100) : 0
   const overallHealth = status?.health?.status || 'unknown'
 
   return (
@@ -387,6 +408,20 @@ export default function ChainDetailPage() {
                   </span>
                 </div>
               )}
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">WS:</span>
+                {wsConnected ? (
+                  <span className="flex items-center gap-1 font-semibold text-emerald-400">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Live
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 font-semibold text-slate-500">
+                    <span className="h-2 w-2 rounded-full bg-slate-500"></span>
+                    Offline
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>

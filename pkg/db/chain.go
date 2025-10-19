@@ -62,6 +62,19 @@ func (db *ChainDB) InsertBlock(ctx context.Context, block *indexer.Block) error 
 	return err
 }
 
+// GetBlock retrieves a single block by height from the chain database.
+func (db *ChainDB) GetBlock(ctx context.Context, height uint64) (*indexer.Block, error) {
+	block := new(indexer.Block)
+	err := db.Db.NewSelect().
+		Model(block).
+		Where("height = ?", height).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return block, nil
+}
+
 // InsertTransactions persists indexed transactions and raw payloads into the chain database.
 func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transaction, raws []*indexer.TransactionRaw) error {
 	return indexer.InsertTransactions(ctx, db.Db, txs, raws)
