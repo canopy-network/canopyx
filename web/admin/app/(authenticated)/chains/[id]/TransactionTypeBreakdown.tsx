@@ -15,6 +15,35 @@ const TX_TYPE_COLORS: { [key: string]: string } = {
   proposal: 'bg-orange-500',
   contract: 'bg-red-500',
   system: 'bg-gray-500',
+
+  // Validator operations
+  pause: 'bg-orange-500',
+  unpause: 'bg-green-600',
+
+  // Governance
+  changeParameter: 'bg-purple-500',
+  changeparameter: 'bg-purple-500', // lowercase variant
+  daoTransfer: 'bg-indigo-500',
+  daotransfer: 'bg-indigo-500', // lowercase variant
+  certificateResults: 'bg-gray-500',
+  certificateresults: 'bg-gray-500', // lowercase variant
+  subsidy: 'bg-teal-500',
+
+  // Order book operations
+  createOrder: 'bg-blue-600',
+  createorder: 'bg-blue-600', // lowercase variant
+  editOrder: 'bg-blue-400',
+  editorder: 'bg-blue-400', // lowercase variant
+  deleteOrder: 'bg-red-600',
+  deleteorder: 'bg-red-600', // lowercase variant
+
+  // DEX operations
+  dexLimitOrder: 'bg-cyan-600',
+  dexlimitorder: 'bg-cyan-600', // lowercase variant
+  dexLiquidityDeposit: 'bg-green-700',
+  dexliquiditydeposit: 'bg-green-700', // lowercase variant
+  dexLiquidityWithdraw: 'bg-yellow-600',
+  dexliquiditywithdraw: 'bg-yellow-600', // lowercase variant
 }
 
 // Get color for a transaction type (with fallback)
@@ -35,6 +64,19 @@ function getColorForType(type: string): string {
   if (lowerType.includes('vote')) return TX_TYPE_COLORS.vote
   if (lowerType.includes('proposal') || lowerType.includes('governance')) return TX_TYPE_COLORS.proposal
   if (lowerType.includes('contract') || lowerType.includes('execute')) return TX_TYPE_COLORS.contract
+  if (lowerType.includes('pause')) return lowerType.includes('unpause') ? TX_TYPE_COLORS.unpause : TX_TYPE_COLORS.pause
+  if (lowerType.includes('changeparameter') || lowerType.includes('parameter')) return TX_TYPE_COLORS.changeparameter
+  if (lowerType.includes('daotransfer') || lowerType.includes('dao')) return TX_TYPE_COLORS.daotransfer
+  if (lowerType.includes('certificate')) return TX_TYPE_COLORS.certificateresults
+  if (lowerType.includes('subsidy')) return TX_TYPE_COLORS.subsidy
+  if (lowerType.includes('createorder') || lowerType.includes('create') && lowerType.includes('order')) return TX_TYPE_COLORS.createorder
+  if (lowerType.includes('editorder') || lowerType.includes('edit') && lowerType.includes('order')) return TX_TYPE_COLORS.editorder
+  if (lowerType.includes('deleteorder') || lowerType.includes('delete') && lowerType.includes('order')) return TX_TYPE_COLORS.deleteorder
+  if (lowerType.includes('dexlimit') || lowerType.includes('limit') && lowerType.includes('order')) return TX_TYPE_COLORS.dexlimitorder
+  if (lowerType.includes('dexliquidity') || lowerType.includes('liquidity')) {
+    if (lowerType.includes('withdraw')) return TX_TYPE_COLORS.dexliquiditywithdraw
+    if (lowerType.includes('deposit')) return TX_TYPE_COLORS.dexliquiditydeposit
+  }
 
   // Default fallback
   return 'bg-slate-500'

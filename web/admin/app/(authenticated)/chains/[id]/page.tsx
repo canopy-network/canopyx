@@ -1082,7 +1082,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
       if (response.ok) {
         const responseData = await response.json()
         setLookupResult(responseData)
-        notify('Entity found', 'success')
+        notify('Entity found', 'info')
       } else if (response.status === 404) {
         const errorData = await response.json().catch(() => ({ error: 'Entity not found' }))
         setLookupError(errorData.error || 'Entity not found')

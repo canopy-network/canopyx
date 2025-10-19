@@ -68,9 +68,72 @@ func detectMessageType(msgType string, msg map[string]interface{}) MessageType {
 		return MsgTypeContract
 	case "system", "System", "SYSTEM":
 		return MsgTypeSystem
+	case "pause", "Pause", "PAUSE":
+		return MsgTypePause
+	case "unpause", "Unpause", "UNPAUSE":
+		return MsgTypeUnpause
+	case "changeParameter", "ChangeParameter", "CHANGE_PARAMETER":
+		return MsgTypeChangeParameter
+	case "daoTransfer", "DAOTransfer", "DAO_TRANSFER":
+		return MsgTypeDAOTransfer
+	case "certificateResults", "CertificateResults", "CERTIFICATE_RESULTS":
+		return MsgTypeCertificateResults
+	case "subsidy", "Subsidy", "SUBSIDY":
+		return MsgTypeSubsidy
+	case "createOrder", "CreateOrder", "CREATE_ORDER":
+		return MsgTypeCreateOrder
+	case "editOrder", "EditOrder", "EDIT_ORDER":
+		return MsgTypeEditOrder
+	case "deleteOrder", "DeleteOrder", "DELETE_ORDER":
+		return MsgTypeDeleteOrder
+	case "dexLimitOrder", "DexLimitOrder", "DEX_LIMIT_ORDER":
+		return MsgTypeDexLimitOrder
+	case "dexLiquidityDeposit", "DexLiquidityDeposit", "DEX_LIQUIDITY_DEPOSIT":
+		return MsgTypeDexLiquidityDeposit
+	case "dexLiquidityWithdraw", "DexLiquidityWithdraw", "DEX_LIQUIDITY_WITHDRAW":
+		return MsgTypeDexLiquidityWithdraw
 	}
 
 	// Fallback: infer from field presence
+
+	// Check for parameter change
+	if _, hasParamKey := msg["param_key"]; hasParamKey {
+		return MsgTypeChangeParameter
+	}
+
+	// Check for certificate results
+	if _, hasCertData := msg["certificate_data"]; hasCertData {
+		return MsgTypeCertificateResults
+	}
+
+	// Check for committee ID (subsidy)
+	if _, hasCommitteeID := msg["committee_id"]; hasCommitteeID {
+		return MsgTypeSubsidy
+	}
+
+	// Check for order operations
+	if _, hasOrderID := msg["order_id"]; hasOrderID {
+		if _, hasPrice := msg["price"]; hasPrice {
+			if _, hasSellAmount := msg["sell_amount"]; hasSellAmount {
+				return MsgTypeCreateOrder
+			}
+			return MsgTypeEditOrder
+		}
+		return MsgTypeDeleteOrder
+	}
+
+	// Check for DEX operations (chain_id based)
+	if _, hasChainID := msg["chain_id"]; hasChainID {
+		if _, hasSellAmount := msg["sell_amount"]; hasSellAmount {
+			return MsgTypeDexLimitOrder
+		}
+		if _, hasAmount := msg["amount"]; hasAmount {
+			// Default to deposit if we can't determine direction
+			return MsgTypeDexLiquidityDeposit
+		}
+	}
+
+	// Existing fallback logic
 	if _, ok := msg["toAddress"]; ok {
 		return MsgTypeSend
 	}
@@ -177,6 +240,90 @@ func parseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 			Params:   params,
 		}, nil
 
+	case MsgTypePause:
+		return &PauseMessage{
+			Address: getStringField(msgData, "address"),
+		}, nil
+
+	case MsgTypeUnpause:
+		return &UnpauseMessage{
+			Address: getStringField(msgData, "address"),
+		}, nil
+
+	case MsgTypeChangeParameter:
+		return &ChangeParameterMessage{
+			ParamKey:   getStringField(msgData, "param_key"),
+			ParamValue: getStringField(msgData, "param_value"),
+			Signer:     getStringField(msgData, "signer"),
+		}, nil
+
+	case MsgTypeDAOTransfer:
+		return &DAOTransferMessage{
+			FromAddress: getStringField(msgData, "from_address"),
+			ToAddress:   getStringField(msgData, "to_address"),
+			Amount:      uint64(getIntField(msgData, "amount")),
+		}, nil
+
+	case MsgTypeCertificateResults:
+		return &CertificateResultsMessage{
+			Signer:          getStringField(msgData, "signer"),
+			CertificateData: getStringField(msgData, "certificate_data"),
+		}, nil
+
+	case MsgTypeSubsidy:
+		return &SubsidyMessage{
+			FromAddress: getStringField(msgData, "from_address"),
+			ToAddress:   getStringField(msgData, "to_address"),
+			Amount:      uint64(getIntField(msgData, "amount")),
+			CommitteeID: uint64(getIntField(msgData, "committee_id")),
+		}, nil
+
+	case MsgTypeCreateOrder:
+		return &CreateOrderMessage{
+			Signer:     getStringField(msgData, "signer"),
+			OrderID:    getStringField(msgData, "order_id"),
+			ChainID:    uint64(getIntField(msgData, "chain_id")),
+			SellAmount: uint64(getIntField(msgData, "sell_amount")),
+			BuyAmount:  uint64(getIntField(msgData, "buy_amount")),
+			Price:      getFloat64Field(msgData, "price"),
+		}, nil
+
+	case MsgTypeEditOrder:
+		return &EditOrderMessage{
+			Signer:  getStringField(msgData, "signer"),
+			OrderID: getStringField(msgData, "order_id"),
+			Price:   getFloat64Field(msgData, "price"),
+		}, nil
+
+	case MsgTypeDeleteOrder:
+		return &DeleteOrderMessage{
+			Signer:  getStringField(msgData, "signer"),
+			OrderID: getStringField(msgData, "order_id"),
+		}, nil
+
+	case MsgTypeDexLimitOrder:
+		return &DexLimitOrderMessage{
+			From:       getStringField(msgData, "from"),
+			ChainID:    uint64(getIntField(msgData, "chain_id")),
+			SellAmount: uint64(getIntField(msgData, "sell_amount")),
+			BuyAmount:  uint64(getIntField(msgData, "buy_amount")),
+			Price:      getFloat64Field(msgData, "price"),
+		}, nil
+
+	case MsgTypeDexLiquidityDeposit:
+		return &DexLiquidityDepositMessage{
+			From:    getStringField(msgData, "from"),
+			ChainID: uint64(getIntField(msgData, "chain_id")),
+			Amount:  uint64(getIntField(msgData, "amount")),
+		}, nil
+
+	case MsgTypeDexLiquidityWithdraw:
+		return &DexLiquidityWithdrawMessage{
+			From:    getStringField(msgData, "from"),
+			ChainID: uint64(getIntField(msgData, "chain_id")),
+			Amount:  uint64(getIntField(msgData, "amount")),
+		}, nil
+
 	default:
 		// UnknownMessage fallback - try to extract signer from common fields
 		signer := getStringField(msgData, "sender")
@@ -256,6 +403,22 @@ func getOptionalUint64Field(m map[string]interface{}, key string) *uint64 {
 	return nil
 }
 
+func getFloat64Field(m map[string]interface{}, key string) float64 {
+	if v, ok := m[key]; ok {
+		switch val := v.(type) {
+		case float64:
+			return val
+		case float32:
+			return float64(val)
+		case int:
+			return float64(val)
+		case int64:
+			return float64(val)
+		}
+	}
+	return 0.0
+}
+
 // ToTransaction maps a rpc.Transaction into the single-table Transaction model.
 // This uses the new message parsing to extract type-specific fields.
 func (tx *Transaction) ToTransaction() (*indexer.Transaction, error) {
@@ -301,6 +464,18 @@ func (tx *Transaction) ToTransaction() (*indexer.Transaction, error) {
 		Counterparty:  msg.GetCounterparty(),
 		Amount:        msg.GetAmount(),
 		Fee:           uint64(tx.Transaction.Fee),
+		ValidatorAddress: msg.GetValidatorAddress(),
+		Commission:       msg.GetCommission(),
+		ChainID:          msg.GetChainID(),
+		SellAmount:       msg.GetSellAmount(),
+		BuyAmount:        msg.GetBuyAmount(),
+		LiquidityAmt:     msg.GetLiquidityAmount(),
+		OrderID:          msg.GetOrderID(),
+		Price:            msg.GetPrice(),
+		ParamKey:         msg.GetParamKey(),
+		ParamValue:       msg.GetParamValue(),
+		CommitteeID:      msg.GetCommitteeID(),
+		Recipient:        msg.GetRecipient(),
 		Msg:           string(msgJSON),
 		PublicKey:     publicKey,
 		Signature:     signature,

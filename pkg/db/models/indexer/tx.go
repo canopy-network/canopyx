@@ -29,6 +29,30 @@ type Transaction struct {
 	Amount       *uint64 `ch:"amount" json:"amount,omitempty"`                 // Amount transferred/staked/delegated (null for votes, etc.)
 	Fee          uint64  `ch:"fee" json:"fee"`                                 // Transaction fee
 
+	// ===== NEW EXTRACTED FIELDS (for efficient querying) =====
+
+	// Validator-related (stake, unstake, editStake)
+	ValidatorAddress *string  `ch:"validator_address" json:"validator_address,omitempty"`
+	Commission       *float64 `ch:"commission" json:"commission,omitempty"`
+
+	// DEX-related (dexLimitOrder, dexLiquidityDeposit, dexLiquidityWithdraw)
+	ChainID      *uint64 `ch:"chain_id" json:"chain_id,omitempty"`
+	SellAmount   *uint64 `ch:"sell_amount" json:"sell_amount,omitempty"`
+	BuyAmount    *uint64 `ch:"buy_amount" json:"buy_amount,omitempty"`
+	LiquidityAmt *uint64 `ch:"liquidity_amount" json:"liquidity_amount,omitempty"`
+
+	// Order-related (createOrder, editOrder, deleteOrder)
+	OrderID *string  `ch:"order_id" json:"order_id,omitempty"`
+	Price   *float64 `ch:"price" json:"price,omitempty"`
+
+	// Governance-related (changeParameter)
+	ParamKey   *string `ch:"param_key" json:"param_key,omitempty"`
+	ParamValue *string `ch:"param_value" json:"param_value,omitempty"`
+
+	// Other
+	CommitteeID *uint64 `ch:"committee_id" json:"committee_id,omitempty"` // For: subsidy
+	Recipient   *string `ch:"recipient" json:"recipient,omitempty"`       // For: daoTransfer
+
 	// Full message as compressed JSON (ALL type-specific fields)
 	Msg string `ch:"msg,codec:ZSTD(3)" json:"msg"` // Complete message data with ZSTD compression
 
