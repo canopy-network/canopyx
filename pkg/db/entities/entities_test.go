@@ -29,16 +29,22 @@ func TestEntityConstants(t *testing.T) {
 			expectedStage: "transactions_staging",
 		},
 		{
-			name:          "TransactionsRaw entity",
-			entity:        TransactionsRaw,
-			expectedTable: "transactions_raw",
-			expectedStage: "transactions_raw_staging",
-		},
-		{
 			name:          "BlockSummaries entity",
 			entity:        BlockSummaries,
 			expectedTable: "block_summaries",
 			expectedStage: "block_summaries_staging",
+		},
+		{
+			name:          "Accounts entity",
+			entity:        Accounts,
+			expectedTable: "accounts",
+			expectedStage: "accounts_staging",
+		},
+		{
+			name:          "Events entity",
+			entity:        Events,
+			expectedTable: "events",
+			expectedStage: "events_staging",
 		},
 	}
 
@@ -65,8 +71,9 @@ func TestEntityString(t *testing.T) {
 	}{
 		{"Blocks", Blocks, "blocks"},
 		{"Transactions", Transactions, "transactions"},
-		{"TransactionsRaw", TransactionsRaw, "transactions_raw"},
 		{"BlockSummaries", BlockSummaries, "block_summaries"},
+		{"Accounts", Accounts, "accounts"},
+		{"Events", Events, "events"},
 	}
 
 	for _, tt := range tests {
@@ -85,8 +92,9 @@ func TestEntityTableNames(t *testing.T) {
 	}{
 		{Blocks, "blocks", "blocks_staging"},
 		{Transactions, "transactions", "transactions_staging"},
-		{TransactionsRaw, "transactions_raw", "transactions_raw_staging"},
 		{BlockSummaries, "block_summaries", "block_summaries_staging"},
+		{Accounts, "accounts", "accounts_staging"},
+		{Events, "events", "events_staging"},
 	}
 
 	for _, tt := range tests {
@@ -210,10 +218,11 @@ func TestAll(t *testing.T) {
 
 	// Verify all known entities are present
 	expectedEntities := map[Entity]bool{
-		Blocks:          true,
-		Transactions:    true,
-		TransactionsRaw: true,
-		BlockSummaries:  true,
+		Blocks:         true,
+		Transactions:   true,
+		BlockSummaries: true,
+		Accounts:       true,
+		Events:         true,
 	}
 
 	for entity := range expectedEntities {

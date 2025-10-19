@@ -11,6 +11,7 @@ type Client interface {
 	ChainHead(ctx context.Context) (uint64, error)
 	BlockByHeight(ctx context.Context, height uint64) (*indexer.Block, error)
 	TxsByHeight(ctx context.Context, height uint64) ([]*indexer.Transaction, error)
+	EventsByHeight(ctx context.Context, height uint64) ([]*indexer.Event, error)
 	AccountsByHeight(ctx context.Context, height uint64) ([]*RpcAccount, error)
 	GetGenesisState(ctx context.Context, height uint64) (*GenesisState, error)
 }

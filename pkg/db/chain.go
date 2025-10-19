@@ -143,9 +143,35 @@ func (db *ChainDB) createStagingTables(ctx context.Context) error {
 		return fmt.Errorf("create accounts_staging: %w", err)
 	}
 
+	// Create events_staging table
+	// Schema matches the Event model in pkg/db/models/indexer/event.go
+	eventsStaging := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."events_staging" (
+			height UInt64,
+			address String,
+			reference String,
+			event_type LowCardinality(String),
+			amount Nullable(UInt64),
+			sold_amount Nullable(UInt64),
+			bought_amount Nullable(UInt64),
+			local_amount Nullable(UInt64),
+			remote_amount Nullable(UInt64),
+			success Nullable(Bool),
+			local_origin Nullable(Bool),
+			order_id Nullable(String),
+			msg String CODEC(ZSTD(3)),
+			height_time DateTime64(6)
+		) ENGINE = ReplacingMergeTree(height)
+		ORDER BY (height, address, reference, event_type)
+	`, db.Name)
+
+	if err := db.Exec(ctx, eventsStaging); err != nil {
+		return fmt.Errorf("create events_staging: %w", err)
+	}
+
 	db.Logger.Info("Staging tables created successfully",
 		zap.String("database", db.Name),
-		zap.Strings("tables", []string{"blocks_staging", "txs_staging", "block_summaries_staging", "accounts_staging"}))
+		zap.Strings("tables", []string{"blocks_staging", "txs_staging", "block_summaries_staging", "accounts_staging", "events_staging"}))
 
 	return nil
 }
@@ -203,6 +229,19 @@ func (db *ChainDB) InsertTransactions(ctx context.Context, txs []*indexer.Transa
 	}
 	_, err := db.Db.NewInsert().Model(&txs).Exec(ctx)
 	return err
+}
+
+// InitEvents creates the events table with ZSTD compression.
+// This wraps the indexer package's InitEvents function.
+func (db *ChainDB) InitEvents(ctx context.Context) error {
+	return indexer.InitEvents(ctx, db.Db)
+}
+
+// InsertEventsStaging inserts events into the events_staging table.
+// This follows the two-phase commit pattern for data consistency.
+func (db *ChainDB) InsertEventsStaging(ctx context.Context, events []*indexer.Event) error {
+	stagingTable := fmt.Sprintf("%s.events_staging", db.Name)
+	return indexer.InsertEventsStaging(ctx, db.Db, stagingTable, events)
 }
 
 // InsertBlockSummary persists block summary data (entity counts) into the chain database.

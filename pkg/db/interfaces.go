@@ -45,6 +45,8 @@ type ChainStore interface {
 	CleanEntityStaging(ctx context.Context, entity entities.Entity, height uint64) error
 	ValidateQueryHeight(ctx context.Context, requestedHeight *uint64) (uint64, error)
 	GetFullyIndexedHeight(ctx context.Context) (uint64, error)
+	InitEvents(ctx context.Context) error
+	InsertEventsStaging(ctx context.Context, events []*indexer.Event) error
 	Close() error
 }
 

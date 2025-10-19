@@ -31,8 +31,10 @@ type ChainIdInput struct {
 
 // BlockSummaries - Any summary of a block that is needed for indexing.
 type BlockSummaries struct {
-	NumTxs         uint32            `json:"numTxs"`
-	TxCountsByType map[string]uint32 `json:"txCountsByType"` // Count per type: {"send": 5, "delegate": 2}
+	NumTxs            uint32            `json:"numTxs"`
+	TxCountsByType    map[string]uint32 `json:"txCountsByType"`    // Count per type: {"send": 5, "delegate": 2}
+	NumEvents         uint32            `json:"numEvents"`
+	EventCountsByType map[string]uint32 `json:"eventCountsByType"` // Count per type: {"reward": 100, "dex-swap": 5}
 }
 
 type IndexBlockInput struct {
@@ -111,6 +113,20 @@ type IndexAccountsInput struct {
 type IndexAccountsOutput struct {
 	NumAccounts uint32  `json:"numAccounts"` // Number of changed accounts (snapshots created)
 	DurationMs  float64 `json:"durationMs"`  // Execution time in milliseconds
+}
+
+// IndexEventsInput contains the parameters for indexing events.
+type IndexEventsInput struct {
+	ChainID   string    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
+// IndexEventsOutput contains the number of indexed events along with execution duration.
+type IndexEventsOutput struct {
+	NumEvents         uint32            `json:"numEvents"`         // Number of events indexed
+	EventCountsByType map[string]uint32 `json:"eventCountsByType"` // Count per type: {"reward": 100, "dex-swap": 5}
+	DurationMs        float64           `json:"durationMs"`        // Execution time in milliseconds
 }
 
 // SaveBlockSummaryInput contains the parameters for saving block summaries.

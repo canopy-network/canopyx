@@ -419,6 +419,24 @@ func getFloat64Field(m map[string]interface{}, key string) float64 {
 	return 0.0
 }
 
+func getOptionalStringField(m map[string]interface{}, key string) *string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return &s
+		}
+	}
+	return nil
+}
+
+func getOptionalBoolField(m map[string]interface{}, key string) *bool {
+	if v, ok := m[key]; ok {
+		if b, ok := v.(bool); ok {
+			return &b
+		}
+	}
+	return nil
+}
+
 // ToTransaction maps a rpc.Transaction into the single-table Transaction model.
 // This uses the new message parsing to extract type-specific fields.
 func (tx *Transaction) ToTransaction() (*indexer.Transaction, error) {

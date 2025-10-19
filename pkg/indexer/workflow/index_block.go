@@ -98,6 +98,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		saveBlockOut types.IndexBlockOutput
 		txOut        types.IndexTransactionsOutput
 		accountsOut  types.IndexAccountsOutput
+		eventsOut    types.IndexEventsOutput
 	)
 
 	// Create futures for all parallel operations
@@ -116,10 +117,16 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		Height:    in.Height,
 		BlockTime: fetchOut.Block.Time,
 	}
+	indexEventsInput := types.IndexEventsInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
 
 	saveBlockFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlock, saveBlockInput)
 	txFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexTxInput)
 	accountsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexAccounts, indexAccountsInput)
+	eventsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexEvents, indexEventsInput)
 
 	// Wait for all parallel operations to complete
 	if err := saveBlockFuture.Get(ctx, &saveBlockOut); err != nil {
@@ -137,10 +144,17 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	}
 	timings["index_accounts_ms"] = accountsOut.DurationMs
 
+	if err := eventsFuture.Get(ctx, &eventsOut); err != nil {
+		return err
+	}
+	timings["index_events_ms"] = eventsOut.DurationMs
+
 	// Collect all summaries for aggregation
 	summaries := types.BlockSummaries{
-		NumTxs:         txOut.NumTxs,
-		TxCountsByType: txOut.TxCountsByType,
+		NumTxs:            txOut.NumTxs,
+		TxCountsByType:    txOut.TxCountsByType,
+		NumEvents:         eventsOut.NumEvents,
+		EventCountsByType: eventsOut.EventCountsByType,
 	}
 
 	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries
@@ -158,7 +172,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 
 	// Phase 3: Promote all entities in parallel from staging to production
 	// This follows the two-phase commit pattern for data consistency
-	promoteEntities := []string{"blocks", "txs", "block_summaries", "accounts"}
+	promoteEntities := []string{"blocks", "txs", "block_summaries", "accounts", "events"}
 	promoteFutures := make([]workflow.Future, 0, len(promoteEntities))
 
 	for _, entity := range promoteEntities {

@@ -72,10 +72,14 @@ const (
 	// Staging table: accounts_staging
 	Accounts Entity = "accounts"
 
+	// Events represents the blockchain events entity.
+	// Production table: events
+	// Staging table: events_staging
+	Events Entity = "events"
+
 	// Future entities (uncomment and add to allEntities when implementing):
 	// Validators Entity = "validators"
 	// Pools Entity = "pools"
-	// Events Entity = "events"
 	// Logs Entity = "logs"
 )
 
@@ -89,6 +93,7 @@ var allEntities = []Entity{
 	Transactions,
 	BlockSummaries,
 	Accounts,
+	Events,
 }
 
 // entitySet is a pre-computed map for O(1) validation lookups.
