@@ -72,8 +72,12 @@ const (
 	// Staging table: block_summaries_staging
 	BlockSummaries Entity = "block_summaries"
 
+	// Accounts represents the account balance entity.
+	// Production table: accounts
+	// Staging table: accounts_staging
+	Accounts Entity = "accounts"
+
 	// Future entities (uncomment and add to allEntities when implementing):
-	// Accounts Entity = "accounts"
 	// Validators Entity = "validators"
 	// Pools Entity = "pools"
 	// Events Entity = "events"
@@ -90,6 +94,7 @@ var allEntities = []Entity{
 	Transactions,
 	TransactionsRaw,
 	BlockSummaries,
+	Accounts,
 }
 
 // entitySet is a pre-computed map for O(1) validation lookups.

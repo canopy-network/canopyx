@@ -93,6 +93,24 @@ type IndexTransactionsOutput struct {
 	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
 }
 
+// EnsureGenesisCachedInput contains the parameters for caching genesis state.
+type EnsureGenesisCachedInput struct {
+	ChainID string `json:"chainId"`
+}
+
+// IndexAccountsInput contains the parameters for indexing accounts.
+type IndexAccountsInput struct {
+	ChainID   string    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
+// IndexAccountsOutput contains the number of changed accounts (snapshots created) along with execution duration.
+type IndexAccountsOutput struct {
+	NumAccounts uint32  `json:"numAccounts"` // Number of changed accounts (snapshots created)
+	DurationMs  float64 `json:"durationMs"`  // Execution time in milliseconds
+}
+
 // SaveBlockSummaryInput contains the parameters for saving block summaries.
 type SaveBlockSummaryInput struct {
 	ChainID   string         `json:"chainId"`

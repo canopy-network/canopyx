@@ -64,8 +64,203 @@ Automatic deduplication - no manual cleanup, no corrupted data.
 1. Setting: `do_not_merge_across_partitions_select_final = 1` (reduces 6× → 2×)
 2. Partitioning: Monthly partitions (`PARTITION BY toYYYYMM(time)`)
 3. Maintenance: Monthly `OPTIMIZE TABLE` via Temporal scheduled workflow
+4. **Compression:** ZSTD level 3 for 3-5x compression ratio
+5. **Storage Tiering:** Hot (NVMe, 30d) → Warm (SSD, 180d) → Cold (HDD, permanent)
 
 **Verdict:** 2× overhead is acceptable for data integrity guarantees.
+
+---
+
+## Storage Optimization
+
+### Compression Strategy
+
+ClickHouse supports codec-level compression for even better space savings:
+
+```sql
+CREATE TABLE accounts (
+    address String CODEC(ZSTD(1)),              -- ZSTD level 1 for strings
+    amount UInt64 CODEC(Delta, ZSTD(3)),        -- Delta + ZSTD for numeric values
+    height UInt64 CODEC(DoubleDelta, LZ4),      -- DoubleDelta for sequential heights
+    height_time DateTime64(6) CODEC(DoubleDelta, LZ4)  -- DoubleDelta for timestamps
+) ENGINE = ReplacingMergeTree(height)
+ORDER BY (address, height)
+SETTINGS storage_policy = 'tiered_storage';
+```
+
+**Codec Guide:**
+- **ZSTD(1-9):** Better compression than default LZ4
+  - Level 1: Fast compression (~2-3x)
+  - Level 3: Balanced (3-5x compression, recommended)
+  - Level 9: Max compression (5-10x, slower writes)
+- **Delta:** For numeric sequences that change gradually (balances, amounts)
+- **DoubleDelta:** For sequential/monotonic data (heights, timestamps)
+
+**Trade-off:** ~10-20% more CPU during writes for 2-3x better compression.
+
+**Recommendation:** Use ZSTD(3) + Delta/DoubleDelta for blockchain data - excellent compression with minimal CPU cost.
+
+### Storage Tiering (Hot/Warm/Cold)
+
+Blockchain data has clear access patterns - recent data is queried frequently, old data rarely. ClickHouse supports automatic tiering based on TTL:
+
+**Configuration:** `deploy/k8s/clickhouse/storage-policy.xml`
+
+```xml
+<storage_configuration>
+    <disks>
+        <hot><path>/var/lib/clickhouse/hot/</path></hot>      <!-- NVMe -->
+        <warm><path>/var/lib/clickhouse/warm/</path></warm>   <!-- SSD -->
+        <cold><path>/var/lib/clickhouse/cold/</path></cold>   <!-- HDD -->
+    </disks>
+
+    <policies>
+        <tiered_storage>
+            <volumes>
+                <hot><disk>hot</disk></hot>       <!-- Last 30 days -->
+                <warm><disk>warm</disk></warm>    <!-- 30-180 days -->
+                <cold><disk>cold</disk></cold>    <!-- 180+ days -->
+            </volumes>
+        </tiered_storage>
+    </policies>
+</storage_configuration>
+```
+
+**Table Definition:**
+```sql
+CREATE TABLE accounts (
+    ...
+) ENGINE = ReplacingMergeTree(height)
+ORDER BY (address, height)
+SETTINGS storage_policy = 'tiered_storage'
+TTL
+    height_time + INTERVAL 30 DAY TO VOLUME 'hot',   -- NVMe for 30 days
+    height_time + INTERVAL 180 DAY TO VOLUME 'warm', -- SSD for 180 days
+    height_time + INTERVAL 365 DAY TO VOLUME 'cold'; -- HDD forever
+```
+
+**Cost Savings:**
+- **NVMe:** $1000/TB - only 30 days of data (~210GB for 200k accounts/block)
+- **SSD:** $150/TB - 150 days of historical data (~1TB)
+- **HDD:** $20/TB - everything older (10TB+)
+
+**Result:** 95% of data on cheap HDD, 5% on fast NVMe. **10x cost reduction** with zero performance impact on recent queries.
+
+**Deployment:** Automatically configured via Tilt - see `Tiltfile:clickhouse-storage-config`.
+
+---
+
+## Indexing Strategy for Versioned Entities
+
+### The Problem
+
+For versioned entities (accounts, validators, pools), we have two indexing approaches:
+
+**Option A: Index ALL entities every block**
+- Fetch all 200k accounts from RPC
+- Insert all 200k rows to ClickHouse
+- Simple, fast (~700ms/block)
+
+**Option B: Index ONLY changed entities**
+- Fetch all 200k accounts from RPC
+- Query previous state from ClickHouse
+- Compare in-memory, insert only changed (~500 changed)
+- Complex, slower (~1000-1500ms/block)
+
+### Storage Comparison
+
+| Metric              | Option A (All) | Option B (Changed)                      | Savings           |
+|---------------------|----------------|-----------------------------------------|-------------------|
+| **Storage/year**    | 5.8 TB         | 290 GB                                  | **20x less**      |
+| **Rows/year**       | 73 billion     | 3.65 billion                            | **20x less**      |
+| **Cost/year/chain** | $225           | $11.25                                  | **$213.75 saved** |
+| **Indexing speed**  | 700ms/block    | 1000-1500ms                             | **30-50% slower** |
+| **Code complexity** | Simple         | Complex (chunking, workers, comparison) | Much higher       |
+
+### Decision: Option B (Changed Only) ✅
+
+**Why:**
+- 10 chains = **$2,137.50/year savings**
+- Storage can spiral out of control quickly
+- Slower indexing is acceptable trade-off
+- Can optimize worker pool tuning for speed
+
+**Implementation notes:**
+- Use pond subpool for controlled concurrency
+- Chunk comparisons (1000 addresses/chunk)
+- Use xsync.MapOf for thread-safe result collection
+- Parallel workers process chunks concurrently
+
+---
+
+## Numeric Type Strategy
+
+### The Problem
+
+Blockchain amounts can be large. Which numeric type should we use?
+
+**Available types:**
+- `UInt64`: Max 18.4 quintillion (what blockchain uses)
+- `UInt128`: Max 340 undecillion (overkill for individuals)
+- `UInt256`: Max stupidly large (Ethereum wei compatible)
+
+### Analysis
+
+**Individual values:**
+- Blockchain enforces uint64 limits
+- Individual balances **CANNOT** overflow uint64 (blockchain validation)
+- Billions of rows per year
+- Query performance critical
+
+**Aggregate values:**
+- Sum of 1M accounts × 10M CNPY each = 10^19 uCNPY
+- **CAN** exceed uint64 max (1.8 × 10^19)
+- Only thousands of rows per year
+- No complex queries (just INSERT and SELECT)
+
+### Decision: Hybrid Approach ✅
+
+**Use UInt64 for individual entity tables (high volume, queried):**
+```go
+type Account struct {
+    Amount uint64  `ch:"amount,codec:Delta,ZSTD(3)"`  // Individual balance
+}
+
+type Transaction struct {
+    Amount uint64  `ch:"amount"`  // Individual tx amount
+    Fee    uint64  `ch:"fee"`
+}
+
+type Validator struct {
+    StakedAmount uint64  `ch:"staked_amount"`  // Individual stake
+}
+```
+
+**Use UInt256 for aggregate/summary tables (low volume, computed):**
+```go
+type Supply struct {
+    Total      *big.Int `ch:"total,type:UInt256"`          // SUM can overflow
+    Staked     *big.Int `ch:"staked,type:UInt256"`         // SUM can overflow
+    Delegated  *big.Int `ch:"delegated_only,type:UInt256"` // SUM can overflow
+}
+
+type ChainMetrics struct {
+    CumulativeFees  *big.Int `ch:"cumulative_fees,type:UInt256"`  // SUM over time
+    CumulativeBurned *big.Int `ch:"cumulative_burned,type:UInt256"` // SUM over time
+}
+```
+
+**Why this works:**
+- ✅ Individual values match blockchain's uint64 type
+- ✅ Billions of rows use efficient 8-byte UInt64
+- ✅ Aggregations protected from overflow with UInt256
+- ✅ Aggregate tables only ~365k rows/year (11 MB storage)
+- ✅ No overflow risk on either side
+- ✅ Optimal storage and query performance
+
+**Storage impact:** Negligible (~11 MB/year for all aggregates)
+
+**Deployment:** Automatically configured via Tilt - see `Tiltfile:clickhouse-storage-config`.
 
 ---
 

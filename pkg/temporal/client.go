@@ -34,8 +34,9 @@ type Client struct {
 	GlobalReportsScheduleID string
 
 	// Workflow IDs
-	IndexBlockWorkflowId string
-	SchedulerWorkflowID  string
+	IndexBlockWorkflowId         string
+	SchedulerWorkflowID          string
+	CleanupStagingWorkflowID     string
 }
 
 type Health struct {
@@ -75,8 +76,9 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		GapScanScheduleID:       "gapscan:%s",
 		GlobalReportsScheduleID: "reports:global",
 		// workflow IDs
-		IndexBlockWorkflowId: "%s:index:%d",
-		SchedulerWorkflowID:  "scheduler-%s",
+		IndexBlockWorkflowId:     "%s:index:%d",
+		SchedulerWorkflowID:      "scheduler-%s",
+		CleanupStagingWorkflowID: "cleanup-staging-%s-%d",
 	}, nil
 }
 
@@ -143,6 +145,12 @@ func (c *Client) GetIndexBlockWorkflowIdWithTime(chainID string, height uint64) 
 // GetSchedulerWorkflowID returns the deterministic workflow ID for the SchedulerWorkflow for a given chain.
 func (c *Client) GetSchedulerWorkflowID(chainID string) string {
 	return fmt.Sprintf(c.SchedulerWorkflowID, chainID)
+}
+
+// GetCleanupStagingWorkflowID returns the workflow ID for the cleanup staging workflow.
+// This workflow is triggered after promotion to clean up staging tables asynchronously.
+func (c *Client) GetCleanupStagingWorkflowID(chainID string, height uint64) string {
+	return fmt.Sprintf(c.CleanupStagingWorkflowID, chainID, height)
 }
 
 // TwoSecondSpec returns a schedule spec for HeadScan workflow (5 seconds).

@@ -4,10 +4,17 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
+
+// CleanupStagingInput contains the parameters for cleanup staging workflow.
+type CleanupStagingInput struct {
+	ChainID string `json:"chainId"`
+	Height  uint64 `json:"height"`
+}
 
 // IndexBlockWorkflow kicks off indexing of a block for a given chain in a separate workflow at `index:<chain>` queue.
 // It tracks the execution time of each activity and records detailed timing metrics.
@@ -73,42 +80,69 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	}
 	timings["fetch_block_ms"] = fetchOut.DurationMs
 
-	// 3. SaveBlock - store block metadata to database (regular activity)
-	// This MUST come before entity indexing to ensure the block exists on-chain
+	// 3. EnsureGenesisCached - cache genesis state BEFORE indexing height 1
+	// Height 1 requires comparing RPC(1) vs Genesis(0), so genesis must be cached first
+	if in.Height == 1 {
+		genesisErr := workflow.ExecuteActivity(ctx, wc.ActivityContext.EnsureGenesisCached, types.EnsureGenesisCachedInput{
+			ChainID: in.ChainID,
+		}).Get(ctx, nil)
+		if genesisErr != nil {
+			return genesisErr
+		}
+	}
+
+	// Phase 1: Save block and index all entities in parallel
+	// All activities run concurrently for maximum throughput
+	// Each activity writes to its own staging table to avoid conflicts
+	var (
+		saveBlockOut types.IndexBlockOutput
+		txOut        types.IndexTransactionsOutput
+		accountsOut  types.IndexAccountsOutput
+	)
+
+	// Create futures for all parallel operations
 	saveBlockInput := types.SaveBlockInput{
 		ChainID: in.ChainID,
 		Height:  in.Height,
 		Block:   fetchOut.Block,
 	}
-	var saveBlockOut types.IndexBlockOutput
-	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlock, saveBlockInput).Get(ctx, &saveBlockOut); err != nil {
-		return err
-	}
-	timings["save_block_ms"] = saveBlockOut.DurationMs
-
-	// 4. IndexTransactions - fetch and index transactions
-	// Now safe to index entities since block existence is confirmed
-	// Pass the block input which includes the block data with timestamp
 	indexTxInput := types.IndexTransactionsInput{
 		ChainID:   in.ChainID,
 		Height:    in.Height,
 		BlockTime: fetchOut.Block.Time,
 	}
-	var txOut types.IndexTransactionsOutput
-	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexTxInput).Get(ctx, &txOut); err != nil {
+	indexAccountsInput := types.IndexAccountsInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
+
+	saveBlockFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlock, saveBlockInput)
+	txFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexTxInput)
+	accountsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexAccounts, indexAccountsInput)
+
+	// Wait for all parallel operations to complete
+	if err := saveBlockFuture.Get(ctx, &saveBlockOut); err != nil {
+		return err
+	}
+	timings["save_block_ms"] = saveBlockOut.DurationMs
+
+	if err := txFuture.Get(ctx, &txOut); err != nil {
 		return err
 	}
 	timings["index_transactions_ms"] = txOut.DurationMs
 
-	// TODO: Add more entity indexing activities here (events, logs, etc.)
-	// Each activity should return a summary output with DurationMs and entity counts
+	if err := accountsFuture.Get(ctx, &accountsOut); err != nil {
+		return err
+	}
+	timings["index_accounts_ms"] = accountsOut.DurationMs
 
 	// Collect all summaries for aggregation
 	summaries := types.BlockSummaries{
 		NumTxs: txOut.NumTxs,
 	}
 
-	// 5. SaveBlockSummary - aggregate and save all entity summaries
+	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries
 	saveInput := types.SaveBlockSummaryInput{
 		ChainID:   in.ChainID,
 		Height:    in.Height,
@@ -120,6 +154,53 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		return err
 	}
 	timings["save_block_summary_ms"] = saveSummaryOut.DurationMs
+
+	// Phase 3: Promote all entities in parallel from staging to production
+	// This follows the two-phase commit pattern for data consistency
+	promoteEntities := []string{"blocks", "txs", "txs_raw", "block_summaries", "accounts"}
+	promoteFutures := make([]workflow.Future, 0, len(promoteEntities))
+
+	for _, entity := range promoteEntities {
+		f := workflow.ExecuteActivity(ctx, wc.ActivityContext.PromoteData, types.PromoteDataInput{
+			ChainID: in.ChainID,
+			Entity:  entity,
+			Height:  in.Height,
+		})
+		promoteFutures = append(promoteFutures, f)
+	}
+
+	// Wait for all promotions to complete
+	var promoteTimingsTotal float64
+	for _, f := range promoteFutures {
+		var out types.PromoteDataOutput
+		if err := f.Get(ctx, &out); err != nil {
+			return err
+		}
+		promoteTimingsTotal += out.DurationMs
+	}
+	timings["promote_all_ms"] = promoteTimingsTotal
+
+	// Phase 4: Trigger async cleanup workflow (fire-and-forget)
+	// Cleanup runs on ops queue to avoid blocking indexing queue
+	cleanupWorkflowID := wc.TemporalClient.GetCleanupStagingWorkflowID(in.ChainID, in.Height)
+	opsQueue := wc.TemporalClient.GetIndexerOpsQueue(in.ChainID)
+
+	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+		WorkflowID: cleanupWorkflowID,
+		TaskQueue:  opsQueue,
+	})
+
+	// Start cleanup workflow and wait only for it to start, not complete
+	cleanupFuture := workflow.ExecuteChildWorkflow(childCtx, wc.CleanupStagingWorkflow, CleanupStagingInput{
+		ChainID: in.ChainID,
+		Height:  in.Height,
+	})
+
+	// Wait for cleanup workflow to start (not complete)
+	if err := cleanupFuture.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
+		// Log warning but don't fail - cleanup is non-critical
+		workflow.GetLogger(ctx).Warn("Failed to start cleanup workflow", "error", err)
+	}
 
 	// Calculate total indexing time (sum of all activity durations)
 	var totalMs float64
@@ -134,7 +215,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		detailBytes = []byte("{}")
 	}
 
-	// 5. RecordIndexed - persist indexing progress with timing metrics
+	// Phase 5: RecordIndexed - persist indexing progress with timing metrics
 	recordInput := types.RecordIndexedInput{
 		ChainID:        in.ChainID,
 		Height:         in.Height,
@@ -143,4 +224,76 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	}
 
 	return workflow.ExecuteActivity(ctx, wc.ActivityContext.RecordIndexed, recordInput).Get(ctx, nil)
+}
+
+// CleanupStagingWorkflow asynchronously cleans up staging data for all entities after promotion.
+// This workflow runs on the ops queue to avoid blocking the indexing queue.
+// It iterates through all entities and removes promoted data from their staging tables.
+//
+// Design Philosophy:
+// - Fire-and-forget: Parent workflow doesn't wait for cleanup to complete
+// - Non-critical: Failures are logged but don't affect indexing
+// - Idempotent: Safe to retry or run multiple times
+// - Async: Runs on ops queue to avoid blocking high-throughput indexing queue
+func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input CleanupStagingInput) error {
+	// Configure activity options for cleanup operations
+	// Cleanup is non-critical, so we use shorter timeouts and limited retries
+	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    1 * time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    30 * time.Second,
+			MaximumAttempts:    3, // Limited retries for cleanup
+		},
+	})
+
+	// Get all entities that need cleanup
+	// Using entities.All() ensures we clean all defined entities
+	allEntities := entities.All()
+
+	workflow.GetLogger(ctx).Info("Starting staging cleanup",
+		"chainId", input.ChainID,
+		"height", input.Height,
+		"numEntities", len(allEntities))
+
+	// Clean each entity's staging table
+	// We don't fail on individual entity cleanup failures - just log and continue
+	var successCount, failureCount int
+
+	for _, entity := range allEntities {
+		var output types.CleanPromotedDataOutput
+		err := workflow.ExecuteActivity(ctx, wc.ActivityContext.CleanPromotedData, types.CleanPromotedDataInput{
+			ChainID: input.ChainID,
+			Entity:  entity.String(),
+			Height:  input.Height,
+		}).Get(ctx, &output)
+
+		if err != nil {
+			workflow.GetLogger(ctx).Warn("Failed to clean staging data for entity",
+				"entity", entity.String(),
+				"chainId", input.ChainID,
+				"height", input.Height,
+				"error", err)
+			failureCount++
+			// Continue cleaning other entities despite failure
+		} else {
+			workflow.GetLogger(ctx).Debug("Successfully cleaned staging data",
+				"entity", entity.String(),
+				"chainId", input.ChainID,
+				"height", input.Height,
+				"durationMs", output.DurationMs)
+			successCount++
+		}
+	}
+
+	workflow.GetLogger(ctx).Info("Completed staging cleanup",
+		"chainId", input.ChainID,
+		"height", input.Height,
+		"success", successCount,
+		"failures", failureCount)
+
+	// Always return nil - cleanup failures are non-critical
+	// They're logged above and can be investigated if needed
+	return nil
 }

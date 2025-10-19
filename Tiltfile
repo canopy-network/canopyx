@@ -111,6 +111,22 @@ local_resource(
   labels=['clickhouse'],
 )
 
+# Apply ClickHouse storage tiering configuration
+local_resource(
+  'clickhouse-storage-config',
+  cmd='''
+    echo "Applying ClickHouse storage tiering configuration (hot/warm/cold)..."
+    kubectl apply -f ./deploy/k8s/clickhouse/configmap.yaml && \\
+    kubectl patch statefulset clickhouse-hdx-oss-v2-clickhouse -p '{"spec":{"template":{"spec":{"volumes":[{"name":"storage-config","configMap":{"name":"clickhouse-storage-config"}}],"containers":[{"name":"clickhouse","volumeMounts":[{"name":"storage-config","mountPath":"/etc/clickhouse-server/config.d/storage-policy.xml","subPath":"storage-policy.xml"}]}]}}}}' && \\
+    echo "Storage tiering configured: hot (30d) -> warm (180d) -> cold (permanent)" && \\
+    echo "Restarting ClickHouse to apply storage configuration..." && \\
+    kubectl delete pod -l app.kubernetes.io/name=clickhouse --wait && \\
+    echo "ClickHouse storage configuration applied successfully!"
+  ''',
+  resource_deps=['clickhouse-config-patch'],
+  labels=['clickhouse'],
+)
+
 # Patch ClickHouse deployment with Prometheus scrape annotations
 local_resource(
   'clickhouse-prometheus-patch',
@@ -119,7 +135,7 @@ local_resource(
     kubectl patch deployment clickhouse-hdx-oss-v2-clickhouse -p '{"spec":{"template":{"metadata":{"annotations":{"prometheus.io/scrape":"true","prometheus.io/port":"9363","prometheus.io/path":"/metrics"}}}}}' && \\
     echo "Prometheus annotations applied successfully!"
   ''',
-  resource_deps=['clickhouse-config-patch'],
+  resource_deps=['clickhouse-storage-config'],
   labels=['clickhouse'],
 )
 

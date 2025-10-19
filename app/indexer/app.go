@@ -187,7 +187,10 @@ func Initialize(ctx context.Context) *App {
 		w.RegisterActivity(activityContext.SaveBlock)
 		w.RegisterActivity(activityContext.IndexBlock)
 		w.RegisterActivity(activityContext.IndexTransactions)
+		w.RegisterActivity(activityContext.IndexAccounts)
+		w.RegisterActivity(activityContext.EnsureGenesisCached)
 		w.RegisterActivity(activityContext.SaveBlockSummary)
+		w.RegisterActivity(activityContext.PromoteData)
 		w.RegisterActivity(activityContext.RecordIndexed)
 	}
 
@@ -213,12 +216,14 @@ func Initialize(ctx context.Context) *App {
 		workflowContext.SchedulerWorkflow,
 		temporalworkflow.RegisterOptions{Name: workflow.SchedulerWorkflowName},
 	)
+	opsWorker.RegisterWorkflow(workflowContext.CleanupStagingWorkflow)
 	opsWorker.RegisterActivity(activityContext.GetLatestHead)
 	opsWorker.RegisterActivity(activityContext.GetLastIndexed)
 	opsWorker.RegisterActivity(activityContext.FindGaps)
 	opsWorker.RegisterActivity(activityContext.StartIndexWorkflow)
 	opsWorker.RegisterActivity(activityContext.StartIndexWorkflowBatch)
 	opsWorker.RegisterActivity(activityContext.IsSchedulerWorkflowRunning)
+	opsWorker.RegisterActivity(activityContext.CleanPromotedData)
 
 	return &App{
 		LiveWorker:       liveWorker,

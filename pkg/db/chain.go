@@ -44,6 +44,16 @@ func (db *ChainDB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
+	db.Logger.Debug("Initialize accounts model", zap.String("name", db.Name))
+	if err := indexer.InitAccounts(ctx, db.Db); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize genesis table", zap.String("name", db.Name))
+	if err := indexer.InitGenesis(ctx, db.Db, db.Name); err != nil {
+		return err
+	}
+
 	// Create staging tables for all entities
 	db.Logger.Debug("Creating staging tables", zap.String("name", db.Name))
 	if err := db.createStagingTables(ctx); err != nil {
@@ -132,9 +142,26 @@ func (db *ChainDB) createStagingTables(ctx context.Context) error {
 		return fmt.Errorf("create block_summaries_staging: %w", err)
 	}
 
+	// Create accounts_staging table
+	// Schema matches the Account model in pkg/db/models/indexer/account.go
+	accountsStaging := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."accounts_staging" (
+			address String CODEC(ZSTD(1)),
+			amount UInt64 CODEC(Delta, ZSTD(3)),
+			height UInt64 CODEC(DoubleDelta, LZ4),
+			height_time DateTime64(6) CODEC(DoubleDelta, LZ4),
+			created_height UInt64 CODEC(DoubleDelta, LZ4)
+		) ENGINE = ReplacingMergeTree(height)
+		ORDER BY (address, height)
+	`, db.Name)
+
+	if err := db.Exec(ctx, accountsStaging); err != nil {
+		return fmt.Errorf("create accounts_staging: %w", err)
+	}
+
 	db.Logger.Info("Staging tables created successfully",
 		zap.String("database", db.Name),
-		zap.Strings("tables", []string{"blocks_staging", "txs_staging", "txs_raw_staging", "block_summaries_staging"}))
+		zap.Strings("tables", []string{"blocks_staging", "txs_staging", "txs_raw_staging", "block_summaries_staging", "accounts_staging"}))
 
 	return nil
 }
