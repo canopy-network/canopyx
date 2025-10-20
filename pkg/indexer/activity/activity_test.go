@@ -500,7 +500,7 @@ func (*fakeChainStore) InsertOrdersStaging(context.Context, []*indexermodels.Ord
 	return nil
 }
 
-func (*fakeChainStore) QueryOrders(context.Context, uint64, int, bool) ([]indexermodels.Order, error) {
+func (*fakeChainStore) QueryOrders(context.Context, uint64, int, bool, string) ([]indexermodels.Order, error) {
 	return nil, nil
 }
 
@@ -512,7 +512,7 @@ func (*fakeChainStore) InsertDexPricesStaging(context.Context, []*indexermodels.
 	return nil
 }
 
-func (*fakeChainStore) QueryDexPrices(context.Context, uint64, int, bool) ([]indexermodels.DexPrice, error) {
+func (*fakeChainStore) QueryDexPrices(context.Context, uint64, int, bool, uint64, uint64) ([]indexermodels.DexPrice, error) {
 	return nil, nil
 }
 

@@ -15,16 +15,17 @@ import (
 func TestRpcPool_ToPool(t *testing.T) {
 	rpcPool := RpcPool{
 		ID:              1,
+		ChainID:         5,
 		Amount:          1000000,
 		Points:          []PointsEntry{{Address: "addr1", Points: 500}, {Address: "addr2", Points: 500}},
 		TotalPoolPoints: 1000,
 	}
 
-	dbPool := rpcPool.ToPool(5, 100)
+	dbPool := rpcPool.ToPool(100)
 
 	assert.NotNil(t, dbPool)
 	assert.Equal(t, rpcPool.ID, dbPool.PoolID)
-	assert.Equal(t, uint64(5), dbPool.ChainID)
+	assert.Equal(t, rpcPool.ChainID, dbPool.ChainID)
 	assert.Equal(t, uint64(100), dbPool.Height)
 	assert.Equal(t, rpcPool.Amount, dbPool.Amount)
 	assert.Equal(t, rpcPool.TotalPoolPoints, dbPool.TotalPoints)

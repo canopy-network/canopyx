@@ -1,8 +1,0 @@
-version: "2"
-
-run:
-  tests: false         # still skips *_test.go files
-
-exclusions:
-  paths:
-    - ^tests/          # anything under tests/ is ignored

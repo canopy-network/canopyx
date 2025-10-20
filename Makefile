@@ -174,7 +174,7 @@ fmt-fix: check-golangci
 .PHONY: lint
 lint: check-golangci
 	@golangci-lint cache clean
-	@golangci-lint run
+	@golangci-lint run ./app/... ./cmd/... ./pkg/... --tests=false
 
 .PHONY: lint-fix
 lint-fix: check-golangci
