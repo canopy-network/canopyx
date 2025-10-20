@@ -25,9 +25,9 @@ const (
 )
 
 type App struct {
-	LiveWorker       worker.Worker  // NEW: Live block indexing (optimized for low-latency)
-	HistoricalWorker worker.Worker  // NEW: Historical block indexing (optimized for throughput)
-	OpsWorker        worker.Worker  // UNCHANGED: Operations (headscan, gapscan, scheduler)
+	LiveWorker       worker.Worker // NEW: Live block indexing (optimized for low-latency)
+	HistoricalWorker worker.Worker // NEW: Historical block indexing (optimized for throughput)
+	OpsWorker        worker.Worker // UNCHANGED: Operations (headscan, gapscan, scheduler)
 	TemporalClient   *temporal.Client
 	Logger           *zap.Logger
 }
@@ -188,6 +188,10 @@ func Initialize(ctx context.Context) *App {
 		w.RegisterActivity(activityContext.IndexBlock)
 		w.RegisterActivity(activityContext.IndexTransactions)
 		w.RegisterActivity(activityContext.IndexAccounts)
+		w.RegisterActivity(activityContext.IndexEvents)
+		w.RegisterActivity(activityContext.IndexPools)
+		w.RegisterActivity(activityContext.IndexOrders)
+		w.RegisterActivity(activityContext.IndexDexPrices)
 		w.RegisterActivity(activityContext.EnsureGenesisCached)
 		w.RegisterActivity(activityContext.SaveBlockSummary)
 		w.RegisterActivity(activityContext.PromoteData)

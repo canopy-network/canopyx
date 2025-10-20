@@ -5,8 +5,9 @@ info:
     CanopyX provides three main API components:
     - **Admin API**: Chain management and monitoring (requires authentication)
     - **Query API**: Public blockchain data query interface
+    - **Realtime API**: WebSocket stream of indexing events
 
-    All APIs use JSON for request/response bodies.
+    All APIs use JSON for request/response bodies unless otherwise noted.
   version: 1.0.0
   contact:
     name: Canopy Network
@@ -31,10 +32,28 @@ tags:
     description: Indexing operations (headscan, gapscan, reindex)
   - name: Query - Health
     description: Health check endpoints
+  - name: Query - Realtime
+    description: WebSocket streaming endpoints
+  - name: Query - Entities
+    description: Entity metadata endpoints
   - name: Query - Blocks
     description: Query blockchain blocks
+  - name: Query - Block Summaries
+    description: Aggregated per-block entity counts
   - name: Query - Transactions
     description: Query blockchain transactions
+  - name: Query - Events
+    description: Query indexed events
+  - name: Query - Accounts
+    description: Query account state snapshots
+  - name: Query - Pools
+    description: Query liquidity pools
+  - name: Query - Orders
+    description: Query order book snapshots
+  - name: Query - Markets
+    description: Cross-chain market data
+  - name: Query - Analytics
+    description: Derived analytics data
   - name: Query - Stats
     description: Chain statistics and metrics
   - name: Query - Schema
@@ -50,25 +69,22 @@ paths:
       tags:
         - Admin - Health
       summary: Health check
-      description: Returns the health status of the admin service
+      description: Returns the health status of the admin service.
       responses:
         '200':
           description: Service is healthy
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
+                type: string
+                example: "1"
 
   /api/auth/login:
     post:
       tags:
         - Admin - Auth
       summary: Login
-      description: Authenticate and receive a session token
+      description: Authenticate and receive a session cookie for the admin UI.
       requestBody:
         required: true
         content:
@@ -91,18 +107,16 @@ paths:
           description: Login successful
           headers:
             Set-Cookie:
-              description: Session cookie
+              description: Session cookie (`cx_session`)
               schema:
                 type: string
-                example: session=abc123; Path=/; HttpOnly
+                example: cx_session=abc123; Path=/; HttpOnly
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: login successful
+                $ref: '#/components/schemas/SimpleOK'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -111,28 +125,17 @@ paths:
       tags:
         - Admin - Auth
       summary: Logout
-      description: Invalidate the current session
-      security:
-        - bearerAuth: []
-        - sessionAuth: []
+      description: Invalidate the current session cookie.
       responses:
-        '200':
+        '204':
           description: Logout successful
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: logout successful
 
   /api/chains:
     get:
       tags:
         - Admin - Chains
-      summary: List all chains
-      description: Get a list of all configured blockchain chains
+      summary: List chains
+      description: Get all configured chains from the admin database.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -147,12 +150,11 @@ paths:
                   $ref: '#/components/schemas/Chain'
         '401':
           $ref: '#/components/responses/Unauthorized'
-
     post:
       tags:
         - Admin - Chains
-      summary: Create or update a chain
-      description: Upsert a blockchain chain configuration
+      summary: Create or update chain
+      description: Upsert a chain configuration. Creates Temporal schedules and the ClickHouse database if needed.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -168,38 +170,41 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Chain'
+                $ref: '#/components/schemas/SimpleOK'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/chains/status:
     get:
       tags:
         - Admin - Chains
       summary: Get chain statuses
-      description: Get indexing status for all chains
+      description: Return per-chain indexing status, queue health, and head progress.
       security:
         - bearerAuth: []
         - sessionAuth: []
       responses:
         '200':
-          description: Chain statuses
+          description: Chain statuses keyed by chain ID
           content:
             application/json:
               schema:
-                type: array
-                items:
+                type: object
+                additionalProperties:
                   $ref: '#/components/schemas/ChainStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
-
+        '500':
+          $ref: '#/components/responses/InternalError'
     patch:
       tags:
         - Admin - Chains
-      summary: Bulk update chain statuses
-      description: Pause/unpause or delete multiple chains
+      summary: Bulk update chain flags
+      description: Pause, resume, or soft-delete multiple chains.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -210,32 +215,23 @@ paths:
             schema:
               type: array
               items:
-                type: object
-                required:
-                  - chain_id
-                properties:
-                  chain_id:
-                    type: string
-                  paused:
-                    type: integer
-                    enum: [0, 1]
-                  deleted:
-                    type: integer
-                    enum: [0, 1]
+                $ref: '#/components/schemas/ChainStatusPatch'
       responses:
-        '200':
+        '204':
           description: Chains updated successfully
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /api/chains/{id}:
     get:
       tags:
         - Admin - Chains
-      summary: Get chain details
-      description: Get detailed information about a specific chain
+      summary: Get chain
+      description: Retrieve a single chain configuration by ID.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -248,16 +244,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Chain'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
-
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
     patch:
       tags:
         - Admin - Chains
       summary: Update chain
-      description: Partially update a chain configuration
+      description: Partially update a chain configuration.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -268,33 +265,27 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                paused:
-                  type: integer
-                  enum: [0, 1]
-                deleted:
-                  type: integer
-                  enum: [0, 1]
-                rpc_endpoints:
-                  type: array
-                  items:
-                    type: string
+              $ref: '#/components/schemas/ChainPatch'
       responses:
         '200':
-          description: Chain updated successfully
+          description: Chain updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleOK'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
-
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
     delete:
       tags:
         - Admin - Chains
       summary: Delete chain
-      description: Mark a chain as deleted (soft delete)
+      description: Mark a chain as deleted and drop in-memory caches.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -302,18 +293,26 @@ paths:
         - $ref: '#/components/parameters/ChainId'
       responses:
         '200':
-          description: Chain deleted successfully
-        '404':
-          $ref: '#/components/responses/NotFound'
+          description: Chain deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleOK'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/chains/{id}/progress:
     get:
       tags:
         - Admin - Monitoring
-      summary: Get indexing progress
-      description: Get current indexing progress for a chain
+      summary: Get last indexed height
+      description: Return the most recently indexed block height for the chain.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -321,22 +320,24 @@ paths:
         - $ref: '#/components/parameters/ChainId'
       responses:
         '200':
-          description: Indexing progress
+          description: Last indexed height
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IndexingProgress'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: '#/components/schemas/ProgressResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/chains/{id}/gaps:
     get:
       tags:
         - Admin - Monitoring
       summary: Get indexing gaps
-      description: Get gaps in indexed blocks for a chain
+      description: Return missing block ranges detected for the chain.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -344,24 +345,26 @@ paths:
         - $ref: '#/components/parameters/ChainId'
       responses:
         '200':
-          description: List of gaps
+          description: Gap ranges waiting to be indexed
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Gap'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                  $ref: '#/components/schemas/GapRange'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/chains/{id}/progress-history:
     get:
       tags:
         - Admin - Monitoring
       summary: Get indexing progress history
-      description: Get historical indexing progress metrics for charting
+      description: Historic indexing velocity aggregated into time buckets.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -369,7 +372,8 @@ paths:
         - $ref: '#/components/parameters/ChainId'
         - name: hours
           in: query
-          description: Time window in hours (1-168)
+          required: false
+          description: Time window in hours (1-168).
           schema:
             type: integer
             minimum: 1
@@ -377,24 +381,26 @@ paths:
             default: 24
       responses:
         '200':
-          description: Progress history data points
+          description: Progress history buckets
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/ProgressHistoryPoint'
-        '404':
-          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/chains/{id}/headscan:
     post:
       tags:
         - Admin - Operations
       summary: Trigger head scan
-      description: Manually trigger a head scan to index recent blocks
+      description: Manually trigger a head scan workflow to index the latest head range.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -406,24 +412,20 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: head scan triggered
-                  workflow_id:
-                    type: string
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: '#/components/schemas/SimpleOK'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/chains/{id}/gapscan:
     post:
       tags:
         - Admin - Operations
       summary: Trigger gap scan
-      description: Manually trigger a gap scan to identify and fill missing blocks
+      description: Manually trigger a gap scan workflow to locate missing block ranges.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -435,24 +437,20 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: gap scan triggered
-                  workflow_id:
-                    type: string
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: '#/components/schemas/SimpleOK'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/chains/{id}/reindex:
     post:
       tags:
         - Admin - Operations
-      summary: Trigger reindex
-      description: Reindex specific blocks for a chain
+      summary: Trigger manual reindex
+      description: Queue manual reindex workflows for specific block heights or ranges.
       security:
         - bearerAuth: []
         - sessionAuth: []
@@ -463,36 +461,20 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - heights
-              properties:
-                heights:
-                  type: array
-                  items:
-                    type: integer
-                    format: uint64
-                  description: List of block heights to reindex
-                  example: [100, 101, 102]
+              $ref: '#/components/schemas/ReindexRequest'
       responses:
         '200':
-          description: Reindex triggered
+          description: Reindex request queued
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: reindex triggered for 3 blocks
-                  count:
-                    type: integer
+                $ref: '#/components/schemas/QueuedResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   # ============================================================================
   # QUERY API
@@ -503,7 +485,7 @@ paths:
       tags:
         - Query - Health
       summary: Health check
-      description: Returns the health status of the query service
+      description: Returns the health status of the query service (includes ClickHouse connectivity).
       responses:
         '200':
           description: Service is healthy
@@ -515,17 +497,53 @@ paths:
                   status:
                     type: string
                     example: ok
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /ws:
+    get:
+      tags:
+        - Query - Realtime
+      summary: Subscribe to realtime events
+      description: >
+        Upgrade the connection to WebSocket to receive streaming block indexing events.
+        Clients must send `{"action":"subscribe","chainId":"<id>"}` messages to receive events for a chain.
+      responses:
+        '101':
+          description: Switching protocols to WebSocket
+        '503':
+          description: Real-time events unavailable (Redis disabled)
+
+  /entities:
+    get:
+      tags:
+        - Query - Entities
+      summary: List indexed entities
+      description: Return metadata about all supported entities and associated API routes.
+      responses:
+        '200':
+          description: Entity metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entities:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EntityInfo'
 
   /chains/{id}/blocks:
     get:
       tags:
         - Query - Blocks
       summary: Query blocks
-      description: Get paginated list of blocks for a chain
+      description: Get blocks for a chain with cursor-based pagination.
       parameters:
         - $ref: '#/components/parameters/ChainId'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
       responses:
         '200':
           description: Paginated blocks
@@ -544,17 +562,99 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/blocks/{height}:
+    get:
+      tags:
+        - Query - Blocks
+      summary: Get block by height
+      description: Retrieve a single block by height.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/BlockHeight'
+      responses:
+        '200':
+          description: Block details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Block'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/block-summaries:
+    get:
+      tags:
+        - Query - Block Summaries
+      summary: Query block summaries
+      description: Get per-block aggregate counts such as transactions by type.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+      responses:
+        '200':
+          description: Paginated block summaries
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/BlockSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/block-summaries/{height}:
+    get:
+      tags:
+        - Query - Block Summaries
+      summary: Get block summary by height
+      description: Retrieve the block summary for a specific height.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/BlockHeight'
+      responses:
+        '200':
+          description: Block summary details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /chains/{id}/transactions:
     get:
       tags:
         - Query - Transactions
       summary: Query transactions
-      description: Get paginated list of transactions for a chain
+      description: Get transactions for a chain with optional message-type filtering.
       parameters:
         - $ref: '#/components/parameters/ChainId'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/TransactionTypeFilter'
       responses:
         '200':
           description: Paginated transactions
@@ -573,17 +673,43 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/transactions/{hash}:
+    get:
+      tags:
+        - Query - Transactions
+      summary: Get transaction by hash
+      description: Retrieve a single transaction with parsed message data.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/TransactionHash'
+      responses:
+        '200':
+          description: Transaction details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /chains/{id}/transactions_raw:
     get:
       tags:
         - Query - Transactions
       summary: Query raw transactions
-      description: Get paginated list of raw transaction data with all fields
+      description: Get raw transaction payloads (message, public key, signature).
       parameters:
         - $ref: '#/components/parameters/ChainId'
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
       responses:
         '200':
           description: Paginated raw transactions
@@ -602,86 +728,335 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/events:
+    get:
+      tags:
+        - Query - Events
+      summary: Query events
+      description: Get events emitted during block processing with optional type filtering.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/EventTypeFilter'
+      responses:
+        '200':
+          description: Paginated events
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Event'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/accounts:
+    get:
+      tags:
+        - Query - Accounts
+      summary: Query accounts
+      description: Get account balance snapshots using cursor-based pagination.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+      responses:
+        '200':
+          description: Paginated accounts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/accounts/{address}:
+    get:
+      tags:
+        - Query - Accounts
+      summary: Get account by address
+      description: Retrieve account state, optionally at or before a specific height.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/AccountAddress'
+        - $ref: '#/components/parameters/AccountHeight'
+      responses:
+        '200':
+          description: Account snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/pools:
+    get:
+      tags:
+        - Query - Pools
+      summary: Query pools
+      description: Get liquidity pool state snapshots.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+      responses:
+        '200':
+          description: Paginated pools
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Pool'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/orders:
+    get:
+      tags:
+        - Query - Orders
+      summary: Query orders
+      description: Get order snapshots with optional status filtering.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/OrderStatusFilter'
+      responses:
+        '200':
+          description: Paginated orders
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/dex-prices:
+    get:
+      tags:
+        - Query - Markets
+      summary: Query DEX prices
+      description: Get cross-chain DEX price snapshots with optional chain pair filters.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/DexPriceLocal'
+        - $ref: '#/components/parameters/DexPriceRemote'
+      responses:
+        '200':
+          description: Paginated DEX prices
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DexPrice'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/analytics/dex-volume:
+    get:
+      tags:
+        - Query - Analytics
+      summary: DEX volume (24h)
+      description: Get 24-hour trading volume grouped by committee.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+      responses:
+        '200':
+          description: 24-hour DEX volume
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DexVolumeResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /chains/{id}/analytics/order-depth:
+    get:
+      tags:
+        - Query - Analytics
+      summary: Order book depth
+      description: Aggregated open order depth grouped by price level.
+      parameters:
+        - $ref: '#/components/parameters/ChainId'
+        - $ref: '#/components/parameters/Committee'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Order book depth
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderBookDepthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /chains/{id}/stats/hour:
     get:
       tags:
         - Query - Stats
       summary: Hourly statistics
-      description: Get transaction statistics grouped by hour
+      description: Get up to 500 hourly transaction counts for a chain.
       parameters:
         - $ref: '#/components/parameters/ChainId'
       responses:
         '200':
-          description: Hourly stats
+          description: Hourly transaction counts
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/HourlyStats'
+                  $ref: '#/components/schemas/StatsHour'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /chains/{id}/stats/day:
     get:
       tags:
         - Query - Stats
       summary: Daily statistics
-      description: Get transaction statistics grouped by day
+      description: Get the last 90 daily transaction count buckets for a chain.
       parameters:
         - $ref: '#/components/parameters/ChainId'
       responses:
         '200':
-          description: Daily stats
+          description: Daily transaction counts
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/DailyStats'
+                  $ref: '#/components/schemas/StatsDay'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /chains/{id}/stats/24h:
     get:
       tags:
         - Query - Stats
-      summary: 24-hour rolling statistics
-      description: Get transaction statistics for the last 24 hours
+      summary: Rolling 24-hour statistics
+      description: Get the latest 24-hour transaction count snapshot for a chain.
       parameters:
         - $ref: '#/components/parameters/ChainId'
       responses:
         '200':
-          description: 24-hour rolling stats
+          description: 24-hour transaction snapshot
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Rolling24hStats'
+                  $ref: '#/components/schemas/Stats24h'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /chains/{id}/schema:
     get:
       tags:
         - Query - Schema
-      summary: Get database schema
-      description: Get schema information for a specific table
+      summary: Get table schema
+      description: Retrieve ClickHouse column metadata for a table.
       parameters:
         - $ref: '#/components/parameters/ChainId'
         - name: table
           in: query
           required: true
-          description: Table name to get schema for
+          description: Table name to inspect.
           schema:
             type: string
-            enum: [blocks, transactions, transactions_raw]
-          example: blocks
+            enum:
+              - blocks
+              - txs
+              - block_summaries
+              - events
+              - accounts
+              - pools
+              - orders
+              - dex_prices
+              - transactions
+              - transactions_raw
       responses:
         '200':
-          description: Schema information
+          description: Table schema metadata
           content:
             application/json:
               schema:
@@ -695,6 +1070,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
 components:
   securitySchemes:
@@ -704,35 +1081,68 @@ components:
       bearerFormat: Token
       description: |
         Admin token authentication for API access.
-        Use the ADMIN_TOKEN environment variable value.
-
-        Example: `Authorization: Bearer your-admin-token`
-
-        This is the recommended authentication method for API consumers and CLI tools.
+        Use the `ADMIN_TOKEN` environment variable value with the `Authorization: Bearer <token>` header.
     sessionAuth:
       type: apiKey
       in: cookie
       name: cx_session
       description: |
-        Session-based authentication using JWT stored in HTTP-only cookie.
-        Obtained from /api/auth/login endpoint.
-
-        This is used by the web UI. API consumers should use bearerAuth instead.
+        Session-based authentication using an HTTP-only cookie issued by the `/api/auth/login` endpoint.
+        Primarily used by the admin web UI.
 
   parameters:
     ChainId:
       name: id
       in: path
       required: true
-      description: Chain identifier
+      description: Chain identifier.
       schema:
         type: string
       example: example-chain
 
+    BlockHeight:
+      name: height
+      in: path
+      required: true
+      description: Block height.
+      schema:
+        type: integer
+        format: uint64
+      example: 123456
+
+    TransactionHash:
+      name: hash
+      in: path
+      required: true
+      description: Transaction hash.
+      schema:
+        type: string
+      example: ABCDEF1234567890
+
+    AccountAddress:
+      name: address
+      in: path
+      required: true
+      description: Account address.
+      schema:
+        type: string
+      example: canopy1qqp6k9nqf6u3v5t8w0
+
+    AccountHeight:
+      name: height
+      in: query
+      required: false
+      description: Return the account snapshot at or before this height.
+      schema:
+        type: integer
+        format: uint64
+      example: 500000
+
     Cursor:
       name: cursor
       in: query
-      description: Pagination cursor (block height)
+      required: false
+      description: Pagination cursor (exclusive). Uses the entity height for ordering.
       schema:
         type: integer
         format: uint64
@@ -742,53 +1152,178 @@ components:
     Limit:
       name: limit
       in: query
-      description: Maximum number of results to return
+      required: false
+      description: Maximum number of results to return.
       schema:
         type: integer
         minimum: 1
         maximum: 100
-        default: 20
-      example: 20
+        default: 50
+      example: 50
+
+    Sort:
+      name: sort
+      in: query
+      required: false
+      description: Sort order (descending by default).
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
+      example: desc
+
+    TransactionTypeFilter:
+      name: type
+      in: query
+      required: false
+      description: Filter transactions by message type (e.g. `delegate`).
+      schema:
+        type: string
+
+    EventTypeFilter:
+      name: type
+      in: query
+      required: false
+      description: Filter events by event type (e.g. `transfer`).
+      schema:
+        type: string
+
+    OrderStatusFilter:
+      name: status
+      in: query
+      required: false
+      description: Filter orders by status.
+      schema:
+        type: string
+        enum: [open, filled, cancelled, expired]
+
+    DexPriceLocal:
+      name: local
+      in: query
+      required: false
+      description: Filter DEX prices by local chain ID. Provide together with `remote`.
+      schema:
+        type: integer
+        format: uint64
+
+    DexPriceRemote:
+      name: remote
+      in: query
+      required: false
+      description: Filter DEX prices by remote chain ID. Provide together with `local`.
+      schema:
+        type: integer
+        format: uint64
+
+    Committee:
+      name: committee
+      in: query
+      required: true
+      description: Committee identifier for analytics queries.
+      schema:
+        type: integer
+        format: uint64
+      example: 42
 
   schemas:
+    SimpleOK:
+      type: object
+      properties:
+        ok:
+          type: string
+          example: "1"
+
+    QueuedResponse:
+      type: object
+      properties:
+        queued:
+          type: integer
+          format: int32
+          description: Number of items queued successfully.
+          example: 3
+
+    ProgressResponse:
+      type: object
+      properties:
+        last:
+          type: integer
+          format: uint64
+          description: Last indexed block height.
+          example: 1234567
+
+    GapRange:
+      type: object
+      properties:
+        From:
+          type: integer
+          format: uint64
+          description: Start of the missing block range (inclusive).
+        To:
+          type: integer
+          format: uint64
+          description: End of the missing block range (inclusive).
+      example:
+        From: 100
+        To: 105
+
     Chain:
       type: object
       properties:
         chain_id:
           type: string
-          example: example-chain
         chain_name:
           type: string
-          example: Example Blockchain Network
         rpc_endpoints:
           type: array
           items:
             type: string
-          example: ["https://rpc.example.com"]
-        image:
-          type: string
-          description: Docker image for the indexer
-          example: canopy-indexer:latest
-        min_replicas:
-          type: integer
-          minimum: 1
-          default: 1
-        max_replicas:
-          type: integer
-          minimum: 1
-          default: 1
         paused:
           type: integer
           enum: [0, 1]
-          description: Whether indexing is paused
         deleted:
           type: integer
           enum: [0, 1]
-          description: Whether chain is soft-deleted
+        image:
+          type: string
+        min_replicas:
+          type: integer
+          minimum: 1
+        max_replicas:
+          type: integer
+          minimum: 1
+        notes:
+          type: string
+          nullable: true
         created_at:
           type: string
           format: date-time
         updated_at:
+          type: string
+          format: date-time
+        rpc_health_status:
+          type: string
+        rpc_health_message:
+          type: string
+        rpc_health_updated_at:
+          type: string
+          format: date-time
+        queue_health_status:
+          type: string
+        queue_health_message:
+          type: string
+        queue_health_updated_at:
+          type: string
+          format: date-time
+        deployment_health_status:
+          type: string
+        deployment_health_message:
+          type: string
+        deployment_health_updated_at:
+          type: string
+          format: date-time
+        overall_health_status:
+          type: string
+        overall_health_updated_at:
           type: string
           format: date-time
 
@@ -798,6 +1333,7 @@ components:
         - chain_id
         - chain_name
         - rpc_endpoints
+        - image
       properties:
         chain_id:
           type: string
@@ -813,14 +1349,19 @@ components:
         min_replicas:
           type: integer
           minimum: 1
+          default: 1
         max_replicas:
           type: integer
           minimum: 1
+          default: 1
+        notes:
+          type: string
+          nullable: true
 
-    ChainStatus:
+    ChainPatch:
       type: object
       properties:
-        chain_id:
+        chain_name:
           type: string
         paused:
           type: integer
@@ -828,44 +1369,149 @@ components:
         deleted:
           type: integer
           enum: [0, 1]
-        last_indexed:
+        rpc_endpoints:
+          type: array
+          items:
+            type: string
+        image:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        min_replicas:
           type: integer
-          format: uint64
-        latest_head:
+          minimum: 1
+        max_replicas:
           type: integer
-          format: uint64
+          minimum: 1
 
-    IndexingProgress:
+    ChainStatusPatch:
+      allOf:
+        - type: object
+          required:
+            - chain_id
+          properties:
+            chain_id:
+              type: string
+        - $ref: '#/components/schemas/ChainPatch'
+
+    HealthInfo:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Health status label.
+        message:
+          type: string
+          description: Optional diagnostic message.
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp.
+
+    QueueStatus:
+      type: object
+      properties:
+        pending_workflow:
+          type: integer
+          format: int64
+        pending_activity:
+          type: integer
+          format: int64
+        backlog_age_secs:
+          type: number
+          format: float
+        pollers:
+          type: integer
+          format: int32
+
+    ReindexEntry:
+      type: object
+      properties:
+        height:
+          type: integer
+          format: uint64
+        status:
+          type: string
+        requested_by:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        workflow_id:
+          type: string
+        run_id:
+          type: string
+
+    ChainStatus:
       type: object
       properties:
         chain_id:
           type: string
-        last_indexed_height:
+        chain_name:
+          type: string
+        image:
+          type: string
+        notes:
+          type: string
+          nullable: true
+        paused:
+          type: boolean
+        deleted:
+          type: boolean
+        min_replicas:
+          type: integer
+        max_replicas:
+          type: integer
+        last_indexed:
           type: integer
           format: uint64
-        latest_chain_height:
+        head:
           type: integer
           format: uint64
-        blocks_behind:
+        queue:
+          $ref: '#/components/schemas/QueueStatus'
+        ops_queue:
+          $ref: '#/components/schemas/QueueStatus'
+        indexer_queue:
+          $ref: '#/components/schemas/QueueStatus'
+        reindex_history:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReindexEntry'
+        missing_blocks_count:
           type: integer
-        percentage_complete:
+          format: uint64
+        gap_ranges_count:
+          type: integer
+        largest_gap_start:
+          type: integer
+          format: uint64
+        largest_gap_end:
+          type: integer
+          format: uint64
+        is_live_sync:
+          type: boolean
+        live_queue_depth:
+          type: integer
+          format: int64
+        live_queue_backlog_age:
           type: number
           format: float
-
-    Gap:
-      type: object
-      properties:
-        from_h:
+        historical_queue_depth:
           type: integer
-          format: uint64
-          description: Start of gap range (inclusive)
-        to_h:
-          type: integer
-          format: uint64
-          description: End of gap range (inclusive)
-      example:
-        from_h: 100
-        to_h: 105
+          format: int64
+        historical_queue_backlog_age:
+          type: number
+          format: float
+        health:
+          $ref: '#/components/schemas/HealthInfo'
+        rpc_health:
+          $ref: '#/components/schemas/HealthInfo'
+        queue_health:
+          $ref: '#/components/schemas/HealthInfo'
+        deployment_health:
+          $ref: '#/components/schemas/HealthInfo'
 
     ProgressHistoryPoint:
       type: object
@@ -873,26 +1519,42 @@ components:
         time:
           type: string
           format: date-time
-          description: Timestamp of this data point
         height:
           type: integer
           format: uint64
-          description: Block height at this time
         avg_latency:
           type: number
           format: float
-          description: Average indexing latency in seconds
         avg_processing_time:
           type: number
           format: float
-          description: Average processing time in milliseconds
         blocks_indexed:
           type: integer
-          description: Number of blocks indexed in this time bucket
+          format: uint32
         velocity:
           type: number
           format: float
-          description: Indexing velocity in blocks per minute
+
+    ReindexRequest:
+      type: object
+      description: Provide explicit block heights or a height range to reindex.
+      properties:
+        heights:
+          type: array
+          items:
+            type: integer
+            format: uint64
+          description: Unique block heights to reindex.
+        from:
+          type: integer
+          format: uint64
+          description: Inclusive start of a block range to reindex.
+        to:
+          type: integer
+          format: uint64
+          description: Inclusive end of a block range to reindex.
+      example:
+        heights: [100, 101, 102]
 
     Block:
       type: object
@@ -905,12 +1567,42 @@ components:
         time:
           type: string
           format: date-time
-        proposer:
+        parent_hash:
           type: string
-          description: Block proposer address
-        tx_count:
+        proposer_address:
+          type: string
+        size:
           type: integer
-          description: Number of transactions in block
+          format: int32
+
+    BlockSummary:
+      type: object
+      properties:
+        height:
+          type: integer
+          format: uint64
+        height_time:
+          type: string
+          format: date-time
+        num_txs:
+          type: integer
+          format: uint32
+        tx_counts_by_type:
+          type: object
+          additionalProperties:
+            type: integer
+            format: uint32
+
+    PagedResponse:
+      type: object
+      properties:
+        limit:
+          type: integer
+        next_cursor:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Cursor for the next page; null if there are no more results.
 
     Transaction:
       type: object
@@ -918,9 +1610,12 @@ components:
         height:
           type: integer
           format: uint64
-        hash:
+        tx_hash:
           type: string
         time:
+          type: string
+          format: date-time
+        height_time:
           type: string
           format: date-time
         message_type:
@@ -937,6 +1632,60 @@ components:
         fee:
           type: integer
           format: uint64
+        validator_address:
+          type: string
+          nullable: true
+        commission:
+          type: number
+          format: float
+          nullable: true
+        chain_id:
+          type: integer
+          format: uint64
+          nullable: true
+        sell_amount:
+          type: integer
+          format: uint64
+          nullable: true
+        buy_amount:
+          type: integer
+          format: uint64
+          nullable: true
+        liquidity_amount:
+          type: integer
+          format: uint64
+          nullable: true
+        order_id:
+          type: string
+          nullable: true
+        price:
+          type: number
+          format: float
+          nullable: true
+        param_key:
+          type: string
+          nullable: true
+        param_value:
+          type: string
+          nullable: true
+        committee_id:
+          type: integer
+          format: uint64
+          nullable: true
+        recipient:
+          type: string
+          nullable: true
+        msg:
+          type: string
+        public_key:
+          type: string
+          nullable: true
+        signature:
+          type: string
+          nullable: true
+        created_height:
+          type: integer
+          format: uint64
 
     TransactionRaw:
       type: object
@@ -946,61 +1695,279 @@ components:
           format: uint64
         tx_hash:
           type: string
-        msg_raw:
+        height_time:
           type: string
-          nullable: true
-          description: Raw message JSON
+          format: date-time
+        msg:
+          type: string
         public_key:
           type: string
           nullable: true
         signature:
           type: string
           nullable: true
-        created_at:
+
+    TransactionDetail:
+      type: object
+      properties:
+        transaction:
+          $ref: '#/components/schemas/Transaction'
+        message:
+          type: object
+          nullable: true
+          additionalProperties: {}
+      required:
+        - transaction
+
+    Event:
+      type: object
+      properties:
+        height:
+          type: integer
+          format: uint64
+        chain_id:
+          type: integer
+          format: uint64
+        address:
+          type: string
+        reference:
+          type: string
+        event_type:
+          type: string
+        amount:
+          type: integer
+          format: uint64
+          nullable: true
+        sold_amount:
+          type: integer
+          format: uint64
+          nullable: true
+        bought_amount:
+          type: integer
+          format: uint64
+          nullable: true
+        local_amount:
+          type: integer
+          format: uint64
+          nullable: true
+        remote_amount:
+          type: integer
+          format: uint64
+          nullable: true
+        success:
+          type: boolean
+          nullable: true
+        local_origin:
+          type: boolean
+          nullable: true
+        order_id:
+          type: string
+          nullable: true
+        msg:
+          type: string
+        height_time:
           type: string
           format: date-time
 
-    HourlyStats:
+    Account:
+      type: object
+      properties:
+        Address:
+          type: string
+        Amount:
+          type: integer
+          format: uint64
+        Height:
+          type: integer
+          format: uint64
+        HeightTime:
+          type: string
+          format: date-time
+        CreatedHeight:
+          type: integer
+          format: uint64
+
+    Pool:
+      type: object
+      properties:
+        pool_id:
+          type: integer
+          format: uint64
+        height:
+          type: integer
+          format: uint64
+        chain_id:
+          type: integer
+          format: uint64
+        amount:
+          type: integer
+          format: uint64
+        total_points:
+          type: integer
+          format: uint64
+        lp_count:
+          type: integer
+          format: int32
+        height_time:
+          type: string
+          format: date-time
+
+    Order:
+      type: object
+      properties:
+        OrderID:
+          type: string
+        Height:
+          type: integer
+          format: uint64
+        HeightTime:
+          type: string
+          format: date-time
+        Committee:
+          type: integer
+          format: uint64
+        AmountForSale:
+          type: integer
+          format: uint64
+        RequestedAmount:
+          type: integer
+          format: uint64
+        SellerAddress:
+          type: string
+        BuyerAddress:
+          type: string
+          nullable: true
+        Deadline:
+          type: integer
+          format: uint64
+          nullable: true
+        Status:
+          type: string
+        CreatedHeight:
+          type: integer
+          format: uint64
+
+    DexPrice:
+      type: object
+      properties:
+        local_chain_id:
+          type: integer
+          format: uint64
+        remote_chain_id:
+          type: integer
+          format: uint64
+        height:
+          type: integer
+          format: uint64
+        local_pool:
+          type: integer
+          format: uint64
+        remote_pool:
+          type: integer
+          format: uint64
+        price_e6:
+          type: integer
+          format: uint64
+        height_time:
+          type: string
+          format: date-time
+
+    DexVolumeResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DexVolumeStats'
+
+    OrderBookDepthResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderBookLevel'
+
+    DexVolumeStats:
+      type: object
+      properties:
+        committee:
+          type: integer
+          format: uint64
+        total_orders:
+          type: integer
+          format: uint64
+        volume_for_sale:
+          type: integer
+          format: uint64
+        volume_requested:
+          type: integer
+          format: uint64
+        last_price:
+          type: integer
+          format: uint64
+          nullable: true
+
+    OrderBookLevel:
+      type: object
+      properties:
+        committee:
+          type: integer
+          format: uint64
+        price_e6:
+          type: integer
+          format: uint64
+        total_for_sale:
+          type: integer
+          format: uint64
+        total_requested:
+          type: integer
+          format: uint64
+        order_count:
+          type: integer
+          format: int32
+
+    EntityInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        table_name:
+          type: string
+        staging_name:
+          type: string
+        route_path:
+          type: string
+
+    StatsHour:
       type: object
       properties:
         hour:
           type: string
           format: date-time
-          description: Hour timestamp
-        tx_count:
+        count:
           type: integer
-          description: Transaction count for this hour
-        unique_signers:
-          type: integer
-          description: Unique signer count for this hour
+          format: uint64
 
-    DailyStats:
+    StatsDay:
       type: object
       properties:
         day:
           type: string
           format: date
-          description: Day timestamp
-        tx_count:
+        count:
           type: integer
-          description: Transaction count for this day
-        unique_signers:
-          type: integer
-          description: Unique signer count for this day
+          format: uint64
 
-    Rolling24hStats:
+    Stats24h:
       type: object
       properties:
-        tx_count:
-          type: integer
-          description: Transaction count in last 24 hours
-        unique_signers:
-          type: integer
-          description: Unique signer count in last 24 hours
-        time:
+        asof:
           type: string
           format: date-time
-          description: Current timestamp
+        count:
+          type: integer
+          format: uint64
 
     ColumnInfo:
       type: object
@@ -1009,17 +1976,6 @@ components:
           type: string
         type:
           type: string
-
-    PagedResponse:
-      type: object
-      properties:
-        limit:
-          type: integer
-        next_cursor:
-          type: integer
-          format: uint64
-          nullable: true
-          description: Cursor for next page, null if no more pages
 
     Error:
       type: object
@@ -1044,6 +2000,13 @@ components:
 
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalError:
+      description: Internal server error
       content:
         application/json:
           schema:

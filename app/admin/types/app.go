@@ -18,11 +18,11 @@ import (
 )
 
 type CachedQueueStats struct {
-	OpsQueue            QueueStatus
-	IndexerQueue        QueueStatus // Deprecated: Aggregated stats for backward compatibility
-	LiveQueue           QueueStatus // NEW: Live queue stats (blocks within threshold)
-	HistoricalQueue     QueueStatus // NEW: Historical queue stats (blocks beyond threshold)
-	Fetched             time.Time
+	OpsQueue        QueueStatus
+	IndexerQueue    QueueStatus // Deprecated: Aggregated stats for backward compatibility
+	LiveQueue       QueueStatus // NEW: Live queue stats (blocks within threshold)
+	HistoricalQueue QueueStatus // NEW: Historical queue stats (blocks beyond threshold)
+	Fetched         time.Time
 }
 
 // NewQueueStatsCache creates a new queue stats cache

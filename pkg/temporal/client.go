@@ -34,9 +34,9 @@ type Client struct {
 	GlobalReportsScheduleID string
 
 	// Workflow IDs
-	IndexBlockWorkflowId         string
-	SchedulerWorkflowID          string
-	CleanupStagingWorkflowID     string
+	IndexBlockWorkflowId     string
+	SchedulerWorkflowID      string
+	CleanupStagingWorkflowID string
 }
 
 type Health struct {
@@ -67,8 +67,8 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		// for now this is just hardcoded, could be configurable if we need it
 		ManagerQueue:           "manager",
 		ReportsQueue:           "reports",
-		IndexerQueue:           "index:%s",           // Keep for backwards compat
-		IndexerLiveQueue:       "index:%s:live",      // NEW: Live queue for recent blocks
+		IndexerQueue:           "index:%s",            // Keep for backwards compat
+		IndexerLiveQueue:       "index:%s:live",       // NEW: Live queue for recent blocks
 		IndexerHistoricalQueue: "index:%s:historical", // NEW: Historical queue for old blocks
 		IndexerOpsQueue:        "admin:%s",
 		// schedule IDs
@@ -239,6 +239,7 @@ func (c *Client) GetQueueStats(ctx context.Context, queueName string) (pendingWo
 
 	// Aggregate stats across all Build IDs (versioned + unversioned workers)
 	// The VersionsInfo map has empty string "" as key for unversioned workers
+	//nolint:staticcheck // TODO: migrate to VersioningInfo API in future
 	for buildID, versionInfo := range desc.VersionsInfo {
 		// Get workflow task stats
 		if wfInfo, ok := versionInfo.TypesInfo[client.TaskQueueTypeWorkflow]; ok {

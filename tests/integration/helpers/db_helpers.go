@@ -15,16 +15,16 @@ func CleanDB(ctx context.Context, t *testing.T) {
 	if SkipIfNoDB(ctx, t) {
 		return
 	}
-	if _, err := testDB.Db.ExecContext(ctx, `TRUNCATE TABLE IF EXISTS test_canopyx.chains`); err != nil {
+	if err := testDB.Db.Exec(ctx, `TRUNCATE TABLE IF EXISTS test_canopyx.chains`); err != nil {
 		t.Logf("Warning: failed to truncate chains table: %v", err)
 	}
-	if _, err := testDB.Db.ExecContext(ctx, `TRUNCATE TABLE IF EXISTS test_canopyx.index_progress`); err != nil {
+	if err := testDB.Db.Exec(ctx, `TRUNCATE TABLE IF EXISTS test_canopyx.index_progress`); err != nil {
 		t.Logf("Warning: failed to truncate index_progress table: %v", err)
 	}
-	if _, err := testDB.Db.ExecContext(ctx, `TRUNCATE TABLE IF EXISTS test_canopyx.index_progress_agg`); err != nil {
+	if err := testDB.Db.Exec(ctx, `TRUNCATE TABLE IF EXISTS test_canopyx.index_progress_agg`); err != nil {
 		t.Logf("Warning: failed to truncate index_progress_agg table: %v", err)
 	}
-	if _, err := testDB.Db.ExecContext(ctx, `TRUNCATE TABLE IF EXISTS test_canopyx.reindex_requests`); err != nil {
+	if err := testDB.Db.Exec(ctx, `TRUNCATE TABLE IF EXISTS test_canopyx.reindex_requests`); err != nil {
 		t.Logf("Warning: failed to truncate reindex_requests table: %v", err)
 	}
 }
@@ -162,13 +162,13 @@ func RequireTableExists(ctx context.Context, t *testing.T, tableName string) {
 	if SkipIfNoDB(ctx, t) {
 		return
 	}
-	query := `
+	query := fmt.Sprintf(`
 		SELECT count()
 		FROM system.tables
-		WHERE database = 'test_canopyx' AND name = ?
-	`
+		WHERE database = 'test_canopyx' AND name = '%s'
+	`, tableName)
 	var count int
-	err := testDB.Db.NewRaw(query, tableName).Scan(ctx, &count)
+	err := testDB.Db.Select(ctx, &count, query)
 	require.NoError(t, err, "Failed to check if table %s exists", tableName)
 	require.Equal(t, 1, count, "Table %s does not exist", tableName)
 }
@@ -178,15 +178,15 @@ func RequireMaterializedViewExists(ctx context.Context, t *testing.T, mvName str
 	if SkipIfNoDB(ctx, t) {
 		return
 	}
-	query := `
+	query := fmt.Sprintf(`
 		SELECT count()
 		FROM system.tables
 		WHERE database = 'test_canopyx'
-		  AND name = ?
-		  AND engine LIKE '%MaterializedView%'
-	`
+		  AND name = '%s'
+		  AND engine LIKE '%%MaterializedView%%'
+	`, mvName)
 	var count int
-	err := testDB.Db.NewRaw(query, mvName).Scan(ctx, &count)
+	err := testDB.Db.Select(ctx, &count, query)
 	require.NoError(t, err, "Failed to check if materialized view %s exists", mvName)
 	require.Equal(t, 1, count, "Materialized view %s does not exist", mvName)
 }
@@ -230,33 +230,34 @@ func CountRecords(ctx context.Context, t *testing.T, tableName string) int {
 	}
 	var count int
 	query := fmt.Sprintf(`SELECT count() FROM test_canopyx.%s`, tableName)
-	err := testDB.Db.NewRaw(query).Scan(ctx, &count)
+	err := testDB.Db.Select(ctx, &count, query)
 	require.NoError(t, err, "Failed to count records in %s", tableName)
 
 	return count
 }
 
-func DumpIndexProgress(ctx context.Context, t *testing.T, chainID string) {
+func DumpIndexProgress(ctx context.Context, t *testing.T, _ string /* chainID */) {
 	t.Helper()
 	if SkipIfNoDB(ctx, t) {
 		return
 	}
-	var records []admin.IndexProgress
-	err := testDB.Db.NewSelect().
-		Model(&records).
-		Where("chain_id = ?", chainID).
-		OrderExpr("height ASC").
-		Scan(ctx)
-
-	if err != nil {
-		t.Logf("Failed to dump index progress for chain %s: %v", chainID, err)
-		return
-	}
-
-	t.Logf("Index progress for chain %s:", chainID)
-	for _, r := range records {
-		t.Logf("  Height: %d, Indexed at: %s", r.Height, r.IndexedAt.Format(time.RFC3339))
-	}
+	// TODO: update this
+	//var records []admin.IndexProgress
+	//err := testDB.Db.NewSelect().
+	//    Model(&records).
+	//    Where("chain_id = ?", chainID).
+	//    OrderExpr("height ASC").
+	//    Scan(ctx)
+	//
+	//if err != nil {
+	//    t.Logf("Failed to dump index progress for chain %s: %v", chainID, err)
+	//    return
+	//}
+	//
+	//t.Logf("Index progress for chain %s:", chainID)
+	//for _, r := range records {
+	//    t.Logf("  Height: %d, Indexed at: %s", r.Height, r.IndexedAt.Format(time.RFC3339))
+	//}
 }
 
 func DumpChains(ctx context.Context, t *testing.T) {

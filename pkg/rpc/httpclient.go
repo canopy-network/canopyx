@@ -14,10 +14,12 @@ import (
 )
 
 const (
-	headPath            = "/v1/query/height"
-	blockByHeightPath   = "/v1/query/block-by-height"
-	txsByHeightPath     = "/v1/query/txs-by-height"
-	eventsByHeightPath  = "/v1/query/events-by-height"
+	headPath           = "/v1/query/height"
+	blockByHeightPath  = "/v1/query/block-by-height"
+	txsByHeightPath    = "/v1/query/txs-by-height"
+	eventsByHeightPath = "/v1/query/events-by-height"
+	dexPricePath       = "/v1/query/dex-price"
+	dexPricesPath      = "/v1/query/dex-prices"
 )
 
 // HTTPClient is a wrapper around an http.Client that implements a circuit-breaker and token-bucket.

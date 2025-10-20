@@ -123,7 +123,7 @@ func (c *HTTPClient) GetGenesisState(ctx context.Context, height uint64) (*Genes
 	}
 
 	var genesis GenesisState
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/query/state", args, &genesis); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/query/state", args, &genesis); err != nil {
 		return nil, fmt.Errorf("fetch genesis state at height %d: %w", height, err)
 	}
 

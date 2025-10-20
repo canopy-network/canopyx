@@ -15,6 +15,9 @@ import { TransactionTypeBreakdown } from './TransactionTypeBreakdown'
 import { TransactionList } from './TransactionList'
 import { EventTypeBreakdown } from './EventTypeBreakdown'
 import { EventList } from './EventList'
+import { PoolList } from './PoolList'
+import { OrderList } from './OrderList'
+import { DexPriceList } from './DexPriceList'
 
 // Types
 type QueueStatus = {
@@ -98,6 +101,7 @@ type EntityInfo = {
   name: string
   table_name: string
   staging_name: string
+  route_path: string
 }
 
 type EntitiesResponse = {
@@ -878,6 +882,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
 
   // Entities state
   const [entities, setEntities] = useState<string[]>([])
+  const [entityMap, setEntityMap] = useState<Record<string, string>>({}) // Maps entity name to route path
   const [loadingEntities, setLoadingEntities] = useState(true)
 
   // Table browsing state
@@ -919,17 +924,22 @@ function ExplorerTab({ chainId }: { chainId: string }) {
   }
 
   // Map display names to API endpoint names
+  // Note: Multi-word routes use dashes (e.g., block-summaries, dex-prices)
   const TABLE_NAME_MAP: Record<string, string> = {
     blocks: 'blocks',
-    block_summaries: 'block_summaries',
+    block_summaries: 'block-summaries',
     txs: 'transactions',
     transactions: 'transactions',
     txs_raw: 'transactions_raw',
     transactions_raw: 'transactions_raw',
     accounts: 'accounts',
+    events: 'events',
+    pools: 'pools',
+    orders: 'orders',
+    dex_prices: 'dex-prices',
   }
 
-  // Fetch entities on mount
+  // Fetch entities on mount and build dynamic route mapping
   useEffect(() => {
     const fetchEntities = async () => {
       setLoadingEntities(true)
@@ -939,8 +949,17 @@ function ExplorerTab({ chainId }: { chainId: string }) {
           throw new Error('Failed to fetch entities')
         }
         const data: EntitiesResponse = await response.json()
+
+        // Build entity name list
         const entityNames = data.entities.map((e) => e.name)
         setEntities(entityNames)
+
+        // Build dynamic mapping from entity names to route paths
+        const mapping: Record<string, string> = {}
+        data.entities.forEach((e) => {
+          mapping[e.name] = e.route_path
+        })
+        setEntityMap(mapping)
 
         // Set default selected table to first entity
         if (entityNames.length > 0) {
@@ -950,9 +969,15 @@ function ExplorerTab({ chainId }: { chainId: string }) {
       } catch (err: any) {
         console.error('Entities fetch error:', err)
         notify('Failed to load entities list', 'error')
-        // Fallback to hardcoded entities
+        // Fallback to hardcoded entities with hardcoded mapping
         const fallbackEntities = ['blocks', 'block_summaries', 'transactions', 'accounts']
         setEntities(fallbackEntities)
+        setEntityMap({
+          blocks: 'blocks',
+          block_summaries: 'block-summaries',
+          transactions: 'transactions',
+          accounts: 'accounts',
+        })
         setSelectedTable('blocks')
         setLookupEntity('blocks')
       } finally {
@@ -965,11 +990,17 @@ function ExplorerTab({ chainId }: { chainId: string }) {
 
   // Fetch schema when table changes
   useEffect(() => {
+    // Don't fetch if selectedTable hasn't been initialized yet
+    if (!selectedTable) {
+      return
+    }
+
     const fetchSchema = async () => {
       setLoading(true)
       setError('')
       try {
-        const tableName = TABLE_NAME_MAP[selectedTable]
+        // Use dynamic entityMap from backend, fallback to hardcoded TABLE_NAME_MAP
+        const tableName = entityMap[selectedTable] || TABLE_NAME_MAP[selectedTable] || selectedTable
         const response = await fetch(
           `/api/query/chains/${chainId}/schema?table=${tableName}`
         )
@@ -1131,39 +1162,48 @@ function ExplorerTab({ chainId }: { chainId: string }) {
   }
 
   // Sub-tab for explorer views
-  const [explorerView, setExplorerView] = useState<ExplorerTable | 'events'>('blocks')
+  type ExplorerView = 'events' | 'pools' | 'orders' | 'dex-prices' | 'tables'
+  const [explorerView, setExplorerView] = useState<ExplorerView>('events')
 
   return (
     <div className="space-y-6">
       {/* Explorer View Selector */}
-      <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
-        <button
-          onClick={() => setExplorerView('events')}
-          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-            explorerView === 'events'
-              ? 'bg-indigo-500 text-white'
-              : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-          }`}
-        >
-          Events
-        </button>
-        <button
-          onClick={() => setExplorerView('blocks')}
-          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-            explorerView !== 'events'
-              ? 'bg-indigo-500 text-white'
-              : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-          }`}
-        >
-          Tables
-        </button>
+      <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-800 pb-0">
+        {[
+          { id: 'events', label: 'Events' },
+          { id: 'pools', label: 'Pools' },
+          { id: 'orders', label: 'Orders' },
+          { id: 'dex-prices', label: 'DEX Prices' },
+          { id: 'tables', label: 'Tables' },
+        ].map((view) => (
+          <button
+            key={view.id}
+            onClick={() => setExplorerView(view.id as ExplorerView)}
+            className={`whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+              explorerView === view.id
+                ? 'border-indigo-500 text-white'
+                : 'border-transparent text-slate-400 hover:text-white'
+            }`}
+          >
+            {view.label}
+          </button>
+        ))}
       </div>
 
       {/* Events View */}
       {explorerView === 'events' && <EventList chainId={chainId} />}
 
+      {/* Pools View */}
+      {explorerView === 'pools' && <PoolList chainId={chainId} />}
+
+      {/* Orders View */}
+      {explorerView === 'orders' && <OrderList chainId={chainId} />}
+
+      {/* DEX Prices View */}
+      {explorerView === 'dex-prices' && <DexPriceList chainId={chainId} />}
+
       {/* Table Browser View */}
-      {explorerView !== 'events' && (
+      {explorerView === 'tables' && (
         <>
           {/* Error Banner */}
           {error && (

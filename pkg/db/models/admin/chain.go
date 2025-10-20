@@ -5,77 +5,168 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/uptrace/go-clickhouse/ch"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 type Chain struct {
-	ch.CHModel `ch:"table:chains"`
-
 	ChainID      string    `json:"chain_id" ch:"chain_id"` // ORDER BY set via builder
 	ChainName    string    `json:"chain_name" ch:"chain_name"`
 	RPCEndpoints []string  `json:"rpc_endpoints" ch:"rpc_endpoints"` // []string -> Array(String)
-	Paused       uint8     `json:"paused" ch:"paused,default:0"`     // defaults are applied by CreateTable
-	Deleted      uint8     `json:"deleted" ch:"deleted,default:0"`
-	Image        string    `json:"image" ch:"image,default:''"`
-	MinReplicas  uint16    `json:"min_replicas" ch:"min_replicas,default:1"`
-	MaxReplicas  uint16    `json:"max_replicas" ch:"max_replicas,default:3"`
-	Notes        string    `json:"notes,omitempty" ch:"notes,default:''"`
-	CreatedAt    time.Time `json:"created_at" ch:"created_at,default:now()"`
-	UpdatedAt    time.Time `json:"updated_at" ch:"updated_at,default:now()"`
+	Paused       uint8     `json:"paused" ch:"paused"`
+	Deleted      uint8     `json:"deleted" ch:"deleted"`
+	Image        string    `json:"image" ch:"image"`
+	MinReplicas  uint16    `json:"min_replicas" ch:"min_replicas"`
+	MaxReplicas  uint16    `json:"max_replicas" ch:"max_replicas"`
+	Notes        string    `json:"notes,omitempty" ch:"notes"`
+	CreatedAt    time.Time `json:"created_at" ch:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" ch:"updated_at"`
 
 	// Health Status Fields - Updated by various subsystems
 	// RPC Health: Updated by headscan workflow
-	RPCHealthStatus    string    `json:"rpc_health_status" ch:"rpc_health_status,default:'unknown'"` // unknown, healthy, degraded, unreachable
-	RPCHealthMessage   string    `json:"rpc_health_message" ch:"rpc_health_message,default:''"`      // error message or details
-	RPCHealthUpdatedAt time.Time `json:"rpc_health_updated_at" ch:"rpc_health_updated_at,default:now()"`
+	RPCHealthStatus    string    `json:"rpc_health_status" ch:"rpc_health_status"`   // unknown, healthy, degraded, unreachable
+	RPCHealthMessage   string    `json:"rpc_health_message" ch:"rpc_health_message"` // error message or details
+	RPCHealthUpdatedAt time.Time `json:"rpc_health_updated_at" ch:"rpc_health_updated_at"`
 
 	// Queue Health: Updated by queue monitor workflow
-	QueueHealthStatus    string    `json:"queue_health_status" ch:"queue_health_status,default:'unknown'"` // unknown, healthy, warning, critical
-	QueueHealthMessage   string    `json:"queue_health_message" ch:"queue_health_message,default:''"`      // details about queue state
-	QueueHealthUpdatedAt time.Time `json:"queue_health_updated_at" ch:"queue_health_updated_at,default:now()"`
+	QueueHealthStatus    string    `json:"queue_health_status" ch:"queue_health_status"`   // unknown, healthy, warning, critical
+	QueueHealthMessage   string    `json:"queue_health_message" ch:"queue_health_message"` // details about queue state
+	QueueHealthUpdatedAt time.Time `json:"queue_health_updated_at" ch:"queue_health_updated_at"`
 
 	// Deployment Health: Updated by controller
-	DeploymentHealthStatus    string    `json:"deployment_health_status" ch:"deployment_health_status,default:'unknown'"` // unknown, healthy, degraded, failed
-	DeploymentHealthMessage   string    `json:"deployment_health_message" ch:"deployment_health_message,default:''"`      // pod status details
-	DeploymentHealthUpdatedAt time.Time `json:"deployment_health_updated_at" ch:"deployment_health_updated_at,default:now()"`
+	DeploymentHealthStatus    string    `json:"deployment_health_status" ch:"deployment_health_status"`   // unknown, healthy, degraded, failed
+	DeploymentHealthMessage   string    `json:"deployment_health_message" ch:"deployment_health_message"` // pod status details
+	DeploymentHealthUpdatedAt time.Time `json:"deployment_health_updated_at" ch:"deployment_health_updated_at"`
 
 	// Overall Health: Computed from subsystems
-	OverallHealthStatus    string    `json:"overall_health_status" ch:"overall_health_status,default:'unknown'"` // unknown, healthy, degraded, critical
-	OverallHealthUpdatedAt time.Time `json:"overall_health_updated_at" ch:"overall_health_updated_at,default:now()"`
+	OverallHealthStatus    string    `json:"overall_health_status" ch:"overall_health_status"` // unknown, healthy, degraded, critical
+	OverallHealthUpdatedAt time.Time `json:"overall_health_updated_at" ch:"overall_health_updated_at"`
 }
 
-// InitChains creates the chain table using the models.Chain definition.
+// InitChains creates the chain table using raw SQL.
 // Table: ReplacingMergeTree(updated_at) ORDER BY (chain_id)
-func InitChains(ctx context.Context, db *ch.DB) error {
-	_, err := db.NewCreateTable().
-		Model((*Chain)(nil)).
-		IfNotExists().
-		Engine("ReplacingMergeTree(updated_at)").
-		// explicit ORDER BY to match your prior SQL
-		Order("(chain_id)").
-		Exec(ctx)
-	return err
+func InitChains(ctx context.Context, db driver.Conn) error {
+	query := `
+		CREATE TABLE IF NOT EXISTS chains (
+			chain_id String,
+			chain_name String,
+			rpc_endpoints Array(String),
+			paused UInt8 DEFAULT 0,
+			deleted UInt8 DEFAULT 0,
+			image String DEFAULT '',
+			min_replicas UInt16 DEFAULT 1,
+			max_replicas UInt16 DEFAULT 3,
+			notes String DEFAULT '',
+			created_at DateTime DEFAULT now(),
+			updated_at DateTime DEFAULT now(),
+			rpc_health_status String DEFAULT 'unknown',
+			rpc_health_message String DEFAULT '',
+			rpc_health_updated_at DateTime DEFAULT now(),
+			queue_health_status String DEFAULT 'unknown',
+			queue_health_message String DEFAULT '',
+			queue_health_updated_at DateTime DEFAULT now(),
+			deployment_health_status String DEFAULT 'unknown',
+			deployment_health_message String DEFAULT '',
+			deployment_health_updated_at DateTime DEFAULT now(),
+			overall_health_status String DEFAULT 'unknown',
+			overall_health_updated_at DateTime DEFAULT now()
+		) ENGINE = ReplacingMergeTree(updated_at)
+		ORDER BY (chain_id)
+	`
+	return db.Exec(ctx, query)
 }
 
 // GetChain returns the latest (deduped) row for the given chain_id.
-func GetChain(ctx context.Context, db *ch.DB, id string) (*Chain, error) {
+// Uses FINAL to collapse versions from ReplacingMergeTree(updated_at).
+func GetChain(ctx context.Context, db driver.Conn, id string) (*Chain, error) {
+	query := `
+		SELECT
+			chain_id, chain_name, rpc_endpoints, paused, deleted, image,
+			min_replicas, max_replicas, notes, created_at, updated_at,
+			rpc_health_status, rpc_health_message, rpc_health_updated_at,
+			queue_health_status, queue_health_message, queue_health_updated_at,
+			deployment_health_status, deployment_health_message, deployment_health_updated_at,
+			overall_health_status, overall_health_updated_at
+		FROM chains FINAL
+		WHERE chain_id = ?
+		LIMIT 1
+	`
+
 	var c Chain
+	err := db.QueryRow(ctx, query, id).Scan(
+		&c.ChainID,
+		&c.ChainName,
+		&c.RPCEndpoints,
+		&c.Paused,
+		&c.Deleted,
+		&c.Image,
+		&c.MinReplicas,
+		&c.MaxReplicas,
+		&c.Notes,
+		&c.CreatedAt,
+		&c.UpdatedAt,
+		&c.RPCHealthStatus,
+		&c.RPCHealthMessage,
+		&c.RPCHealthUpdatedAt,
+		&c.QueueHealthStatus,
+		&c.QueueHealthMessage,
+		&c.QueueHealthUpdatedAt,
+		&c.DeploymentHealthStatus,
+		&c.DeploymentHealthMessage,
+		&c.DeploymentHealthUpdatedAt,
+		&c.OverallHealthStatus,
+		&c.OverallHealthUpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
 
-	// Use FINAL to collapse versions from ReplacingMergeTree(updated_at)
-	err := db.NewSelect().
-		Model(&c).
-		Final().
-		Where("chain_id = ?", id).
-		Limit(1).
-		Scan(ctx)
+	return &c, nil
+}
 
-	return &c, err
+// InsertChain inserts a new chain record.
+// ReplacingMergeTree will handle deduplication based on updated_at.
+func InsertChain(ctx context.Context, db driver.Conn, c *Chain) error {
+	query := `
+		INSERT INTO chains (
+			chain_id, chain_name, rpc_endpoints, paused, deleted, image,
+			min_replicas, max_replicas, notes, created_at, updated_at,
+			rpc_health_status, rpc_health_message, rpc_health_updated_at,
+			queue_health_status, queue_health_message, queue_health_updated_at,
+			deployment_health_status, deployment_health_message, deployment_health_updated_at,
+			overall_health_status, overall_health_updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+
+	return db.Exec(ctx, query,
+		c.ChainID,
+		c.ChainName,
+		c.RPCEndpoints,
+		c.Paused,
+		c.Deleted,
+		c.Image,
+		c.MinReplicas,
+		c.MaxReplicas,
+		c.Notes,
+		c.CreatedAt,
+		c.UpdatedAt,
+		c.RPCHealthStatus,
+		c.RPCHealthMessage,
+		c.RPCHealthUpdatedAt,
+		c.QueueHealthStatus,
+		c.QueueHealthMessage,
+		c.QueueHealthUpdatedAt,
+		c.DeploymentHealthStatus,
+		c.DeploymentHealthMessage,
+		c.DeploymentHealthUpdatedAt,
+		c.OverallHealthStatus,
+		c.OverallHealthUpdatedAt,
+	)
 }
 
 // UpdateRPCHealth updates the RPC health status for a chain.
 // This method should be called by the headscan workflow when it checks RPC endpoint reachability.
 // It inserts a new row with updated RPC health fields, leveraging ClickHouse's ReplacingMergeTree.
-func UpdateRPCHealth(ctx context.Context, db *ch.DB, chainID, status, message string) error {
+func UpdateRPCHealth(ctx context.Context, db driver.Conn, chainID, status, message string) error {
 	if chainID == "" {
 		return fmt.Errorf("chain_id is required")
 	}
@@ -96,8 +187,7 @@ func UpdateRPCHealth(ctx context.Context, db *ch.DB, chainID, status, message st
 	current.UpdatedAt = time.Now()
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
-	_, err = db.NewInsert().Model(current).Exec(ctx)
-	if err != nil {
+	if err := InsertChain(ctx, db, current); err != nil {
 		return fmt.Errorf("insert rpc health update for chain %s: %w", chainID, err)
 	}
 
@@ -108,7 +198,7 @@ func UpdateRPCHealth(ctx context.Context, db *ch.DB, chainID, status, message st
 // UpdateQueueHealth updates the queue health status for a chain.
 // This method should be called by the controller when it monitors queue backlog metrics.
 // It inserts a new row with updated queue health fields.
-func UpdateQueueHealth(ctx context.Context, db *ch.DB, chainID, status, message string) error {
+func UpdateQueueHealth(ctx context.Context, db driver.Conn, chainID, status, message string) error {
 	if chainID == "" {
 		return fmt.Errorf("chain_id is required")
 	}
@@ -129,8 +219,7 @@ func UpdateQueueHealth(ctx context.Context, db *ch.DB, chainID, status, message 
 	current.UpdatedAt = time.Now()
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
-	_, err = db.NewInsert().Model(current).Exec(ctx)
-	if err != nil {
+	if err := InsertChain(ctx, db, current); err != nil {
 		return fmt.Errorf("insert queue health update for chain %s: %w", chainID, err)
 	}
 
@@ -141,7 +230,7 @@ func UpdateQueueHealth(ctx context.Context, db *ch.DB, chainID, status, message 
 // UpdateDeploymentHealth updates the deployment health status for a chain.
 // This method should be called by the controller when it checks k8s pod/deployment status.
 // It inserts a new row with updated deployment health fields.
-func UpdateDeploymentHealth(ctx context.Context, db *ch.DB, chainID, status, message string) error {
+func UpdateDeploymentHealth(ctx context.Context, db driver.Conn, chainID, status, message string) error {
 	if chainID == "" {
 		return fmt.Errorf("chain_id is required")
 	}
@@ -162,8 +251,7 @@ func UpdateDeploymentHealth(ctx context.Context, db *ch.DB, chainID, status, mes
 	current.UpdatedAt = time.Now()
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
-	_, err = db.NewInsert().Model(current).Exec(ctx)
-	if err != nil {
+	if err := InsertChain(ctx, db, current); err != nil {
 		return fmt.Errorf("insert deployment health update for chain %s: %w", chainID, err)
 	}
 
@@ -175,7 +263,7 @@ func UpdateDeploymentHealth(ctx context.Context, db *ch.DB, chainID, status, mes
 // based on its RPC, queue, and deployment health statuses.
 // Overall health is the worst status among the three subsystems:
 // unknown < healthy < degraded/warning < critical/unreachable/failed
-func UpdateOverallHealth(ctx context.Context, db *ch.DB, chainID string) error {
+func UpdateOverallHealth(ctx context.Context, db driver.Conn, chainID string) error {
 	if chainID == "" {
 		return fmt.Errorf("chain_id is required")
 	}
@@ -203,8 +291,7 @@ func UpdateOverallHealth(ctx context.Context, db *ch.DB, chainID string) error {
 	current.UpdatedAt = time.Now()
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
-	_, err = db.NewInsert().Model(current).Exec(ctx)
-	if err != nil {
+	if err := InsertChain(ctx, db, current); err != nil {
 		return fmt.Errorf("insert overall health update for chain %s: %w", chainID, err)
 	}
 

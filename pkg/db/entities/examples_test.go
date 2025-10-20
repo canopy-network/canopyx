@@ -190,8 +190,6 @@ func Example_switchStatement() {
 		description = "Blockchain blocks"
 	case entities.Transactions:
 		description = "Transaction data"
-	case entities.TransactionsRaw:
-		description = "Raw transaction bytes"
 	case entities.BlockSummaries:
 		description = "Block aggregations"
 	default:

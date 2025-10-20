@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/canopy-network/canopyx/app/query/types"
-	reportmodels "github.com/canopy-network/canopyx/pkg/db/models/reports"
 	"github.com/go-jose/go-jose/v4/json"
 	"github.com/gorilla/mux"
 )
@@ -14,15 +13,8 @@ func (c *Controller) StatsHour(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := mux.Vars(r)["id"]
 
-	var rows []reportmodels.ChainTxHourly
-	if err := c.App.ReportDB.Db.
-		NewSelect().
-		Model(&rows).
-		Column("hour", "count").
-		Where("chain_id = ?", id).
-		OrderExpr("hour DESC").
-		Limit(500).
-		Scan(ctx); err != nil {
+	rows, err := c.App.ReportDB.GetChainTxHourly(ctx, id, 500)
+	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
@@ -43,15 +35,8 @@ func (c *Controller) StatsDay(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := mux.Vars(r)["id"]
 
-	var rows []reportmodels.ChainTxDaily
-	if err := c.App.ReportDB.Db.
-		NewSelect().
-		Model(&rows).
-		Column("day", "count").
-		Where("chain_id = ?", id).
-		OrderExpr("day DESC").
-		Limit(90).
-		Scan(ctx); err != nil {
+	rows, err := c.App.ReportDB.GetChainTxDaily(ctx, id, 90)
+	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
@@ -72,15 +57,8 @@ func (c *Controller) Stats24h(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := mux.Vars(r)["id"]
 
-	var rows []reportmodels.ChainTx24h
-	if err := c.App.ReportDB.Db.
-		NewSelect().
-		Model(&rows).
-		Column("asof", "count").
-		Where("chain_id = ?", id).
-		OrderExpr("asof DESC").
-		Limit(1).
-		Scan(ctx); err != nil {
+	rows, err := c.App.ReportDB.GetChainTx24h(ctx, id)
+	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return

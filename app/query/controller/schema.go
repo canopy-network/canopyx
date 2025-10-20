@@ -29,15 +29,23 @@ func (c *Controller) HandleSchema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate table name to prevent SQL injection
+	// Accept both underscore (database names) and dash (API route names)
 	validTables := map[string]string{
 		"blocks":          "blocks",
 		"block_summaries": "block_summaries",
+		"block-summaries": "block_summaries", // API route format
 		"transactions":    "txs",
+		"accounts":        "accounts",
+		"events":          "events",
+		"pools":           "pools",
+		"orders":          "orders",
+		"dex_prices":      "dex_prices",
+		"dex-prices":      "dex_prices", // API route format
 	}
 
 	actualTable, ok := validTables[tableName]
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid table name. Must be one of: blocks, block_summaries, transactions")
+		writeError(w, http.StatusBadRequest, "invalid table name. Must be one of: blocks, block-summaries, transactions, accounts, events, pools, orders, dex-prices")
 		return
 	}
 

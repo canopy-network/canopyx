@@ -86,9 +86,9 @@ func TestEntityString(t *testing.T) {
 // TestEntityTableNames verifies table naming conventions.
 func TestEntityTableNames(t *testing.T) {
 	tests := []struct {
-		entity           Entity
-		expectedProd     string
-		expectedStaging  string
+		entity          Entity
+		expectedProd    string
+		expectedStaging string
 	}{
 		{Blocks, "blocks", "blocks_staging"},
 		{Transactions, "transactions", "transactions_staging"},

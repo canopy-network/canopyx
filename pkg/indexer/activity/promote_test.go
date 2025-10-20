@@ -177,6 +177,70 @@ func (m *MockChainStore) QueryTransactionsWithFilter(ctx context.Context, cursor
 	return args.Get(0).([]indexer.Transaction), args.Error(1)
 }
 
+func (m *MockChainStore) QueryEvents(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Event, error) {
+	return nil, nil
+}
+
+func (m *MockChainStore) QueryEventsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, eventType string) ([]indexer.Event, error) {
+	return nil, nil
+}
+
+func (m *MockChainStore) QueryPools(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Pool, error) {
+	return nil, nil
+}
+
+func (m *MockChainStore) QueryOrders(ctx context.Context, cursor uint64, limit int, sortDesc bool, status string) ([]indexer.Order, error) {
+	return nil, nil
+}
+
+func (m *MockChainStore) QueryDexPrices(ctx context.Context, cursor uint64, limit int, sortDesc bool, localChainID, remoteChainID uint64) ([]indexer.DexPrice, error) {
+	return nil, nil
+}
+
+func (m *MockChainStore) InsertBlocksStaging(ctx context.Context, block *indexer.Block) error {
+	return nil
+}
+
+func (m *MockChainStore) InsertTransactionsStaging(ctx context.Context, txs []*indexer.Transaction) error {
+	return nil
+}
+
+func (m *MockChainStore) InsertBlockSummariesStaging(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
+	return nil
+}
+
+func (m *MockChainStore) InitEvents(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockChainStore) InsertEventsStaging(ctx context.Context, events []*indexer.Event) error {
+	return nil
+}
+
+func (m *MockChainStore) InitDexPrices(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockChainStore) InsertDexPricesStaging(ctx context.Context, prices []*indexer.DexPrice) error {
+	return nil
+}
+
+func (m *MockChainStore) InitPools(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockChainStore) InsertPoolsStaging(ctx context.Context, pools []*indexer.Pool) error {
+	return nil
+}
+
+func (m *MockChainStore) GetDexVolume24h(ctx context.Context) ([]db.DexVolumeStats, error) {
+	return nil, nil
+}
+
+func (m *MockChainStore) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]db.OrderBookLevel, error) {
+	return nil, nil
+}
+
 func (m *MockChainStore) Close() error {
 	args := m.Called()
 	return args.Error(0)

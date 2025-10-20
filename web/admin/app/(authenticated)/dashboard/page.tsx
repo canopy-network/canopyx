@@ -171,8 +171,12 @@ export default function DashboardPage() {
   }, [loadStatus])
 
   // Subscribe to WebSocket events for all chains
+  // Memoize enabled to prevent unnecessary WebSocket reconnections
+  // Only depend on the chain count, not the entire status object
+  const chainCount = useMemo(() => Object.keys(status).length, [status])
+  const wsEnabled = useMemo(() => !loading && chainCount > 0, [loading, chainCount])
   const { chainEvents, isConnected: wsConnected } = useAllBlockEvents({
-    enabled: !loading && Object.keys(status).length > 0,
+    enabled: wsEnabled,
   })
 
   // Update chain status when new block events arrive via WebSocket
@@ -751,7 +755,7 @@ export default function DashboardPage() {
                       </tr>
                       {isExpanded && (
                         <tr className="bg-slate-900/50">
-t                          <td colSpan={7}>
+                          <td colSpan={7}>
                             <div className="grid gap-4 p-4 md:grid-cols-2 lg:grid-cols-3">
                               {/* Health Status Breakdown */}
                               <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">

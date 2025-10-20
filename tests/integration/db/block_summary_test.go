@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/tests/integration/helpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,13 +87,13 @@ func TestQueryBlockSummary(t *testing.T) {
 			height: 201,
 			numTxs: 5,
 			txCountsByType: map[string]uint32{
-				"send":   3,
-				"stake":  2,
+				"send":  3,
+				"stake": 2,
 			},
 		},
 		{
-			height: 202,
-			numTxs: 0,
+			height:         202,
+			numTxs:         0,
 			txCountsByType: map[string]uint32{}, // Empty block
 		},
 		{

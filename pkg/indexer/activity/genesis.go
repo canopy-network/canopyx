@@ -36,25 +36,19 @@ func (c *Context) EnsureGenesisCached(ctx context.Context, input types.EnsureGen
 		return err
 	}
 
-	// Need to cast to *db.ChainDB to access Db field
+	// Need to cast to *db.ChainDB to access HasGenesis and InsertGenesis methods
 	dbImpl, ok := chainDb.(*db.ChainDB)
 	if !ok {
 		return fmt.Errorf("chainDb is not *db.ChainDB")
 	}
 
 	// Check if genesis already cached
-	var count int
-	err = dbImpl.Db.NewSelect().
-		TableExpr("genesis").
-		ColumnExpr("count(*)").
-		Where("height = ?", 0).
-		Scan(ctx, &count)
-
+	hasGenesis, err := dbImpl.HasGenesis(ctx, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("check genesis exists: %w", err)
 	}
 
-	if count > 0 {
+	if hasGenesis {
 		c.Logger.Info("Genesis already cached, skipping",
 			zap.String("chainId", input.ChainID),
 			zap.Float64("durationMs", float64(time.Since(start).Microseconds())/1000.0))
@@ -78,12 +72,9 @@ func (c *Context) EnsureGenesisCached(ctx context.Context, input types.EnsureGen
 	}
 
 	// Store in genesis table
-	_, err = dbImpl.Db.ExecContext(ctx, `
-		INSERT INTO genesis (height, data, fetched_at) VALUES (?, ?, ?)
-	`, 0, string(genesisJSON), time.Now())
-
+	err = dbImpl.InsertGenesis(ctx, 0, string(genesisJSON), time.Now())
 	if err != nil {
-		return err
+		return fmt.Errorf("insert genesis: %w", err)
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0

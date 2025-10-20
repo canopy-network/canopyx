@@ -251,6 +251,70 @@ func (*wfFakeChainStore) GetTransactionByHash(context.Context, string) (*indexer
 	return nil, nil
 }
 
+func (*wfFakeChainStore) QueryEvents(context.Context, uint64, int, bool) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryEventsWithFilter(context.Context, uint64, int, bool, string) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryPools(context.Context, uint64, int, bool) ([]indexermodels.Pool, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryOrders(context.Context, uint64, int, bool, string) ([]indexermodels.Order, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) QueryDexPrices(context.Context, uint64, int, bool, uint64, uint64) ([]indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) InsertBlocksStaging(context.Context, *indexermodels.Block) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InsertTransactionsStaging(context.Context, []*indexermodels.Transaction) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InsertBlockSummariesStaging(context.Context, uint64, time.Time, uint32, map[string]uint32) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InitEvents(context.Context) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InsertEventsStaging(context.Context, []*indexermodels.Event) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InitDexPrices(context.Context) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InsertDexPricesStaging(context.Context, []*indexermodels.DexPrice) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InitPools(context.Context) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InsertPoolsStaging(context.Context, []*indexermodels.Pool) error {
+	return nil
+}
+
+func (*wfFakeChainStore) GetDexVolume24h(context.Context) ([]db.DexVolumeStats, error) {
+	return nil, nil
+}
+
+func (*wfFakeChainStore) GetOrderBookDepth(context.Context, uint64, int) ([]db.OrderBookLevel, error) {
+	return nil, nil
+}
+
 func (*wfFakeChainStore) Close() error { return nil }
 
 type wfFakeRPCFactory struct {
@@ -281,5 +345,29 @@ func (f *wfFakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.RpcA
 }
 
 func (f *wfFakeRPCClient) GetGenesisState(context.Context, uint64) (*rpc.GenesisState, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) EventsByHeight(context.Context, uint64) ([]*indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) OrdersByHeight(context.Context, uint64, uint64) ([]*rpc.RpcOrder, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) DexPrice(context.Context, uint64) (*indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) DexPrices(context.Context) ([]*indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) PoolByID(context.Context, uint64) (*rpc.RpcPool, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) Pools(context.Context) ([]*rpc.RpcPool, error) {
 	return nil, nil
 }

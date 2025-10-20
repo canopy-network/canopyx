@@ -82,7 +82,7 @@ func (bbh *BlockByHeight) ToBlockModel() *indexer.Block {
 		Time:            time.UnixMicro(bbh.BlockHeader.Time),
 		LastBlockHash:   bbh.BlockHeader.LastBlockHash,
 		ProposerAddress: bbh.BlockHeader.ProposerAddress,
-		Size:            bbh.Meta.Size,
+		Size:            int32(bbh.Meta.Size),
 	}
 }
 

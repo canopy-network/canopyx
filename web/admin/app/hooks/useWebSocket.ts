@@ -80,6 +80,16 @@ export function useWebSocket({
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const shouldReconnectRef = useRef(true);
   const subscribedChainsRef = useRef<Set<string>>(new Set());
+  const reconnectAttemptsRef = useRef(0);
+
+  // Use refs for callbacks to avoid reconnection loops when they change
+  const onBlockIndexedRef = useRef(onBlockIndexed);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onBlockIndexedRef.current = onBlockIndexed;
+    onErrorRef.current = onError;
+  }, [onBlockIndexed, onError]);
 
   const sendMessage = useCallback((message: { action: string; chainId: string }) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -116,14 +126,13 @@ export function useWebSocket({
         console.log('[WebSocket] Connected');
         setIsConnected(true);
         setError(null);
+        reconnectAttemptsRef.current = 0;
         setReconnectAttempts(0);
 
         // Resubscribe to previously subscribed chains
-        if (chainId) {
-          subscribe(chainId);
-        }
+        // Note: chainId from options is added to subscribedChainsRef by the caller
         subscribedChainsRef.current.forEach((cid) => {
-          sendMessage({ action: 'subscribe', chainId: cid });
+          ws.send(JSON.stringify({ action: 'subscribe', chainId: cid }));
         });
       };
 
@@ -135,7 +144,7 @@ export function useWebSocket({
             case 'block.indexed': {
               const blockEvent = message.payload as BlockIndexedEvent;
               setLastEvent(blockEvent);
-              onBlockIndexed?.(blockEvent);
+              onBlockIndexedRef.current?.(blockEvent);
               break;
             }
             case 'subscribed': {
@@ -153,7 +162,7 @@ export function useWebSocket({
               const errorMsg = errorPayload.message || 'Unknown error';
               console.error('[WebSocket] Server error:', errorMsg);
               setError(errorMsg);
-              onError?.(errorMsg);
+              onErrorRef.current?.(errorMsg);
               break;
             }
             case 'ping':
@@ -178,24 +187,27 @@ export function useWebSocket({
         wsRef.current = null;
 
         // Attempt reconnection if enabled and not at max attempts
-        if (shouldReconnectRef.current && reconnectAttempts < maxReconnectAttempts && enabled) {
-          const delay = Math.min(reconnectInterval * Math.pow(1.5, reconnectAttempts), 30000);
-          console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})`);
+        // Use ref for reconnectAttempts to avoid dependency loop
+        const currentAttempts = reconnectAttemptsRef.current;
+        if (shouldReconnectRef.current && currentAttempts < maxReconnectAttempts && enabled) {
+          const delay = Math.min(reconnectInterval * Math.pow(1.5, currentAttempts), 30000);
+          console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${currentAttempts + 1}/${maxReconnectAttempts})`);
 
           reconnectTimeoutRef.current = setTimeout(() => {
-            setReconnectAttempts((prev) => prev + 1);
+            reconnectAttemptsRef.current += 1;
+            setReconnectAttempts(reconnectAttemptsRef.current);
             connect();
           }, delay);
-        } else if (reconnectAttempts >= maxReconnectAttempts) {
+        } else if (currentAttempts >= maxReconnectAttempts) {
           setError('Max reconnection attempts reached');
-          onError?.('Max reconnection attempts reached');
+          onErrorRef.current?.('Max reconnection attempts reached');
         }
       };
     } catch (err) {
       console.error('[WebSocket] Connection failed:', err);
       setError('Failed to establish WebSocket connection');
     }
-  }, [url, chainId, enabled, reconnectAttempts, maxReconnectAttempts, reconnectInterval, onBlockIndexed, onError, sendMessage, subscribe]);
+  }, [url, enabled, maxReconnectAttempts, reconnectInterval]);
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false;

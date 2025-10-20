@@ -5,10 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/canopy-network/canopyx/tests/integration/helpers"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/canopy-network/canopyx/tests/integration/helpers"
 
 	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"

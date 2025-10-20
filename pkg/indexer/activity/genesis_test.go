@@ -63,6 +63,30 @@ func (m *mockGenesisRPCClient) GetGenesisState(ctx context.Context, height uint6
 	return args.Get(0).(*rpc.GenesisState), args.Error(1)
 }
 
+func (m *mockGenesisRPCClient) EventsByHeight(ctx context.Context, height uint64) ([]*indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) OrdersByHeight(ctx context.Context, height uint64, chainID uint64) ([]*rpc.RpcOrder, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) DexPrice(ctx context.Context, chainID uint64) (*indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) DexPrices(ctx context.Context) ([]*indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) PoolByID(ctx context.Context, id uint64) (*rpc.RpcPool, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) Pools(ctx context.Context) ([]*rpc.RpcPool, error) {
+	return nil, nil
+}
+
 // Mock ChainDB for genesis tests
 type mockGenesisChainDB struct {
 	mock.Mock
@@ -162,6 +186,70 @@ func (m *mockGenesisChainDB) GetTransactionByHash(ctx context.Context, hash stri
 }
 
 func (m *mockGenesisChainDB) QueryTransactionsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, messageType string) ([]indexermodels.Transaction, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) QueryEvents(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) QueryEventsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, eventType string) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) QueryPools(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexermodels.Pool, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) QueryOrders(ctx context.Context, cursor uint64, limit int, sortDesc bool, status string) ([]indexermodels.Order, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) QueryDexPrices(ctx context.Context, cursor uint64, limit int, sortDesc bool, localChainID, remoteChainID uint64) ([]indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) InsertBlocksStaging(ctx context.Context, block *indexermodels.Block) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertTransactionsStaging(ctx context.Context, txs []*indexermodels.Transaction) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertBlockSummariesStaging(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InitEvents(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertEventsStaging(ctx context.Context, events []*indexermodels.Event) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InitDexPrices(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertDexPricesStaging(ctx context.Context, prices []*indexermodels.DexPrice) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InitPools(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Pool) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) GetDexVolume24h(ctx context.Context) ([]db.DexVolumeStats, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]db.OrderBookLevel, error) {
 	return nil, nil
 }
 

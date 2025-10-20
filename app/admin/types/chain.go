@@ -33,9 +33,9 @@ type ChainStatus struct {
 	IsLiveSync         bool   `json:"is_live_sync"`         // True if last indexed is within 2 blocks of head
 
 	// Dual-Queue Fields - Individual queue metrics for live and historical indexing
-	LiveQueueDepth          int64   `json:"live_queue_depth"`           // Live queue pending tasks (workflows + activities)
-	LiveQueueBacklogAge     float64 `json:"live_queue_backlog_age"`     // Live queue oldest task age in seconds
-	HistoricalQueueDepth    int64   `json:"historical_queue_depth"`     // Historical queue pending tasks (workflows + activities)
+	LiveQueueDepth            int64   `json:"live_queue_depth"`             // Live queue pending tasks (workflows + activities)
+	LiveQueueBacklogAge       float64 `json:"live_queue_backlog_age"`       // Live queue oldest task age in seconds
+	HistoricalQueueDepth      int64   `json:"historical_queue_depth"`       // Historical queue pending tasks (workflows + activities)
 	HistoricalQueueBacklogAge float64 `json:"historical_queue_backlog_age"` // Historical queue oldest task age in seconds
 
 	// Health Status - populated from stored chain health fields

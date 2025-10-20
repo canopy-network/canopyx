@@ -24,10 +24,13 @@ type ChainStore interface {
 	DatabaseName() string
 	ChainKey() string
 	InsertBlock(ctx context.Context, block *indexer.Block) error
+	InsertBlocksStaging(ctx context.Context, block *indexer.Block) error
 	GetBlock(ctx context.Context, height uint64) (*indexer.Block, error)
 	InsertTransactions(ctx context.Context, txs []*indexer.Transaction) error
+	InsertTransactionsStaging(ctx context.Context, txs []*indexer.Transaction) error
 	GetTransactionByHash(ctx context.Context, txHash string) (*indexer.Transaction, error)
 	InsertBlockSummary(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error
+	InsertBlockSummariesStaging(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error
 	GetBlockSummary(ctx context.Context, height uint64) (*indexer.BlockSummary, error)
 	HasBlock(ctx context.Context, height uint64) (bool, error)
 	DeleteBlock(ctx context.Context, height uint64) error
@@ -40,6 +43,9 @@ type ChainStore interface {
 	QueryAccounts(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Account, error)
 	QueryEvents(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Event, error)
 	QueryEventsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, eventType string) ([]indexer.Event, error)
+	QueryPools(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Pool, error)
+	QueryOrders(ctx context.Context, cursor uint64, limit int, sortDesc bool, status string) ([]indexer.Order, error)
+	QueryDexPrices(ctx context.Context, cursor uint64, limit int, sortDesc bool, localChainID, remoteChainID uint64) ([]indexer.DexPrice, error)
 	GetAccountByAddress(ctx context.Context, address string, height *uint64) (*indexer.Account, error)
 	QueryTransactionsRaw(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]map[string]interface{}, error)
 	DescribeTable(ctx context.Context, tableName string) ([]Column, error)
@@ -49,6 +55,12 @@ type ChainStore interface {
 	GetFullyIndexedHeight(ctx context.Context) (uint64, error)
 	InitEvents(ctx context.Context) error
 	InsertEventsStaging(ctx context.Context, events []*indexer.Event) error
+	InitDexPrices(ctx context.Context) error
+	InsertDexPricesStaging(ctx context.Context, prices []*indexer.DexPrice) error
+	InitPools(ctx context.Context) error
+	InsertPoolsStaging(ctx context.Context, pools []*indexer.Pool) error
+	GetDexVolume24h(ctx context.Context) ([]DexVolumeStats, error)
+	GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]OrderBookLevel, error)
 	Close() error
 }
 

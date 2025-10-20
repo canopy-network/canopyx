@@ -302,7 +302,6 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 		}
 
 		var totalScheduled, totalFailed int
-		var totalDuration float64
 
 		// Schedule historical portion (start to boundary) if it exists
 		if in.StartHeight <= boundary && boundary < in.EndHeight {
@@ -330,7 +329,6 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 			} else {
 				totalScheduled += histResult.Scheduled
 				totalFailed += histResult.Failed
-				totalDuration += histResult.DurationMs
 			}
 		}
 
@@ -360,7 +358,8 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 			} else {
 				totalScheduled += liveResult.Scheduled
 				totalFailed += liveResult.Failed
-				totalDuration += liveResult.DurationMs
+				// TODO: validate this
+				// totalDuration += liveResult.DurationMs
 			}
 		}
 

@@ -579,4 +579,68 @@ func (*testChainStore) QueryTransactionsWithFilter(context.Context, uint64, int,
 	return nil, nil
 }
 
+func (*testChainStore) QueryEvents(context.Context, uint64, int, bool) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (*testChainStore) QueryEventsWithFilter(context.Context, uint64, int, bool, string) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (*testChainStore) QueryPools(context.Context, uint64, int, bool) ([]indexermodels.Pool, error) {
+	return nil, nil
+}
+
+func (*testChainStore) QueryOrders(context.Context, uint64, int, bool, string) ([]indexermodels.Order, error) {
+	return nil, nil
+}
+
+func (*testChainStore) QueryDexPrices(context.Context, uint64, int, bool, uint64, uint64) ([]indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (*testChainStore) InsertBlocksStaging(context.Context, *indexermodels.Block) error {
+	return nil
+}
+
+func (*testChainStore) InsertTransactionsStaging(context.Context, []*indexermodels.Transaction) error {
+	return nil
+}
+
+func (*testChainStore) InsertBlockSummariesStaging(context.Context, uint64, time.Time, uint32, map[string]uint32) error {
+	return nil
+}
+
+func (*testChainStore) InitEvents(context.Context) error {
+	return nil
+}
+
+func (*testChainStore) InsertEventsStaging(context.Context, []*indexermodels.Event) error {
+	return nil
+}
+
+func (*testChainStore) InitDexPrices(context.Context) error {
+	return nil
+}
+
+func (*testChainStore) InsertDexPricesStaging(context.Context, []*indexermodels.DexPrice) error {
+	return nil
+}
+
+func (*testChainStore) InitPools(context.Context) error {
+	return nil
+}
+
+func (*testChainStore) InsertPoolsStaging(context.Context, []*indexermodels.Pool) error {
+	return nil
+}
+
+func (*testChainStore) GetDexVolume24h(context.Context) ([]db.DexVolumeStats, error) {
+	return nil, nil
+}
+
+func (*testChainStore) GetOrderBookDepth(context.Context, uint64, int) ([]db.OrderBookLevel, error) {
+	return nil, nil
+}
+
 func (*testChainStore) Close() error { return nil }

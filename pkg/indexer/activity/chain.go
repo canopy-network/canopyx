@@ -71,14 +71,21 @@ func (c *Context) publishBlockIndexedEvent(ctx context.Context, in types.RecordI
 		return err
 	}
 
-	// Publish to Redis channel
-	channel := types.GetBlockIndexedChannel(in.ChainID)
-	c.RedisClient.Publish(ctx, channel, payload)
+	// Publish to Redis channel (if Redis is available)
+	// The Publish method handles errors internally and logs them
+	if c.RedisClient != nil {
+		channel := types.GetBlockIndexedChannel(in.ChainID)
+		c.RedisClient.Publish(ctx, channel, payload)
 
-	c.Logger.Debug("Published block.indexed event",
-		zap.String("chainId", in.ChainID),
-		zap.Uint64("height", in.Height),
-		zap.String("channel", channel))
+		c.Logger.Debug("Published block.indexed event",
+			zap.String("chainId", in.ChainID),
+			zap.Uint64("height", in.Height),
+			zap.String("channel", channel))
+	} else {
+		c.Logger.Debug("Redis client not available, skipping event publication",
+			zap.String("chainId", in.ChainID),
+			zap.Uint64("height", in.Height))
+	}
 
 	return nil
 }

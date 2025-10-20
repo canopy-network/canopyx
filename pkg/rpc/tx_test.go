@@ -12,13 +12,13 @@ import (
 // TestParseSendMessage tests parsing of send transactions
 func TestParseSendMessage(t *testing.T) {
 	tests := []struct {
-		name            string
-		msgType         string
-		msgData         map[string]interface{}
-		expectedSigner  string
-		expectedTo      string
-		expectedAmount  uint64
-		expectedMemo    string
+		name           string
+		msgType        string
+		msgData        map[string]interface{}
+		expectedSigner string
+		expectedTo     string
+		expectedAmount uint64
+		expectedMemo   string
 	}{
 		{
 			name:    "explicit send type",
@@ -799,9 +799,9 @@ func TestHelperFunctions(t *testing.T) {
 		}
 
 		assert.Equal(t, "value", getStringField(m, "str"))
-		assert.Equal(t, "", getStringField(m, "int"))      // Not a string
-		assert.Equal(t, "", getStringField(m, "empty"))    // Empty string
-		assert.Equal(t, "", getStringField(m, "missing"))  // Missing key
+		assert.Equal(t, "", getStringField(m, "int"))     // Not a string
+		assert.Equal(t, "", getStringField(m, "empty"))   // Empty string
+		assert.Equal(t, "", getStringField(m, "missing")) // Missing key
 	})
 
 	t.Run("getIntField", func(t *testing.T) {
@@ -815,8 +815,8 @@ func TestHelperFunctions(t *testing.T) {
 		assert.Equal(t, 123, getIntField(m, "int"))
 		assert.Equal(t, 456, getIntField(m, "int64"))
 		assert.Equal(t, 789, getIntField(m, "float64"))
-		assert.Equal(t, 0, getIntField(m, "string"))   // Not a number type
-		assert.Equal(t, 0, getIntField(m, "missing"))  // Missing key
+		assert.Equal(t, 0, getIntField(m, "string"))  // Not a number type
+		assert.Equal(t, 0, getIntField(m, "missing")) // Missing key
 	})
 
 	t.Run("getOptionalUint32Field", func(t *testing.T) {

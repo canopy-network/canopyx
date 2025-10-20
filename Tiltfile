@@ -117,7 +117,7 @@ local_resource(
   cmd='''
     echo "Applying ClickHouse storage tiering configuration (hot/warm/cold)..."
     kubectl apply -f ./deploy/k8s/clickhouse/configmap.yaml && \\
-    kubectl patch statefulset clickhouse-hdx-oss-v2-clickhouse -p '{"spec":{"template":{"spec":{"volumes":[{"name":"storage-config","configMap":{"name":"clickhouse-storage-config"}}],"containers":[{"name":"clickhouse","volumeMounts":[{"name":"storage-config","mountPath":"/etc/clickhouse-server/config.d/storage-policy.xml","subPath":"storage-policy.xml"}]}]}}}}' && \\
+    kubectl patch deployment clickhouse-hdx-oss-v2-clickhouse -p '{"spec":{"template":{"spec":{"volumes":[{"name":"storage-config","configMap":{"name":"clickhouse-storage-config"}}],"containers":[{"name":"clickhouse","volumeMounts":[{"name":"storage-config","mountPath":"/etc/clickhouse-server/config.d/storage-policy.xml","subPath":"storage-policy.xml"}]}]}}}}' && \\
     echo "Storage tiering configured: hot (30d) -> warm (180d) -> cold (permanent)" && \\
     echo "Restarting ClickHouse to apply storage configuration..." && \\
     kubectl delete pod -l app.kubernetes.io/name=clickhouse --wait && \\
@@ -609,6 +609,7 @@ if components.get('admin_web', True):
         labels=['apps'],
         resource_deps=["canopyx-admin-web", "canopyx-query", "canopyx-admin"],
         pod_readiness='wait',
+        objects=["admin-web-proxy-config:configmap"]
     )
 else:
     print("Admin Web UI disabled")
@@ -699,8 +700,7 @@ if components.get('canopy_node', False):
                 "%s:50002" % get_port('canopy_rpc', 50002),
                 "%s:50003" % get_port('canopy_admin_rpc', 50003),
                 "%s:9001" % get_port('canopy_p2p', 9001),
-                "%s:6060" % get_port('canopy_debug', 6060),
-                "%s:9090" % get_port('canopy_metrics', 9090),
+                "%s:6060" % get_port('canopy_debug', 6060)
             ],
             labels=['blockchain'],
             pod_readiness='wait',
@@ -732,7 +732,7 @@ local_resource(
   cmd  = "docker build -f Dockerfile.indexer -t %s . && docker push %s && kubectl rollout restart deployment -l managed-by=canopyx-controller -l app=indexer || true" % (idx_repo, idx_repo),
   deps = idx_deps,
   trigger_mode = idx_build_mode,
-  labels = ["Indexer"],
+  labels = ["indexer"],
 )
 
 # ------------------------------------------

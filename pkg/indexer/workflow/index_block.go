@@ -6,6 +6,7 @@ import (
 
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
+	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
@@ -99,6 +100,9 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		txOut        types.IndexTransactionsOutput
 		accountsOut  types.IndexAccountsOutput
 		eventsOut    types.IndexEventsOutput
+		poolsOut     types.IndexPoolsOutput
+		ordersOut    types.IndexOrdersOutput
+		pricesOut    types.IndexDexPricesOutput
 	)
 
 	// Create futures for all parallel operations
@@ -122,11 +126,29 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		Height:    in.Height,
 		BlockTime: fetchOut.Block.Time,
 	}
+	indexPoolsInput := types.IndexPoolsInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
+	indexOrdersInput := types.IndexOrdersInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
+	indexPricesInput := types.IndexDexPricesInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
 
 	saveBlockFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlock, saveBlockInput)
 	txFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexTxInput)
 	accountsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexAccounts, indexAccountsInput)
 	eventsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexEvents, indexEventsInput)
+	poolsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexPools, indexPoolsInput)
+	ordersFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexOrders, indexOrdersInput)
+	pricesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexPrices, indexPricesInput)
 
 	// Wait for all parallel operations to complete
 	if err := saveBlockFuture.Get(ctx, &saveBlockOut); err != nil {
@@ -149,12 +171,30 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	}
 	timings["index_events_ms"] = eventsOut.DurationMs
 
+	if err := poolsFuture.Get(ctx, &poolsOut); err != nil {
+		return err
+	}
+	timings["index_pools_ms"] = poolsOut.DurationMs
+
+	if err := ordersFuture.Get(ctx, &ordersOut); err != nil {
+		return err
+	}
+	timings["index_orders_ms"] = ordersOut.DurationMs
+
+	if err := pricesFuture.Get(ctx, &pricesOut); err != nil {
+		return err
+	}
+	timings["index_dex_prices_ms"] = pricesOut.DurationMs
+
 	// Collect all summaries for aggregation
 	summaries := types.BlockSummaries{
 		NumTxs:            txOut.NumTxs,
 		TxCountsByType:    txOut.TxCountsByType,
 		NumEvents:         eventsOut.NumEvents,
 		EventCountsByType: eventsOut.EventCountsByType,
+		NumPools:          poolsOut.NumPools,
+		NumOrders:         ordersOut.NumOrders,
+		NumPrices:         pricesOut.NumPrices,
 	}
 
 	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries
@@ -172,7 +212,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 
 	// Phase 3: Promote all entities in parallel from staging to production
 	// This follows the two-phase commit pattern for data consistency
-	promoteEntities := []string{"blocks", "txs", "block_summaries", "accounts", "events"}
+	promoteEntities := []string{"blocks", "txs", "block_summaries", "accounts", "events", "pools", "orders", "dex_prices"}
 	promoteFutures := make([]workflow.Future, 0, len(promoteEntities))
 
 	for _, entity := range promoteEntities {
@@ -201,8 +241,9 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	opsQueue := wc.TemporalClient.GetIndexerOpsQueue(in.ChainID)
 
 	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-		WorkflowID: cleanupWorkflowID,
-		TaskQueue:  opsQueue,
+		WorkflowID:        cleanupWorkflowID,
+		TaskQueue:         opsQueue,
+		ParentClosePolicy: enums.PARENT_CLOSE_POLICY_ABANDON, // Let cleanup continue after parent completes
 	})
 
 	// Start cleanup workflow and wait only for it to start, not complete

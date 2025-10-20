@@ -2,18 +2,21 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.uber.org/zap"
 
-	"github.com/uptrace/go-clickhouse/ch"
-	"github.com/uptrace/go-clickhouse/chdebug"
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 type Client struct {
 	Logger *zap.Logger
-	Db     *ch.DB
+	Db     driver.Conn
 }
 
 // NewDB initializes and returns a new database client for ClickHouse with provided context and logger.
@@ -22,42 +25,72 @@ func NewDB(ctx context.Context, logger *zap.Logger, dbName string) (client Clien
 	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000?sslmode=disable")
 
 	client.Logger = logger
-	client.Db = ch.Connect(
-		// clickhouse://<user>:<password>@<host>:<port>/<database>?sslmode=disable
-		ch.WithDSN(dsn),
-		ch.WithAutoCreateDatabase(true),
-		ch.WithDatabase(dbName),
 
-		// Connection pool settings for high-throughput (3,500+ workflows/sec)
-		// With 12 indexers: 12 × 75 = 900 max connections
-		ch.WithPoolSize(75),          // Max open connections per indexer (increased for 12+ indexers)
-		ch.WithConnMaxLifetime(0),    // Connections never expire (default: 0)
-		ch.WithConnMaxIdleTime(5*60), // Idle connections timeout after 5 min (seconds)
-		ch.WithPoolTimeout(30),       // Pool timeout: 30 seconds (increased for high contention)
-
-		ch.WithQuerySettings(map[string]interface{}{
-			"prefer_column_name_to_alias": 1,
-			// this could be useful for some data (but we should avoid 100% - so maybe restrict will be better)
+	// First, connect without specifying a database to create it
+	options := &clickhouse.Options{
+		Addr: []string{extractHost(dsn)},
+		Auth: clickhouse.Auth{
+			Database: "default", // Connect to default database first
+		},
+		DialTimeout:     5 * time.Second,
+		MaxOpenConns:    75, // Max open connections per indexer (increased for 12+ indexers)
+		MaxIdleConns:    75, // Keep connections alive for reuse
+		ConnMaxLifetime: 0,  // Connections never expire (default: 0)
+		Compression: &clickhouse.Compression{
+			Method: clickhouse.CompressionLZ4,
+		},
+		Settings: clickhouse.Settings{
+			"prefer_column_name_to_alias":    1,
 			"allow_experimental_object_type": 1,
-		}),
-		ch.WithCompression(true),
-	)
-
-	client.Db.AddQueryHook(chdebug.NewQueryHook(
-		// disable the hook
-		chdebug.WithVerbose(true),
-		// CHDEBUG=1 logs failed queries
-		// CHDEBUG=2 logs all queries
-		chdebug.FromEnv("CHDEBUG"),
-	))
-
-	logger.Info("Pinging ClickHouse connection", zap.String("dsn", dsn))
-	err := client.Db.Ping(ctx)
-	if err != nil {
-		return client, err
+		},
+		Debug: utils.Env("CHDEBUG", "") != "", // Enable debug if CHDEBUG is set
 	}
 
-	logger.Info("ClickHouse connection ready to work", zap.String("dsn", dsn))
+	// Open connection to default database
+	conn, err := clickhouse.Open(options)
+	if err != nil {
+		return client, fmt.Errorf("failed to open clickhouse connection: %w", err)
+	}
+
+	client.Db = conn
+
+	logger.Info("Pinging ClickHouse connection")
+	err = client.Db.Ping(ctx)
+	if err != nil {
+		return client, fmt.Errorf("failed to ping clickhouse: %w", err)
+	}
+
+	// Create database if it doesn't exist
+	createDbQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", dbName)
+	logger.Info("Creating database if not exists", zap.String("database", dbName))
+	err = client.Db.Exec(ctx, createDbQuery)
+	if err != nil {
+		return client, fmt.Errorf("failed to create database %s: %w", dbName, err)
+	}
+
+	// Close the default connection
+	err = conn.Close()
+	if err != nil {
+		logger.Error("Failed to close default connection", zap.Error(err))
+		return Client{}, err
+	}
+
+	// Now reconnect to the specific database
+	options.Auth.Database = dbName
+	conn, err = clickhouse.Open(options)
+	if err != nil {
+		return client, fmt.Errorf("failed to open clickhouse connection to %s: %w", dbName, err)
+	}
+
+	client.Db = conn
+
+	// Verify connection to the new database
+	err = client.Db.Ping(ctx)
+	if err != nil {
+		return client, fmt.Errorf("failed to ping database %s: %w", dbName, err)
+	}
+
+	logger.Info("ClickHouse connection ready to work", zap.String("database", dbName))
 	return client, nil
 }
 
@@ -119,4 +152,63 @@ func SanitizeDbName(id string) string {
 	s = strings.ReplaceAll(s, "-", "_")
 	s = strings.ReplaceAll(s, ".", "_")
 	return s
+}
+
+// extractHost extracts the host from a DSN string
+func extractHost(dsn string) string {
+	// Remove protocol prefix
+	dsn = strings.TrimPrefix(dsn, "clickhouse://")
+	dsn = strings.TrimPrefix(dsn, "tcp://")
+
+	// Find the end of host (either / or ?)
+	if idx := strings.IndexAny(dsn, "/?"); idx != -1 {
+		dsn = dsn[:idx]
+	}
+
+	// Remove any credentials
+	if idx := strings.Index(dsn, "@"); idx != -1 {
+		dsn = dsn[idx+1:]
+	}
+
+	// Default to localhost:9000 if empty
+	if dsn == "" {
+		return "localhost:9000"
+	}
+
+	return dsn
+}
+
+// Helper method to execute raw SQL queries
+func (c *Client) Exec(ctx context.Context, query string, args ...interface{}) error {
+	return c.Db.Exec(ctx, query, args...)
+}
+
+// Helper method to query a single row
+func (c *Client) QueryRow(ctx context.Context, query string, args ...interface{}) driver.Row {
+	return c.Db.QueryRow(ctx, query, args...)
+}
+
+// Helper method to query multiple rows
+func (c *Client) Query(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+	return c.Db.Query(ctx, query, args...)
+}
+
+// Helper method to select into a slice
+func (c *Client) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+	return c.Db.Select(ctx, dest, query, args...)
+}
+
+// Helper method for batch inserts
+func (c *Client) PrepareBatch(ctx context.Context, query string) (driver.Batch, error) {
+	return c.Db.PrepareBatch(ctx, query)
+}
+
+// Helper method to close the connection
+func (c *Client) Close() error {
+	return c.Db.Close()
+}
+
+// Helper to check if error is no rows
+func IsNoRows(err error) bool {
+	return err == sql.ErrNoRows
 }

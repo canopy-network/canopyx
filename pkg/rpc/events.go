@@ -19,6 +19,7 @@ type RpcEvent struct {
 	Msg       map[string]interface{} `json:"msg"`
 	Height    uint64                 `json:"height"`
 	Reference string                 `json:"reference"`
+	ChainID   uint64                 `json:"chainId"`
 	Address   string                 `json:"address"`
 }
 
@@ -95,10 +96,10 @@ type UnknownEvent struct {
 	Data      map[string]interface{}
 }
 
-func (e *UnknownEvent) Type() EventType        { return e.EventType }
-func (e *UnknownEvent) GetAddress() string     { return getStringField(e.Data, "address") }
-func (e *UnknownEvent) GetAmount() *uint64     { return nil }
-func (e *UnknownEvent) GetSoldAmount() *uint64 { return nil }
+func (e *UnknownEvent) Type() EventType          { return e.EventType }
+func (e *UnknownEvent) GetAddress() string       { return getStringField(e.Data, "address") }
+func (e *UnknownEvent) GetAmount() *uint64       { return nil }
+func (e *UnknownEvent) GetSoldAmount() *uint64   { return nil }
 func (e *UnknownEvent) GetBoughtAmount() *uint64 { return nil }
 func (e *UnknownEvent) GetLocalAmount() *uint64  { return nil }
 func (e *UnknownEvent) GetRemoteAmount() *uint64 { return nil }
@@ -120,6 +121,7 @@ func (e *RpcEvent) ToEvent() (*indexer.Event, error) {
 
 	return &indexer.Event{
 		Height:       e.Height,
+		ChainID:      e.ChainID,
 		Address:      e.Address,
 		Reference:    e.Reference,
 		EventType:    string(msg.Type()),

@@ -114,9 +114,16 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 	if v := os.Getenv("REDIS_PORT"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "REDIS_PORT", Value: v})
 	}
-	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
-		env = append(env, corev1.EnvVar{Name: "REDIS_PASSWORD", Value: v})
-	}
+	// REDIS_PASSWORD: Read from Kubernetes secret for security
+	env = append(env, corev1.EnvVar{
+		Name: "REDIS_PASSWORD",
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "redis"},
+				Key:                  "redis-password",
+			},
+		},
+	})
 	if v := os.Getenv("REDIS_DB"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "REDIS_DB", Value: v})
 	}

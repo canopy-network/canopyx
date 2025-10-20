@@ -6,14 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/tests/integration/helpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 // TestPromoteEntity_Success verifies that data is successfully moved from staging to production

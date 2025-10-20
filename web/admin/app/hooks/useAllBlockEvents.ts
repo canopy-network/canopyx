@@ -55,6 +55,8 @@ export function useAllBlockEvents({
   const [chainEvents, setChainEvents] = useState<Record<string, BlockIndexedEvent>>({})
 
   // Subscribe to wildcard on mount, unsubscribe on unmount
+  // NOTE: subscribe/unsubscribe are intentionally NOT in deps to avoid re-subscription loops
+  // We only want to subscribe when enabled changes or on mount/unmount
   useEffect(() => {
     if (!enabled) {
       return
@@ -67,7 +69,8 @@ export function useAllBlockEvents({
       console.log('[useAllBlockEvents] Unsubscribing from all chains')
       unsubscribe('*')
     }
-  }, [enabled, subscribe, unsubscribe])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled])
 
   // Convert Map to Record whenever the Map changes
   // This provides a stable object reference that React can detect changes on
@@ -76,24 +79,25 @@ export function useAllBlockEvents({
       return
     }
 
-    // Convert Map to Record
-    const updates: Record<string, BlockIndexedEvent> = {}
-    let hasUpdates = false
+    // Convert Map to Record and update state
+    // Use functional update to avoid needing chainEvents in deps
+    setChainEvents((prevChainEvents) => {
+      const updates: Record<string, BlockIndexedEvent> = {}
+      let hasUpdates = false
 
-    chainEventsMap.forEach((event, chainId) => {
-      updates[chainId] = event
+      chainEventsMap.forEach((event, chainId) => {
+        updates[chainId] = event
 
-      // Check if this is a new or updated event
-      if (!chainEvents[chainId] || chainEvents[chainId].height !== event.height) {
-        hasUpdates = true
-      }
+        // Check if this is a new or updated event
+        if (!prevChainEvents[chainId] || prevChainEvents[chainId].height !== event.height) {
+          hasUpdates = true
+        }
+      })
+
+      // Only return new object if there are actual changes
+      return hasUpdates ? updates : prevChainEvents
     })
-
-    // Only update state if there are actual changes
-    if (hasUpdates) {
-      setChainEvents(updates)
-    }
-  }, [chainEventsMap, chainEvents, enabled])
+  }, [chainEventsMap, enabled])
 
   return {
     chainEvents,

@@ -32,9 +32,12 @@ type ChainIdInput struct {
 // BlockSummaries - Any summary of a block that is needed for indexing.
 type BlockSummaries struct {
 	NumTxs            uint32            `json:"numTxs"`
-	TxCountsByType    map[string]uint32 `json:"txCountsByType"`    // Count per type: {"send": 5, "delegate": 2}
+	TxCountsByType    map[string]uint32 `json:"txCountsByType"` // Count per type: {"send": 5, "delegate": 2}
 	NumEvents         uint32            `json:"numEvents"`
 	EventCountsByType map[string]uint32 `json:"eventCountsByType"` // Count per type: {"reward": 100, "dex-swap": 5}
+	NumPools          uint32            `json:"numPools"`          // Number of pools indexed
+	NumOrders         uint32            `json:"numOrders"`         // Number of orders indexed
+	NumPrices         uint32            `json:"numPrices"`         // Number of DEX prices indexed
 }
 
 type IndexBlockInput struct {
@@ -168,7 +171,7 @@ type BatchScheduleOutput struct {
 // PromoteDataInput contains parameters for promoting entity data from staging to production
 type PromoteDataInput struct {
 	ChainID string `json:"chainId"`
-	Entity  string `json:"entity"`  // Entity name: "blocks", "txs", "accounts", etc.
+	Entity  string `json:"entity"` // Entity name: "blocks", "txs", "accounts", etc.
 	Height  uint64 `json:"height"`
 }
 
@@ -191,4 +194,43 @@ type CleanPromotedDataOutput struct {
 	Entity     string  `json:"entity"`
 	Height     uint64  `json:"height"`
 	DurationMs float64 `json:"durationMs"`
+}
+
+// IndexDexPricesInput contains the parameters for indexing DEX prices.
+type IndexDexPricesInput struct {
+	ChainID   string    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
+// IndexDexPricesOutput contains the number of indexed DEX price records along with execution duration.
+type IndexDexPricesOutput struct {
+	NumPrices  uint32  `json:"numPrices"`  // Number of DEX price records indexed
+	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
+}
+
+// IndexOrdersInput contains the parameters for indexing orders.
+type IndexOrdersInput struct {
+	ChainID   string    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
+// IndexOrdersOutput contains the number of changed orders (snapshots created) along with execution duration.
+type IndexOrdersOutput struct {
+	NumOrders  uint32  `json:"numOrders"`  // Number of changed orders (snapshots created)
+	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
+}
+
+// IndexPoolsInput contains the parameters for indexing pools.
+type IndexPoolsInput struct {
+	ChainID   string    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
+// IndexPoolsOutput contains the number of indexed pools along with execution duration.
+type IndexPoolsOutput struct {
+	NumPools   uint32  `json:"numPools"`   // Number of pools indexed
+	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
 }

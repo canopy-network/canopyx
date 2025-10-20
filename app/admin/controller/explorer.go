@@ -98,7 +98,7 @@ func (s *explorerService) GetTableSchema(ctx context.Context, chainID, tableName
 		ORDER BY position
 	`
 
-	rows, err := s.controller.App.AdminDB.Db.QueryContext(ctx, query, dbName, tableName)
+	rows, err := s.controller.App.AdminDB.Db.Query(ctx, query, dbName, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("error querying schema: %w", err)
 	}
@@ -182,7 +182,7 @@ func (s *explorerService) GetTableData(ctx context.Context, chainID, tableName s
 	`, dbName, tableName, whereClause)
 
 	var total int64
-	if err := s.controller.App.AdminDB.Db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := s.controller.App.AdminDB.Db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		s.logger.Warn("failed to count rows", zap.String("chain_id", chainID), zap.String("table", tableName), zap.Error(err))
 		// Continue without total count
 		total = -1
@@ -199,7 +199,7 @@ func (s *explorerService) GetTableData(ctx context.Context, chainID, tableName s
 
 	args = append(args, limit, offset)
 
-	rows, err := s.controller.App.AdminDB.Db.QueryContext(ctx, dataQuery, args...)
+	rows, err := s.controller.App.AdminDB.Db.Query(ctx, dataQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("error querying data: %w", err)
 	}
@@ -210,10 +210,7 @@ func (s *explorerService) GetTableData(ctx context.Context, chainID, tableName s
 	}()
 
 	// Get column names from the result set
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, fmt.Errorf("error getting columns: %w", err)
-	}
+	columns := rows.Columns()
 
 	// Prepare result slice
 	results := make([]map[string]interface{}, 0, limit)

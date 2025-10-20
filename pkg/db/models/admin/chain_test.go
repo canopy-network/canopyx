@@ -8,7 +8,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/uptrace/go-clickhouse/ch"
 )
 
 // TestUpdateRPCHealth tests updating RPC health status for a chain
@@ -520,22 +519,11 @@ func TestReplacingMergeTreeBehavior(t *testing.T) {
 }
 
 // setupTestDB creates a temporary in-memory ClickHouse database for testing
-func setupTestDB(t *testing.T) (*ch.DB, func()) {
+func setupTestDB(t *testing.T) (interface{}, func()) {
 	// Use in-memory SQLite for basic testing
 	// In production, you'd connect to a real ClickHouse instance
 	t.Skip("Skipping integration test - requires ClickHouse connection")
 
 	// This is a placeholder - in real tests you'd use testcontainers or a test ClickHouse instance
-	db := ch.Connect()
-
-	ctx := context.Background()
-	err := InitChains(ctx, db)
-	require.NoError(t, err)
-
-	cleanup := func() {
-		// Clean up test data
-		_ = db.Close()
-	}
-
-	return db, cleanup
+	return nil, func() {}
 }

@@ -444,6 +444,86 @@ func (*fakeChainStore) QueryTransactionsWithFilter(context.Context, uint64, int,
 
 func (*fakeChainStore) Close() error { return nil }
 
+func (*fakeChainStore) InsertBlocksStaging(context.Context, *indexermodels.Block) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertTransactionsStaging(context.Context, []*indexermodels.Transaction) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertBlockSummariesStaging(context.Context, uint64, time.Time, uint32, map[string]uint32) error {
+	return nil
+}
+
+func (*fakeChainStore) InitAccounts(context.Context) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertAccountsStaging(context.Context, []*indexermodels.Account) error {
+	return nil
+}
+
+func (*fakeChainStore) InitEvents(context.Context) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertEventsStaging(context.Context, []*indexermodels.Event) error {
+	return nil
+}
+
+func (*fakeChainStore) QueryEvents(context.Context, uint64, int, bool) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) QueryEventsWithFilter(context.Context, uint64, int, bool, string) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) InitPools(context.Context) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertPoolsStaging(context.Context, []*indexermodels.Pool) error {
+	return nil
+}
+
+func (*fakeChainStore) QueryPools(context.Context, uint64, int, bool) ([]indexermodels.Pool, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) InitOrders(context.Context) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertOrdersStaging(context.Context, []*indexermodels.Order) error {
+	return nil
+}
+
+func (*fakeChainStore) QueryOrders(context.Context, uint64, int, bool) ([]indexermodels.Order, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) InitDexPrices(context.Context) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertDexPricesStaging(context.Context, []*indexermodels.DexPrice) error {
+	return nil
+}
+
+func (*fakeChainStore) QueryDexPrices(context.Context, uint64, int, bool) ([]indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) GetDexVolume24h(context.Context) ([]db.DexVolumeStats, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) GetOrderBookDepth(context.Context, uint64, int) ([]db.OrderBookLevel, error) {
+	return nil, nil
+}
+
 type fakeRPCFactory struct {
 	client rpc.Client
 }
@@ -474,5 +554,29 @@ func (f *fakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.RpcAcc
 }
 
 func (f *fakeRPCClient) GetGenesisState(context.Context, uint64) (*rpc.GenesisState, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) EventsByHeight(context.Context, uint64) ([]*indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) OrdersByHeight(context.Context, uint64, uint64) ([]*rpc.RpcOrder, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) DexPrice(context.Context, uint64) (*indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) DexPrices(context.Context) ([]*indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) PoolByID(context.Context, uint64) (*rpc.RpcPool, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) Pools(context.Context) ([]*rpc.RpcPool, error) {
 	return nil, nil
 }

@@ -38,7 +38,7 @@ func Run(m *testing.M) int {
 
 	var err error
 	if os.Getenv("CHDEBUG") == "" {
-		os.Setenv("CHDEBUG", "0")
+		_ = os.Setenv("CHDEBUG", "0")
 	}
 
 	cfg := zap.NewProductionConfig()
@@ -94,7 +94,7 @@ func Run(m *testing.M) int {
 	}
 
 	dsn := fmt.Sprintf("clickhouse://%s:%s/test_canopyx?sslmode=disable", host, port.Port())
-	os.Setenv("CLICKHOUSE_ADDR", dsn)
+	_ = os.Setenv("CLICKHOUSE_ADDR", dsn)
 	testLogger.Info("ClickHouse container started",
 		zap.String("host", host),
 		zap.String("port", port.Port()),
@@ -171,6 +171,8 @@ func isDockerAvailable(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	defer provider.Close()
+	defer func(provider *testcontainers.DockerProvider) {
+		_ = provider.Close()
+	}(provider)
 	return true
 }

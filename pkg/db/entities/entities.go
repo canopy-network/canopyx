@@ -77,9 +77,23 @@ const (
 	// Staging table: events_staging
 	Events Entity = "events"
 
+	// Orders represents the order entity.
+	// Production table: orders
+	// Staging table: orders_staging
+	Orders Entity = "orders"
+
+	// Pools represents the liquidity pools entity.
+	// Production table: pools
+	// Staging table: pools_staging
+	Pools Entity = "pools"
+
+	// DexPrices represents the DEX price data entity.
+	// Production table: dex_prices
+	// Staging table: dex_prices_staging
+	DexPrices Entity = "dex_prices"
+
 	// Future entities (uncomment and add to allEntities when implementing):
 	// Validators Entity = "validators"
-	// Pools Entity = "pools"
 	// Logs Entity = "logs"
 )
 
@@ -94,6 +108,9 @@ var allEntities = []Entity{
 	BlockSummaries,
 	Accounts,
 	Events,
+	Orders,
+	Pools,
+	DexPrices,
 }
 
 // entitySet is a pre-computed map for O(1) validation lookups.

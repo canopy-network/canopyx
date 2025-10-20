@@ -13,6 +13,7 @@ import (
 	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
 )
 
+//nolint:unused // Test helpers used by multiple test files
 func defaultWorkflowConfig() workflow.Config {
 	return workflow.Config{
 		CatchupThreshold:        200,
@@ -23,6 +24,8 @@ func defaultWorkflowConfig() workflow.Config {
 }
 
 // mockSchedulerActivities provides comprehensive mock activities for testing
+//
+//nolint:unused // Test helpers used by multiple test files
 type mockSchedulerActivities struct {
 	mu sync.Mutex
 
@@ -46,6 +49,7 @@ type mockSchedulerActivities struct {
 	// Rate limiting verification
 }
 
+//nolint:unused // Test helper type used by mockSchedulerActivities
 type scheduledBlock struct {
 	Height      uint64
 	Priority    int
@@ -54,6 +58,7 @@ type scheduledBlock struct {
 
 // Activity implementations for mock
 
+//nolint:unused // Test helper method used by test files
 func (m *mockSchedulerActivities) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (uint64, error) {
 	m.getLatestHeadCalls.Add(1)
 	if m.shouldFail["GetLatestHead"] {
@@ -63,6 +68,7 @@ func (m *mockSchedulerActivities) GetLatestHead(ctx context.Context, in *types.C
 	return m.latestHead, nil
 }
 
+//nolint:unused // Test helper method used by test files
 func (m *mockSchedulerActivities) GetLastIndexed(ctx context.Context, in *types.ChainIdInput) (uint64, error) {
 	m.getLastIndexedCalls.Add(1)
 	if m.shouldFail["GetLastIndexed"] {
@@ -72,6 +78,7 @@ func (m *mockSchedulerActivities) GetLastIndexed(ctx context.Context, in *types.
 	return m.lastIndexed, nil
 }
 
+//nolint:unused // Test helper method used by test files
 func (m *mockSchedulerActivities) FindGaps(ctx context.Context, in *types.ChainIdInput) ([]db.Gap, error) {
 	m.findGapsCalls.Add(1)
 	if m.shouldFail["FindGaps"] {
@@ -81,6 +88,7 @@ func (m *mockSchedulerActivities) FindGaps(ctx context.Context, in *types.ChainI
 	return m.gaps, nil
 }
 
+//nolint:unused // Test helper method used by test files
 func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInput) error {
 	m.startIndexCalls.Add(1)
 
@@ -101,6 +109,7 @@ func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in typ
 	return nil
 }
 
+//nolint:unused // Test helper method used by test files
 func (m *mockSchedulerActivities) StartIndexWorkflowBatch(ctx context.Context, in types.BatchScheduleInput) (types.BatchScheduleOutput, error) {
 	start := time.Now()
 
@@ -129,6 +138,7 @@ func (m *mockSchedulerActivities) StartIndexWorkflowBatch(ctx context.Context, i
 	}, nil
 }
 
+//nolint:unused // Test helper method used by test files
 func (m *mockSchedulerActivities) IsSchedulerWorkflowRunning(ctx context.Context, in *types.ChainIdInput) (bool, error) {
 	if m.shouldFail["IsSchedulerWorkflowRunning"] {
 		m.failureCount["IsSchedulerWorkflowRunning"]++
@@ -138,6 +148,8 @@ func (m *mockSchedulerActivities) IsSchedulerWorkflowRunning(ctx context.Context
 }
 
 // Helper to verify priority distribution
+//
+//nolint:unused // Test helper method used by test files
 func (m *mockSchedulerActivities) getPriorityDistribution() map[int]int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -150,6 +162,8 @@ func (m *mockSchedulerActivities) getPriorityDistribution() map[int]int {
 }
 
 // Helper to verify scheduling order
+//
+//nolint:unused // Test helper method used by test files
 func (m *mockSchedulerActivities) verifyPriorityOrder() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

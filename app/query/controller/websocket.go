@@ -100,7 +100,12 @@ func (c *Controller) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		c.App.Logger.Error("Failed to upgrade WebSocket connection", zap.Error(err))
 		return
 	}
-	defer conn.Close()
+	defer func(conn *websocket.Conn) {
+		err := conn.Close()
+		if err != nil {
+			c.App.Logger.Error("Failed to close WebSocket connection", zap.Error(err))
+		}
+	}(conn)
 
 	c.App.Logger.Info("WebSocket client connected", zap.String("remote_addr", r.RemoteAddr))
 
@@ -148,7 +153,7 @@ func (c *Controller) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				cancel()
 			}
 		}()
-		c.sendPings(ctx, send)
+		c.sendPings(ctx, conn)
 	}()
 
 	// Start message writer with panic recovery
@@ -407,8 +412,9 @@ func extractChainIDFromChannel(channel string) string {
 	return parts[1]
 }
 
-// sendPings sends periodic ping messages to keep the connection alive.
-func (c *Controller) sendPings(ctx context.Context, send chan<- ServerMessage) {
+// sendPings sends periodic WebSocket ping frames to keep the connection alive.
+// The client will automatically respond with pong frames, which resets the read deadline.
+func (c *Controller) sendPings(ctx context.Context, conn *websocket.Conn) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -417,9 +423,10 @@ func (c *Controller) sendPings(ctx context.Context, send chan<- ServerMessage) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			select {
-			case send <- ServerMessage{Type: "ping", Payload: map[string]int64{"timestamp": time.Now().Unix()}}:
-			case <-ctx.Done():
+			// Send WebSocket PING frame (not a JSON message)
+			// Client will automatically respond with PONG, resetting read deadline
+			if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
+				c.App.Logger.Error("Failed to send ping", zap.Error(err))
 				return
 			}
 		}
@@ -439,12 +446,20 @@ func (c *Controller) writeMessages(conn *websocket.Conn, send <-chan ServerMessa
 // readClientMessages reads messages from the WebSocket connection.
 // Handles subscription/unsubscription requests and detects connection closure.
 func (c *Controller) readClientMessages(ctx context.Context, conn *websocket.Conn, cancel context.CancelFunc, subs *clientSubscriptions, send chan<- ServerMessage) {
-	// Set read deadline for detecting dead connections
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	// Set a read deadline for detecting dead connections
+	err := conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	if err != nil {
+		c.App.Logger.Error("Failed to set read deadline", zap.Error(err))
+		return
+	}
 
 	// Set pong handler to reset read deadline
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		err := conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		if err != nil {
+			c.App.Logger.Error("Failed to reset read deadline", zap.Error(err))
+			return err
+		}
 		return nil
 	})
 
@@ -465,7 +480,11 @@ func (c *Controller) readClientMessages(ctx context.Context, conn *websocket.Con
 			}
 
 			// Reset read deadline after successful read
-			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			err = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			if err != nil {
+				c.App.Logger.Error("Failed to reset read deadline", zap.Error(err))
+				return
+			}
 
 			// Handle subscription actions
 			switch msg.Action {

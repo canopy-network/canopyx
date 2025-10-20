@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db"
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/rpc"
-	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -59,6 +59,30 @@ func (m *mockAccountsRPCClient) GetGenesisState(ctx context.Context, height uint
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*rpc.GenesisState), args.Error(1)
+}
+
+func (m *mockAccountsRPCClient) EventsByHeight(ctx context.Context, height uint64) ([]*indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) OrdersByHeight(ctx context.Context, height uint64, chainID uint64) ([]*rpc.RpcOrder, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) DexPrice(ctx context.Context, chainID uint64) (*indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) DexPrices(ctx context.Context) ([]*indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) PoolByID(ctx context.Context, id uint64) (*rpc.RpcPool, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) Pools(ctx context.Context) ([]*rpc.RpcPool, error) {
+	return nil, nil
 }
 
 // Mock Chain Store for accounts tests
@@ -213,6 +237,70 @@ func (m *mockAccountsChainStore) QueryTransactionsWithFilter(ctx context.Context
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]indexermodels.Transaction), args.Error(1)
+}
+
+func (m *mockAccountsChainStore) QueryEvents(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsChainStore) QueryEventsWithFilter(ctx context.Context, cursor uint64, limit int, sortDesc bool, eventType string) ([]indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsChainStore) QueryPools(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexermodels.Pool, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsChainStore) QueryOrders(ctx context.Context, cursor uint64, limit int, sortDesc bool, status string) ([]indexermodels.Order, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsChainStore) QueryDexPrices(ctx context.Context, cursor uint64, limit int, sortDesc bool, localChainID, remoteChainID uint64) ([]indexermodels.DexPrice, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsChainStore) InsertBlocksStaging(ctx context.Context, block *indexermodels.Block) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertTransactionsStaging(ctx context.Context, txs []*indexermodels.Transaction) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertBlockSummariesStaging(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InitEvents(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertEventsStaging(ctx context.Context, events []*indexermodels.Event) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InitDexPrices(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertDexPricesStaging(ctx context.Context, prices []*indexermodels.DexPrice) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InitPools(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Pool) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) GetDexVolume24h(ctx context.Context) ([]db.DexVolumeStats, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsChainStore) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]db.OrderBookLevel, error) {
+	return nil, nil
 }
 
 func (m *mockAccountsChainStore) Close() error {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/uptrace/go-clickhouse/ch"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // InitGenesis creates the genesis table for caching full genesis state.
@@ -16,17 +16,17 @@ import (
 // - No TTL: genesis data is needed permanently for height 1 comparisons
 // - No chain_id column: each chain has its own database
 // - Simple schema: just height, data (JSON string), and fetched_at timestamp
-func InitGenesis(ctx context.Context, db *ch.DB, dbName string) error {
+func InitGenesis(ctx context.Context, db driver.Conn, dbName string) error {
 	ddl := fmt.Sprintf(`
-CREATE TABLE IF NOT EXISTS "%s"."genesis" (
-    height UInt64,
-    data String,
-    fetched_at DateTime DEFAULT now()
-) ENGINE = ReplacingMergeTree()
-ORDER BY height
-`, dbName)
+		CREATE TABLE IF NOT EXISTS "%s"."genesis" (
+			height UInt64,
+			data String,
+			fetched_at DateTime DEFAULT now()
+		) ENGINE = ReplacingMergeTree()
+		ORDER BY height
+	`, dbName)
 
-	_, err := db.ExecContext(ctx, ddl)
+	err := db.Exec(ctx, ddl)
 	if err != nil {
 		return fmt.Errorf("create genesis table: %w", err)
 	}

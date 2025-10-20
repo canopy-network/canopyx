@@ -161,31 +161,21 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 // getGenesisAccounts reads accounts from the genesis cache in the database.
 // This is used when indexing height 1 to compare RPC(1) vs Genesis(0).
 func (c *Context) getGenesisAccounts(ctx context.Context, chainDb db.ChainStore) ([]*rpc.RpcAccount, error) {
-	// Need to cast to *db.ChainDB to access ClickHouse() method
-	// The ChainStore interface doesn't expose ClickHouse() directly
+	// Need to cast to *db.ChainDB to access GetGenesisData method
 	dbImpl, ok := chainDb.(*db.ChainDB)
 	if !ok {
 		return nil, fmt.Errorf("chainDb is not *db.ChainDB")
 	}
 
 	// Query genesis table for height 0
-	var result struct {
-		Data string `ch:"data"`
-	}
-
-	err := dbImpl.Db.NewSelect().
-		TableExpr("genesis").
-		Column("data").
-		Where("height = ?", 0).
-		Scan(ctx, &result)
-
+	genesisData, err := dbImpl.GetGenesisData(ctx, 0)
 	if err != nil {
 		return nil, fmt.Errorf("query genesis cache: %w", err)
 	}
 
 	// Unmarshal JSON
 	var genesis rpc.GenesisState
-	if err := json.Unmarshal([]byte(result.Data), &genesis); err != nil {
+	if err := json.Unmarshal([]byte(genesisData), &genesis); err != nil {
 		return nil, fmt.Errorf("unmarshal genesis JSON: %w", err)
 	}
 
@@ -195,29 +185,11 @@ func (c *Context) getGenesisAccounts(ctx context.Context, chainDb db.ChainStore)
 // queryCreatedHeight retrieves the created_height for an existing account.
 // Uses FINAL to ensure we get the most recent version from ReplacingMergeTree.
 func (c *Context) queryCreatedHeight(ctx context.Context, chainDb db.ChainStore, address string) uint64 {
-	// Need to cast to *db.ChainDB to access Db field
+	// Need to cast to *db.ChainDB to access GetAccountCreatedHeight method
 	dbImpl, ok := chainDb.(*db.ChainDB)
 	if !ok {
 		return 0
 	}
 
-	var result struct {
-		CreatedHeight uint64 `ch:"created_height"`
-	}
-
-	err := dbImpl.Db.NewSelect().
-		TableExpr("accounts").
-		Column("created_height").
-		Where("address = ?", address).
-		OrderExpr("height DESC").
-		Limit(1).
-		Final(). // CRITICAL: Use FINAL to deduplicate ReplacingMergeTree
-		Scan(ctx, &result)
-
-	if err != nil {
-		// Account not found in DB yet - return 0
-		return 0
-	}
-
-	return result.CreatedHeight
+	return dbImpl.GetAccountCreatedHeight(ctx, address)
 }

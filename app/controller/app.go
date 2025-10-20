@@ -302,15 +302,8 @@ func (a *App) Reconcile(ctx context.Context) error {
 func (a *App) loadDesired(ctx context.Context) ([]Chain, error) {
 	loadStart := time.Now()
 
-	// Pull only the necessary columns; FINAL ensures we see the latest row per PK.
-	var rows []admin.Chain
-	err := a.IndexerDB.Db.
-		NewSelect().
-		Model(&rows).
-		// NOTE: keep only the columns we need for the scheduler
-		Column("chain_id", "image", "min_replicas", "max_replicas", "paused", "deleted").
-		Final().
-		Scan(ctx)
+	// Pull chains using AdminDB.ListChain (uses FINAL)
+	rows, err := a.IndexerDB.ListChain(ctx)
 	if err != nil {
 		return nil, err
 	}

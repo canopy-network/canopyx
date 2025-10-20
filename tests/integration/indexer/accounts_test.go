@@ -6,9 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/db/entities"
-	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/canopy-network/canopyx/tests/integration/helpers"
@@ -184,7 +182,7 @@ func TestAccountsChangeDetection(t *testing.T) {
 	changedAccountsHeight100 := []*indexer.Account{
 		{
 			Address:       "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // Changed
-			Amount:        1500, // Balance changed
+			Amount:        1500,                                         // Balance changed
 			Height:        100,
 			HeightTime:    now,
 			CreatedHeight: 1, // Preserved from previous
@@ -377,7 +375,7 @@ func TestAccountsGenesisHandling(t *testing.T) {
 	height1Accounts := []*indexer.Account{
 		{
 			Address:       "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // Changed
-			Amount:        15000, // Balance changed from 10000
+			Amount:        15000,                                       // Balance changed from 10000
 			Height:        1,
 			HeightTime:    height1Time,
 			CreatedHeight: 0, // Existed in genesis
@@ -662,7 +660,7 @@ func TestAccountsIsolationBetweenChains(t *testing.T) {
 	accounts2 := []*indexer.Account{
 		{
 			Address:       "0xCHAIN1111111111111111111111111111111111", // Same address
-			Amount:        2222, // Different balance
+			Amount:        2222,                                        // Different balance
 			Height:        100,
 			HeightTime:    now,
 			CreatedHeight: 1,

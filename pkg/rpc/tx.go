@@ -474,14 +474,14 @@ func (tx *Transaction) ToTransaction() (*indexer.Transaction, error) {
 	}
 
 	return &indexer.Transaction{
-		Height:        uint64(tx.Height),
-		TxHash:        tx.TxHash,
-		Time:          time.UnixMicro(tx.Transaction.Time),
-		MessageType:   string(msg.Type()),
-		Signer:        msg.GetSigner(),
-		Counterparty:  msg.GetCounterparty(),
-		Amount:        msg.GetAmount(),
-		Fee:           uint64(tx.Transaction.Fee),
+		Height:           uint64(tx.Height),
+		TxHash:           tx.TxHash,
+		Time:             time.UnixMicro(tx.Transaction.Time),
+		MessageType:      string(msg.Type()),
+		Signer:           msg.GetSigner(),
+		Counterparty:     msg.GetCounterparty(),
+		Amount:           msg.GetAmount(),
+		Fee:              uint64(tx.Transaction.Fee),
 		ValidatorAddress: msg.GetValidatorAddress(),
 		Commission:       msg.GetCommission(),
 		ChainID:          msg.GetChainID(),
@@ -494,10 +494,10 @@ func (tx *Transaction) ToTransaction() (*indexer.Transaction, error) {
 		ParamValue:       msg.GetParamValue(),
 		CommitteeID:      msg.GetCommitteeID(),
 		Recipient:        msg.GetRecipient(),
-		Msg:           string(msgJSON),
-		PublicKey:     publicKey,
-		Signature:     signature,
-		CreatedHeight: uint64(tx.Transaction.CreatedHeight),
+		Msg:              string(msgJSON),
+		PublicKey:        publicKey,
+		Signature:        signature,
+		CreatedHeight:    uint64(tx.Transaction.CreatedHeight),
 	}, nil
 }
 

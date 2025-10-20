@@ -70,18 +70,12 @@ func (db *AdminDB) RecordIndexed(ctx context.Context, chainID string, height uin
 	chainDb, err := NewChainDb(ctx, db.Logger, chainID)
 	if err == nil {
 		// Query the block to get its timestamp
-		var blockRow struct {
-			Time time.Time `ch:"time"`
-		}
-		queryErr := chainDb.Db.NewSelect().
-			TableExpr(fmt.Sprintf(`"%s"."blocks"`, chainDb.DatabaseName())).
-			Column("time").
-			Where("height = ?", height).
-			Limit(1).
-			Scan(ctx, &blockRow)
+		var blockTime time.Time
+		query := fmt.Sprintf(`SELECT time FROM "%s"."blocks" WHERE height = ? LIMIT 1`, chainDb.DatabaseName())
+		queryErr := chainDb.Db.QueryRow(ctx, query, height).Scan(&blockTime)
 
-		if queryErr == nil && !blockRow.Time.IsZero() {
-			indexingTime = now.Sub(blockRow.Time).Seconds()
+		if queryErr == nil && !blockTime.IsZero() {
+			indexingTime = now.Sub(blockTime).Seconds()
 			// Handle edge case: if system clock is behind or block time is in future, set to 0
 			if indexingTime < 0 {
 				indexingTime = 0
@@ -98,8 +92,7 @@ func (db *AdminDB) RecordIndexed(ctx context.Context, chainID string, height uin
 		IndexingDetail: indexingDetail, // JSON breakdown of individual activity timings
 	}
 
-	_, err = db.Db.NewInsert().Model(ip).Exec(ctx)
-	return err
+	return admin.InsertIndexProgress(ctx, db.Db, ip)
 }
 
 // LastIndexed returns the latest indexed height for a chain.
@@ -108,11 +101,8 @@ func (db *AdminDB) RecordIndexed(ctx context.Context, chainID string, height uin
 func (db *AdminDB) LastIndexed(ctx context.Context, chainID string) (uint64, error) {
 	// Try the aggregate first:
 	var h uint64
-	err := db.Db.NewSelect().
-		TableExpr(fmt.Sprintf(`"%s"."index_progress_agg"`, db.Name)).
-		ColumnExpr("maxMerge(max_height)").
-		Where("chain_id = ?", chainID).
-		Scan(ctx, &h)
+	query := fmt.Sprintf(`SELECT maxMerge(max_height) FROM "%s"."index_progress_agg" WHERE chain_id = ?`, db.Name)
+	err := db.Db.QueryRow(ctx, query, chainID).Scan(&h)
 
 	if err == nil && h != 0 {
 		return h, nil
@@ -120,11 +110,8 @@ func (db *AdminDB) LastIndexed(ctx context.Context, chainID string) (uint64, err
 
 	// Fallback to the base table if agg is empty (e.g., very first rows)
 	var fallback uint64
-	if err := db.Db.NewSelect().
-		Model((*admin.IndexProgress)(nil)).
-		Where("chain_id = ?", chainID).
-		ColumnExpr("max(height)").
-		Scan(ctx, &fallback); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	fallbackQuery := fmt.Sprintf(`SELECT max(height) FROM "%s"."index_progress" WHERE chain_id = ?`, db.Name)
+	if err := db.Db.QueryRow(ctx, fallbackQuery, chainID).Scan(&fallback); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	return fallback, nil
@@ -133,7 +120,7 @@ func (db *AdminDB) LastIndexed(ctx context.Context, chainID string) (uint64, err
 // FindGaps returns missing [From, To] heights strictly inside observed heights,
 // and does NOT include the trailing gap to 'up to'. The caller should add a tail gap separately.
 func (db *AdminDB) FindGaps(ctx context.Context, chainID string) ([]Gap, error) {
-	q := fmt.Sprintf(`
+	query := fmt.Sprintf(`
 		SELECT assumeNotNull(prev_h) + 1 AS from_h, h - 1 AS to_h
 		FROM (
 		  SELECT
@@ -143,7 +130,7 @@ func (db *AdminDB) FindGaps(ctx context.Context, chainID string) ([]Gap, error) 
 		      ORDER BY height
 		      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 		    ) AS prev_h
-		  FROM %s.index_progress
+		  FROM "%s"."index_progress"
 		  WHERE chain_id = ?
 		  ORDER BY height
 		)
@@ -152,8 +139,7 @@ func (db *AdminDB) FindGaps(ctx context.Context, chainID string) ([]Gap, error) 
 	`, db.Name)
 
 	var rows []Gap
-	// Use the ORM's raw + Scan to hydrate into a slice.
-	if err := db.Db.NewRaw(q, chainID).Scan(ctx, &rows); err != nil {
+	if err := db.Select(ctx, &rows, query, chainID); err != nil {
 		return nil, err
 	}
 
@@ -179,8 +165,6 @@ func (db *AdminDB) EnsureChainsDbs(ctx context.Context) (*xsync.Map[string, Chai
 
 	return chainDbMap, nil
 }
-
-// <verb><actor>
 
 // UpsertChain creates or updates a chain in the database.
 func (db *AdminDB) UpsertChain(ctx context.Context, c *admin.Chain) error {
@@ -218,21 +202,29 @@ func (db *AdminDB) UpsertChain(ctx context.Context, c *admin.Chain) error {
 	}
 
 	// Insert (ReplacingMergeTree will treat the same (chain_id) as an upsert by latest UpdatedAt)
-	_, err := db.Db.NewInsert().Model(c).Exec(ctx)
-	return err
+	return admin.InsertChain(ctx, db.Db, c)
 }
 
 // ListChain returns the latest (deduped) row per chain_id.
 func (db *AdminDB) ListChain(ctx context.Context) ([]admin.Chain, error) {
+	query := `
+		SELECT
+			chain_id, chain_name, rpc_endpoints, paused, deleted, image,
+			min_replicas, max_replicas, notes, created_at, updated_at,
+			rpc_health_status, rpc_health_message, rpc_health_updated_at,
+			queue_health_status, queue_health_message, queue_health_updated_at,
+			deployment_health_status, deployment_health_message, deployment_health_updated_at,
+			overall_health_status, overall_health_updated_at
+		FROM chains FINAL
+		ORDER BY chain_id
+	`
+
 	var out []admin.Chain
+	if err := db.Select(ctx, &out, query); err != nil {
+		return nil, err
+	}
 
-	err := db.Db.NewSelect().
-		Model(&out).
-		Final().
-		OrderExpr("chain_id").
-		Scan(ctx, &out)
-
-	return out, err
+	return out, nil
 }
 
 // GetChain returns the latest (deduped) row for the given chain_id.
@@ -276,8 +268,8 @@ func (db *AdminDB) PatchChains(ctx context.Context, patches []admin.Chain) error
 		cur.UpdatedAt = time.Now()
 
 		// Insert a new versioned row (ReplacingMergeTree(updated_at))
-		if _, insertErr := db.Db.NewInsert().Model(cur).Exec(ctx); insertErr != nil {
-			return insertErr
+		if err := admin.InsertChain(ctx, db.Db, cur); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -295,18 +287,21 @@ func (db *AdminDB) RecordReindexRequests(ctx context.Context, chainID, requested
 	if len(heights) == 0 {
 		return nil
 	}
-	rows := make([]*admin.ReindexRequest, 0, len(heights))
+
+	now := time.Now()
 	for _, h := range heights {
-		rows = append(rows, &admin.ReindexRequest{
+		req := &admin.ReindexRequest{
 			ChainID:     chainID,
 			Height:      h,
 			RequestedBy: requestedBy,
 			Status:      "queued",
-			RequestedAt: time.Now(),
-		})
+			RequestedAt: now,
+		}
+		if err := admin.InsertReindexRequest(ctx, db.Db, req); err != nil {
+			return err
+		}
 	}
-	_, err := db.Db.NewInsert().Model(&rows).Exec(ctx)
-	return err
+	return nil
 }
 
 // RecordReindexRequestsWithWorkflow logs reindex requests with workflow execution information.
@@ -314,20 +309,23 @@ func (db *AdminDB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainI
 	if len(infos) == 0 {
 		return nil
 	}
-	rows := make([]*admin.ReindexRequest, 0, len(infos))
+
+	now := time.Now()
 	for _, info := range infos {
-		rows = append(rows, &admin.ReindexRequest{
+		req := &admin.ReindexRequest{
 			ChainID:     chainID,
 			Height:      info.Height,
 			RequestedBy: requestedBy,
 			Status:      "queued",
 			WorkflowID:  info.WorkflowID,
 			RunID:       info.RunID,
-			RequestedAt: time.Now(),
-		})
+			RequestedAt: now,
+		}
+		if err := admin.InsertReindexRequest(ctx, db.Db, req); err != nil {
+			return err
+		}
 	}
-	_, err := db.Db.NewInsert().Model(&rows).Exec(ctx)
-	return err
+	return nil
 }
 
 // ListReindexRequests returns the most recent reindex requests for a chain.
@@ -335,14 +333,17 @@ func (db *AdminDB) ListReindexRequests(ctx context.Context, chainID string, limi
 	if limit <= 0 {
 		limit = 10
 	}
+
+	query := `
+		SELECT chain_id, height, requested_by, status, workflow_id, run_id, requested_at
+		FROM reindex_requests
+		WHERE chain_id = ?
+		ORDER BY requested_at DESC
+		LIMIT ?
+	`
+
 	var rows []admin.ReindexRequest
-	err := db.Db.NewSelect().
-		Model(&rows).
-		Where("chain_id = ?", chainID).
-		OrderExpr("requested_at DESC").
-		Limit(limit).
-		Scan(ctx)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := db.Select(ctx, &rows, query, chainID, limit); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	return rows, nil

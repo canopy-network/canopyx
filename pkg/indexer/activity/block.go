@@ -42,8 +42,8 @@ func (c *Context) SaveBlock(ctx context.Context, in types.SaveBlockInput) (types
 		return types.IndexBlockOutput{Height: in.Height}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	// Insert block without summaries - summaries will be saved separately in block_summaries table
-	if err := chainDb.InsertBlock(ctx, in.Block); err != nil {
+	// Insert block to staging table (two-phase commit pattern)
+	if err := chainDb.InsertBlocksStaging(ctx, in.Block); err != nil {
 		return types.IndexBlockOutput{Height: in.Height}, err
 	}
 
@@ -74,8 +74,8 @@ func (c *Context) IndexBlock(ctx context.Context, in types.IndexBlockInput) (typ
 		return types.IndexBlockOutput{Height: in.Height}, err
 	}
 
-	// Insert block without summaries - summaries will be saved separately in block_summaries table
-	if err = chainDb.InsertBlock(ctx, blk); err != nil {
+	// Insert block to staging table (two-phase commit pattern)
+	if err = chainDb.InsertBlocksStaging(ctx, blk); err != nil {
 		return types.IndexBlockOutput{Height: blk.Height}, err
 	}
 

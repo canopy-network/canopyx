@@ -5,18 +5,18 @@ metadata:
 data:
   genesis.json: |
     {
-      "time": "2025-10-13 19:05:30",
+      "time": "2025-10-19 22:49:40",
       "accounts": [
         {
-          "address": "29d19c74ac51b199cc070181886bea5cad3f88c3",
+          "address": "31c019699f5eac8edf96db5de102c222b3f04ee6",
           "amount": 1000000
         }
       ],
       "nonSigners": null,
       "validators": [
         {
-          "address": "29d19c74ac51b199cc070181886bea5cad3f88c3",
-          "publicKey": "95d857490295d5d55a2f25e442778eb7aaac33712cb2a92dd62843c98e6665d52a3dc51eabccaf7bb121492ef3f347fe",
+          "address": "31c019699f5eac8edf96db5de102c222b3f04ee6",
+          "publicKey": "85ecd385d99b690a344f79ea2c438024d203e6d9f3e7a13eac13835ce8b11b36ac7f7f1bd3c1b04ec077199a225f6005",
           "committees": [
             1
           ],
@@ -24,7 +24,7 @@ data:
           "stakedAmount": 1000000000000,
           "maxPausedHeight": 0,
           "unstakingHeight": 0,
-          "output": "29d19c74ac51b199cc070181886bea5cad3f88c3",
+          "output": "31c019699f5eac8edf96db5de102c222b3f04ee6",
           "delegate": false,
           "compound": true
         }
@@ -66,7 +66,10 @@ data:
           "subsidyFee": 10000,
           "createOrderFee": 10000,
           "editOrderFee": 10000,
-          "deleteOrderFee": 10000
+          "deleteOrderFee": 10000,
+          "dexLimitOrderFee": 0,
+          "dexLiquidityDeposit": 0,
+          "dexLiquidityWithdraw": 0
         },
         "governance": {
           "daoRewardPercentage": 5

@@ -49,8 +49,8 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransacti
 		zap.Uint32("numTxs", numTxs),
 		zap.Any("txCountsByType", txCountsByType))
 
-	// Insert transactions (single table)
-	if err := chainDb.InsertTransactions(ctx, txs); err != nil {
+	// Insert transactions to staging table (two-phase commit pattern)
+	if err := chainDb.InsertTransactionsStaging(ctx, txs); err != nil {
 		return types.IndexTransactionsOutput{}, err
 	}
 
