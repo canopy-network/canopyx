@@ -103,7 +103,31 @@ CanopyX is a high-throughput blockchain indexer that processes blocks/transactio
 - Store secrets outside git; rely on `.env`, Tilt overrides, or cluster secrets. Document required env vars (`ADMIN_TOKEN`, Temporal/ClickHouse credentials).
 - When testing remote chains, keep credentials in `deploy/` manifests or isolated kube contexts to avoid leaking production endpoints.
 
-## Agent Interaction & Token Discipline
-- Keep prompts, responses, and logs terse; cite paths or line numbers instead of pasting large blocks.
-- Prefer summaries or diffs over full command output; link to existing docs rather than repeating background.
-- Batch related questions and reuse context variables so agents do not resend redundant data.
+## Agent Interaction & Token Efficiency
+
+### Use Specialized Agents Proactively
+- **GO work:** Use `go-senior-engineer` or `go-temporal-clickhouse-tester` agents
+- **Frontend work:** Use `nextjs-fullstack-designer` agent
+- **Complex searches:** Use `Explore` agent with thoroughness level
+- **Run agents in PARALLEL** when tasks are independent (use single message with multiple Task calls)
+- Example: Backend + Frontend + Tests = 3 parallel agent calls, not sequential
+
+### Use Makefile Commands
+- **Build:** `make build` (not `go build ./... && cd web/admin && pnpm run build`)
+- **Test:** `make test-unit` or `make test-integration` (not `go test ./...`)
+- **Lint:** `make lint` (not `golangci-lint run`)
+- **Format:** `make fmt` (not `gofmt` or `goimports`)
+- Check `make help` for available targets
+
+### Keep Communication Terse
+- Cite file:line instead of pasting code blocks
+- Summarize command output, don't dump full logs
+- Link to existing docs rather than repeating context
+- Batch related questions to avoid redundant round-trips
+- Ask user for decisions, don't guess or be verbose
+
+### Token Budget Awareness
+- Session limit: 200k tokens
+- Use agents to offload work (they're more efficient)
+- Avoid reading large files multiple times
+- Use Grep/Glob strategically, not exploratory scanning
