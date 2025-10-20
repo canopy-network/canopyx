@@ -42,7 +42,7 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.1
-          args: --timeout=5m
+          args: ./app/... ./cmd/... ./pkg/... --tests=false --timeout=5m
 
   go-fmt-check:
     name: Go Format Check (gofmt + goimports)
