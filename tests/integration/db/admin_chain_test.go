@@ -1,4 +1,4 @@
-package admin
+package db
 
 import (
 	"context"

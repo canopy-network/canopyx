@@ -1,7 +1,8 @@
-package activity
+package activity_test
 
 import (
 	"context"
+	"github.com/canopy-network/canopyx/pkg/indexer/activity"
 	"testing"
 	"time"
 
@@ -45,12 +46,12 @@ func (m *mockAccountsRPCClient) TxsByHeight(ctx context.Context, height uint64) 
 	return args.Get(0).([]*indexermodels.Transaction), args.Error(1)
 }
 
-func (m *mockAccountsRPCClient) AccountsByHeight(ctx context.Context, height uint64) ([]*rpc.RpcAccount, error) {
+func (m *mockAccountsRPCClient) AccountsByHeight(ctx context.Context, height uint64) ([]*rpc.Account, error) {
 	args := m.Called(ctx, height)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*rpc.RpcAccount), args.Error(1)
+	return args.Get(0).([]*rpc.Account), args.Error(1)
 }
 
 func (m *mockAccountsRPCClient) GetGenesisState(ctx context.Context, height uint64) (*rpc.GenesisState, error) {
@@ -91,6 +92,8 @@ type mockAccountsChainStore struct {
 	chainID          string
 	databaseName     string
 	insertedAccounts []*indexermodels.Account
+	createdHeights   map[string]uint64
+	genesisJSON      string
 }
 
 func (m *mockAccountsChainStore) DatabaseName() string { return m.databaseName }
@@ -145,6 +148,28 @@ func (m *mockAccountsChainStore) DeleteTransactions(ctx context.Context, height 
 func (m *mockAccountsChainStore) Exec(ctx context.Context, query string, args ...any) error {
 	mockArgs := m.Called(ctx, query, args)
 	return mockArgs.Error(0)
+}
+
+func (m *mockAccountsChainStore) InsertAccountsStaging(ctx context.Context, accounts []*indexermodels.Account) error {
+	m.insertedAccounts = append([]*indexermodels.Account(nil), accounts...)
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "InsertAccountsStaging" {
+			args := m.Called(ctx, accounts)
+			return args.Error(0)
+		}
+	}
+	return nil
+}
+
+func (m *mockAccountsChainStore) GetGenesisData(_ context.Context, _ uint64) (string, error) {
+	return m.genesisJSON, nil
+}
+
+func (m *mockAccountsChainStore) GetAccountCreatedHeight(_ context.Context, address string) uint64 {
+	if m.createdHeights == nil {
+		return 0
+	}
+	return m.createdHeights[address]
 }
 
 func (m *mockAccountsChainStore) QueryBlocks(ctx context.Context, height uint64, limit int, desc bool) ([]indexermodels.Block, error) {
@@ -323,14 +348,14 @@ func TestIndexAccounts_Success(t *testing.T) {
 	mockRPC := new(mockAccountsRPCClient)
 
 	// Current height accounts
-	currentAccounts := []*rpc.RpcAccount{
+	currentAccounts := []*rpc.Account{
 		{Address: "0x111", Amount: 1500}, // Changed from 1000
 		{Address: "0x222", Amount: 2000}, // No change
 		{Address: "0x333", Amount: 3000}, // New account
 	}
 
 	// Previous height accounts
-	previousAccounts := []*rpc.RpcAccount{
+	previousAccounts := []*rpc.Account{
 		{Address: "0x111", Amount: 1000}, // Will change
 		{Address: "0x222", Amount: 2000}, // No change
 	}
@@ -344,15 +369,16 @@ func TestIndexAccounts_Success(t *testing.T) {
 		databaseName: "chain_a",
 	}
 
-	// Mock the Exec call for InsertAccountsStaging
-	mockChainStore.On("Exec", mock.Anything, mock.AnythingOfType("string"), mock.Anything).Return(nil)
+	mockChainStore.createdHeights = map[string]uint64{
+		"0x111": 1,
+	}
 
 	// Setup chains map
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", mockChainStore)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -399,7 +425,7 @@ func TestIndexAccounts_NoChanges(t *testing.T) {
 	mockRPC := new(mockAccountsRPCClient)
 
 	// Same accounts at both heights
-	sameAccounts := []*rpc.RpcAccount{
+	sameAccounts := []*rpc.Account{
 		{Address: "0x111", Amount: 1000},
 		{Address: "0x222", Amount: 2000},
 	}
@@ -415,7 +441,7 @@ func TestIndexAccounts_NoChanges(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", mockChainStore)
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -450,7 +476,7 @@ func TestIndexAccounts_HeightOne(t *testing.T) {
 	mockRPC := new(mockAccountsRPCClient)
 
 	// Accounts at height 1
-	height1Accounts := []*rpc.RpcAccount{
+	height1Accounts := []*rpc.Account{
 		{Address: "0xaaa", Amount: 5000}, // Changed from genesis
 		{Address: "0xbbb", Amount: 6000}, // Same as genesis
 		{Address: "0xccc", Amount: 7000}, // New since genesis
@@ -464,7 +490,7 @@ func TestIndexAccounts_HeightOne(t *testing.T) {
 	// Mock genesis cache - stored as JSON in the DB
 	genesis := rpc.GenesisState{
 		Time: 1234567890,
-		Accounts: []*rpc.RpcAccount{
+		Accounts: []*rpc.Account{
 			{Address: "0xaaa", Amount: 4000}, // Will change
 			{Address: "0xbbb", Amount: 6000}, // No change
 		},
@@ -545,9 +571,9 @@ func TestIndexAccounts_RPCFailure(t *testing.T) {
 
 	// Simulate RPC failure
 	mockRPC.On("AccountsByHeight", mock.Anything, uint64(100)).
-		Return([]*rpc.RpcAccount(nil), assert.AnError)
+		Return([]*rpc.Account(nil), assert.AnError)
 	mockRPC.On("AccountsByHeight", mock.Anything, uint64(99)).
-		Return([]*rpc.RpcAccount{}, nil).Maybe()
+		Return([]*rpc.Account{}, nil).Maybe()
 
 	mockChainStore := &mockAccountsChainStore{
 		chainID:      "chain-A",
@@ -557,7 +583,7 @@ func TestIndexAccounts_RPCFailure(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", mockChainStore)
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -574,15 +600,19 @@ func TestIndexAccounts_RPCFailure(t *testing.T) {
 		BlockTime: time.Now(),
 	}
 
-	future, err := env.ExecuteActivity(activityCtx.IndexAccounts, input)
-	require.NoError(t, err)
+	future, execErr := env.ExecuteActivity(activityCtx.IndexAccounts, input)
 
 	var output types.IndexAccountsOutput
-	err = future.Get(&output)
+	var actErr error
+	if execErr != nil {
+		actErr = execErr
+	} else {
+		actErr = future.Get(&output)
+	}
 
 	// Should have an error
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "fetch current accounts at height 100")
+	assert.Error(t, actErr)
+	assert.Contains(t, actErr.Error(), "fetch current accounts at height 100")
 
 	mockRPC.AssertExpectations(t)
 }
@@ -606,16 +636,16 @@ func TestIndexAccounts_LargeDataset(t *testing.T) {
 
 	// Create large dataset - 10,000 accounts
 	numAccounts := 10000
-	currentAccounts := make([]*rpc.RpcAccount, numAccounts)
-	previousAccounts := make([]*rpc.RpcAccount, numAccounts)
+	currentAccounts := make([]*rpc.Account, numAccounts)
+	previousAccounts := make([]*rpc.Account, numAccounts)
 
 	for i := 0; i < numAccounts; i++ {
 		address := "0x" + string(rune(i))
-		currentAccounts[i] = &rpc.RpcAccount{
+		currentAccounts[i] = &rpc.Account{
 			Address: address,
 			Amount:  uint64(i * 100),
 		}
-		previousAccounts[i] = &rpc.RpcAccount{
+		previousAccounts[i] = &rpc.Account{
 			Address: address,
 			Amount:  uint64(i * 100),
 		}
@@ -633,12 +663,12 @@ func TestIndexAccounts_LargeDataset(t *testing.T) {
 		chainID:      "chain-A",
 		databaseName: "chain_a",
 	}
-	mockChainStore.On("Exec", mock.Anything, mock.AnythingOfType("string"), mock.Anything).Return(nil)
+	mockChainStore.createdHeights = make(map[string]uint64)
 
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", mockChainStore)
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -668,6 +698,7 @@ func TestIndexAccounts_LargeDataset(t *testing.T) {
 	assert.Equal(t, uint32(1000), output.NumAccounts) // 10% changed
 	assert.Greater(t, output.DurationMs, 0.0)
 	assert.Less(t, elapsed, 5*time.Second) // Should complete quickly even with large dataset
+	assert.Equal(t, 1000, len(mockChainStore.insertedAccounts))
 
 	mockRPC.AssertExpectations(t)
 }

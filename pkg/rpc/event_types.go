@@ -37,8 +37,8 @@ type RewardEvent struct {
 }
 
 func (e *RewardEvent) Type() EventType          { return EventTypeReward }
-func (e *RewardEvent) GetAddress() string       { return getStringField(e.Data, "address") }
-func (e *RewardEvent) GetAmount() *uint64       { return getOptionalUint64Field(e.Data, "amount") }
+func (e *RewardEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
+func (e *RewardEvent) GetAmount() *uint64       { return GetOptionalUint64Field(e.Data, "amount") }
 func (e *RewardEvent) GetSoldAmount() *uint64   { return nil }
 func (e *RewardEvent) GetBoughtAmount() *uint64 { return nil }
 func (e *RewardEvent) GetLocalAmount() *uint64  { return nil }
@@ -53,8 +53,8 @@ type SlashEvent struct {
 }
 
 func (e *SlashEvent) Type() EventType          { return EventTypeSlash }
-func (e *SlashEvent) GetAddress() string       { return getStringField(e.Data, "address") }
-func (e *SlashEvent) GetAmount() *uint64       { return getOptionalUint64Field(e.Data, "amount") }
+func (e *SlashEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
+func (e *SlashEvent) GetAmount() *uint64       { return GetOptionalUint64Field(e.Data, "amount") }
 func (e *SlashEvent) GetSoldAmount() *uint64   { return nil }
 func (e *SlashEvent) GetBoughtAmount() *uint64 { return nil }
 func (e *SlashEvent) GetLocalAmount() *uint64  { return nil }
@@ -69,9 +69,9 @@ type DexLiquidityDepositEvent struct {
 }
 
 func (e *DexLiquidityDepositEvent) Type() EventType    { return EventTypeDexLiquidityDeposit }
-func (e *DexLiquidityDepositEvent) GetAddress() string { return getStringField(e.Data, "address") }
+func (e *DexLiquidityDepositEvent) GetAddress() string { return GetStringField(e.Data, "address") }
 func (e *DexLiquidityDepositEvent) GetAmount() *uint64 {
-	return getOptionalUint64Field(e.Data, "amount")
+	return GetOptionalUint64Field(e.Data, "amount")
 }
 func (e *DexLiquidityDepositEvent) GetSoldAmount() *uint64   { return nil }
 func (e *DexLiquidityDepositEvent) GetBoughtAmount() *uint64 { return nil }
@@ -89,15 +89,15 @@ type DexLiquidityWithdrawEvent struct {
 }
 
 func (e *DexLiquidityWithdrawEvent) Type() EventType          { return EventTypeDexLiquidityWithdraw }
-func (e *DexLiquidityWithdrawEvent) GetAddress() string       { return getStringField(e.Data, "address") }
+func (e *DexLiquidityWithdrawEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
 func (e *DexLiquidityWithdrawEvent) GetAmount() *uint64       { return nil }
 func (e *DexLiquidityWithdrawEvent) GetSoldAmount() *uint64   { return nil }
 func (e *DexLiquidityWithdrawEvent) GetBoughtAmount() *uint64 { return nil }
 func (e *DexLiquidityWithdrawEvent) GetLocalAmount() *uint64 {
-	return getOptionalUint64Field(e.Data, "localAmount")
+	return GetOptionalUint64Field(e.Data, "localAmount")
 }
 func (e *DexLiquidityWithdrawEvent) GetRemoteAmount() *uint64 {
-	return getOptionalUint64Field(e.Data, "remoteAmount")
+	return GetOptionalUint64Field(e.Data, "remoteAmount")
 }
 func (e *DexLiquidityWithdrawEvent) GetSuccess() *bool     { return nil }
 func (e *DexLiquidityWithdrawEvent) GetLocalOrigin() *bool { return nil }
@@ -109,11 +109,11 @@ type DexSwapEvent struct {
 }
 
 func (e *DexSwapEvent) Type() EventType        { return EventTypeDexSwap }
-func (e *DexSwapEvent) GetAddress() string     { return getStringField(e.Data, "address") }
+func (e *DexSwapEvent) GetAddress() string     { return GetStringField(e.Data, "address") }
 func (e *DexSwapEvent) GetAmount() *uint64     { return nil }
-func (e *DexSwapEvent) GetSoldAmount() *uint64 { return getOptionalUint64Field(e.Data, "soldAmount") }
+func (e *DexSwapEvent) GetSoldAmount() *uint64 { return GetOptionalUint64Field(e.Data, "soldAmount") }
 func (e *DexSwapEvent) GetBoughtAmount() *uint64 {
-	return getOptionalUint64Field(e.Data, "boughtAmount")
+	return GetOptionalUint64Field(e.Data, "boughtAmount")
 }
 func (e *DexSwapEvent) GetLocalAmount() *uint64  { return nil }
 func (e *DexSwapEvent) GetRemoteAmount() *uint64 { return nil }
@@ -127,13 +127,13 @@ type OrderBookSwapEvent struct {
 }
 
 func (e *OrderBookSwapEvent) Type() EventType    { return EventTypeOrderBookSwap }
-func (e *OrderBookSwapEvent) GetAddress() string { return getStringField(e.Data, "address") }
+func (e *OrderBookSwapEvent) GetAddress() string { return GetStringField(e.Data, "address") }
 func (e *OrderBookSwapEvent) GetAmount() *uint64 { return nil }
 func (e *OrderBookSwapEvent) GetSoldAmount() *uint64 {
-	return getOptionalUint64Field(e.Data, "soldAmount")
+	return GetOptionalUint64Field(e.Data, "soldAmount")
 }
 func (e *OrderBookSwapEvent) GetBoughtAmount() *uint64 {
-	return getOptionalUint64Field(e.Data, "boughtAmount")
+	return GetOptionalUint64Field(e.Data, "boughtAmount")
 }
 func (e *OrderBookSwapEvent) GetLocalAmount() *uint64  { return nil }
 func (e *OrderBookSwapEvent) GetRemoteAmount() *uint64 { return nil }
@@ -147,7 +147,7 @@ type AutomaticPauseEvent struct {
 }
 
 func (e *AutomaticPauseEvent) Type() EventType          { return EventTypeAutomaticPause }
-func (e *AutomaticPauseEvent) GetAddress() string       { return getStringField(e.Data, "address") }
+func (e *AutomaticPauseEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
 func (e *AutomaticPauseEvent) GetAmount() *uint64       { return nil }
 func (e *AutomaticPauseEvent) GetSoldAmount() *uint64   { return nil }
 func (e *AutomaticPauseEvent) GetBoughtAmount() *uint64 { return nil }
@@ -163,7 +163,7 @@ type AutomaticBeginUnstakingEvent struct {
 }
 
 func (e *AutomaticBeginUnstakingEvent) Type() EventType          { return EventTypeAutomaticBeginUnstaking }
-func (e *AutomaticBeginUnstakingEvent) GetAddress() string       { return getStringField(e.Data, "address") }
+func (e *AutomaticBeginUnstakingEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
 func (e *AutomaticBeginUnstakingEvent) GetAmount() *uint64       { return nil }
 func (e *AutomaticBeginUnstakingEvent) GetSoldAmount() *uint64   { return nil }
 func (e *AutomaticBeginUnstakingEvent) GetBoughtAmount() *uint64 { return nil }
@@ -179,7 +179,7 @@ type AutomaticFinishUnstakingEvent struct {
 }
 
 func (e *AutomaticFinishUnstakingEvent) Type() EventType          { return EventTypeAutomaticFinishUnstaking }
-func (e *AutomaticFinishUnstakingEvent) GetAddress() string       { return getStringField(e.Data, "address") }
+func (e *AutomaticFinishUnstakingEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
 func (e *AutomaticFinishUnstakingEvent) GetAmount() *uint64       { return nil }
 func (e *AutomaticFinishUnstakingEvent) GetSoldAmount() *uint64   { return nil }
 func (e *AutomaticFinishUnstakingEvent) GetBoughtAmount() *uint64 { return nil }

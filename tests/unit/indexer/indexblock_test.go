@@ -63,21 +63,30 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 	}
 
 	env.RegisterWorkflow(wfCtx.IndexBlockWorkflow)
+	env.RegisterWorkflow(wfCtx.CleanupStagingWorkflow)
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
 	env.RegisterActivity(activityCtx.FetchBlockFromRPC)
 	env.RegisterActivity(activityCtx.SaveBlock)
 	env.RegisterActivity(activityCtx.IndexBlock)
 	env.RegisterActivity(activityCtx.IndexTransactions)
+	env.RegisterActivity(activityCtx.IndexAccounts)
+	env.RegisterActivity(activityCtx.IndexEvents)
+	env.RegisterActivity(activityCtx.IndexPools)
+	env.RegisterActivity(activityCtx.IndexOrders)
+	env.RegisterActivity(activityCtx.IndexDexPrices)
 	env.RegisterActivity(activityCtx.SaveBlockSummary)
+	env.RegisterActivity(activityCtx.PromoteData)
+	env.RegisterActivity(activityCtx.CleanPromotedData)
 	env.RegisterActivity(activityCtx.RecordIndexed)
 
 	input := types.IndexBlockInput{ChainID: "chain-A", Height: 21}
 	env.ExecuteWorkflow(wfCtx.IndexBlockWorkflow, input)
 
 	require.NoError(t, env.GetWorkflowError())
-	require.Equal(t, 1, chainStore.insertBlockCalls, "IndexBlock should be called once")
-	require.Equal(t, 1, chainStore.insertTransactionCalls, "IndexTransactions should be called once")
-	require.Equal(t, 1, chainStore.insertBlockSummaryCalls, "SaveBlockSummary should be called once")
+	// Verify staging inserts (two-phase commit pattern)
+	require.Equal(t, 1, chainStore.insertBlocksStagingCalls, "SaveBlock should insert to staging once")
+	require.Equal(t, 1, chainStore.insertTransactionsStagingCalls, "IndexTransactions should insert to staging once")
+	require.Equal(t, 1, chainStore.insertBlockSummariesStagingCalls, "SaveBlockSummary should insert to staging once")
 	require.NotNil(t, chainStore.lastBlock)
 	require.Equal(t, uint64(21), chainStore.lastBlock.Height)
 	// Check summary was saved correctly
@@ -132,16 +141,19 @@ func (f *wfFakeAdminStore) UpdateRPCHealth(context.Context, string, string, stri
 }
 
 type wfFakeChainStore struct {
-	chainID                 string
-	databaseName            string
-	insertBlockCalls        int
-	insertTransactionCalls  int
-	insertBlockSummaryCalls int
-	lastBlock               *indexermodels.Block
-	lastBlockSummary        *indexermodels.BlockSummary
-	hasBlock                bool
-	deletedBlocks           []uint64
-	deletedTransactions     []uint64
+	chainID                          string
+	databaseName                     string
+	insertBlockCalls                 int
+	insertTransactionCalls           int
+	insertBlockSummaryCalls          int
+	insertBlocksStagingCalls         int
+	insertTransactionsStagingCalls   int
+	insertBlockSummariesStagingCalls int
+	lastBlock                        *indexermodels.Block
+	lastBlockSummary                 *indexermodels.BlockSummary
+	hasBlock                         bool
+	deletedBlocks                    []uint64
+	deletedTransactions              []uint64
 }
 
 func (f *wfFakeChainStore) DatabaseName() string { return f.databaseName }
@@ -271,15 +283,24 @@ func (*wfFakeChainStore) QueryDexPrices(context.Context, uint64, int, bool, uint
 	return nil, nil
 }
 
-func (*wfFakeChainStore) InsertBlocksStaging(context.Context, *indexermodels.Block) error {
+func (f *wfFakeChainStore) InsertBlocksStaging(_ context.Context, block *indexermodels.Block) error {
+	f.insertBlocksStagingCalls++
+	f.lastBlock = block
 	return nil
 }
 
-func (*wfFakeChainStore) InsertTransactionsStaging(context.Context, []*indexermodels.Transaction) error {
+func (f *wfFakeChainStore) InsertTransactionsStaging(context.Context, []*indexermodels.Transaction) error {
+	f.insertTransactionsStagingCalls++
 	return nil
 }
 
-func (*wfFakeChainStore) InsertBlockSummariesStaging(context.Context, uint64, time.Time, uint32, map[string]uint32) error {
+func (f *wfFakeChainStore) InsertBlockSummariesStaging(_ context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
+	f.insertBlockSummariesStagingCalls++
+	f.lastBlockSummary = &indexermodels.BlockSummary{
+		Height:         height,
+		NumTxs:         numTxs,
+		TxCountsByType: txCountsByType,
+	}
 	return nil
 }
 
@@ -340,7 +361,7 @@ func (f *wfFakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels
 	return f.txs, nil
 }
 
-func (f *wfFakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.RpcAccount, error) {
+func (f *wfFakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.Account, error) {
 	return nil, nil
 }
 

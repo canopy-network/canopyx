@@ -61,10 +61,13 @@ type ChainStore interface {
 	InsertPoolsStaging(ctx context.Context, pools []*indexer.Pool) error
 	GetDexVolume24h(ctx context.Context) ([]DexVolumeStats, error)
 	GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]OrderBookLevel, error)
+	InsertAccountsStaging(ctx context.Context, accounts []*indexer.Account) error
+	GetGenesisData(ctx context.Context, height uint64) (string, error)
+	GetAccountCreatedHeight(ctx context.Context, address string) uint64
 	Close() error
 }
 
-// ReportsStore exposes the reports database helpers referenced by reporter activities.
+// ReportsStore exposes the report database helpers referenced by reporter activities.
 type ReportsStore interface {
 	DatabaseName() string
 	Close() error

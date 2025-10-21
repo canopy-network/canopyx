@@ -1,12 +1,12 @@
-package rpc
+package rpc_test
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
+	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,11 +15,11 @@ import (
 func TestRpcDexPrice_ToDexPrice(t *testing.T) {
 	tests := []struct {
 		name     string
-		rpcPrice RpcDexPrice
+		rpcPrice rpc.RpcDexPrice
 	}{
 		{
 			name: "valid dex price conversion",
-			rpcPrice: RpcDexPrice{
+			rpcPrice: rpc.RpcDexPrice{
 				LocalChainID:  1,
 				RemoteChainID: 2,
 				LocalPool:     1000000,
@@ -29,7 +29,7 @@ func TestRpcDexPrice_ToDexPrice(t *testing.T) {
 		},
 		{
 			name: "zero pools",
-			rpcPrice: RpcDexPrice{
+			rpcPrice: rpc.RpcDexPrice{
 				LocalChainID:  5,
 				RemoteChainID: 10,
 				LocalPool:     0,
@@ -64,7 +64,7 @@ func TestHTTPClient_DexPrice(t *testing.T) {
 		serverResponse interface{}
 		statusCode     int
 		wantErr        bool
-		validateResult func(*testing.T, RpcDexPrice)
+		validateResult func(*testing.T, rpc.RpcDexPrice)
 	}{
 		{
 			name:    "successful fetch",
@@ -78,7 +78,7 @@ func TestHTTPClient_DexPrice(t *testing.T) {
 			},
 			statusCode: http.StatusOK,
 			wantErr:    false,
-			validateResult: func(t *testing.T, price RpcDexPrice) {
+			validateResult: func(t *testing.T, price rpc.RpcDexPrice) {
 				assert.Equal(t, uint64(1), price.LocalChainID)
 				assert.Equal(t, uint64(2), price.RemoteChainID)
 				assert.Equal(t, uint64(1000000), price.LocalPool)
@@ -105,7 +105,7 @@ func TestHTTPClient_DexPrice(t *testing.T) {
 			},
 			statusCode: http.StatusOK,
 			wantErr:    false,
-			validateResult: func(t *testing.T, price RpcDexPrice) {
+			validateResult: func(t *testing.T, price rpc.RpcDexPrice) {
 				assert.Equal(t, uint64(0), price.LocalPool)
 				assert.Equal(t, uint64(0), price.RemotePool)
 				assert.Equal(t, uint64(0), price.E6ScaledPrice)
@@ -114,13 +114,12 @@ func TestHTTPClient_DexPrice(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			// Create test server
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "POST", r.Method)
 				assert.Equal(t, "/v1/query/dex-price", r.URL.Path)
 
-				// Verify request body contains chainId
 				var reqBody map[string]interface{}
 				err := json.NewDecoder(r.Body).Decode(&reqBody)
 				require.NoError(t, err)
@@ -130,14 +129,9 @@ func TestHTTPClient_DexPrice(t *testing.T) {
 				if tt.serverResponse != nil {
 					json.NewEncoder(w).Encode(tt.serverResponse)
 				}
-			}))
-			defer server.Close()
-
-			// Create client
-			client := NewHTTPWithOpts(Opts{
-				Endpoints: []string{server.URL},
-				Timeout:   0,
 			})
+
+			client := newTestRPCClient(handler)
 
 			// Execute
 			result, err := client.DexPrice(context.Background(), tt.chainID)
@@ -150,7 +144,7 @@ func TestHTTPClient_DexPrice(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, result)
 				if tt.validateResult != nil {
-					var rpcPrice RpcDexPrice
+					var rpcPrice rpc.RpcDexPrice
 					rpcPrice.LocalChainID = result.LocalChainID
 					rpcPrice.RemoteChainID = result.RemoteChainID
 					rpcPrice.LocalPool = result.LocalPool
@@ -171,7 +165,7 @@ func TestHTTPClient_DexPrices(t *testing.T) {
 		statusCode     int
 		wantErr        bool
 		wantCount      int
-		validateResult func(*testing.T, []*RpcDexPrice)
+		validateResult func(*testing.T, []*rpc.RpcDexPrice)
 	}{
 		{
 			name: "multiple prices",
@@ -194,7 +188,7 @@ func TestHTTPClient_DexPrices(t *testing.T) {
 			statusCode: http.StatusOK,
 			wantErr:    false,
 			wantCount:  2,
-			validateResult: func(t *testing.T, prices []*RpcDexPrice) {
+			validateResult: func(t *testing.T, prices []*rpc.RpcDexPrice) {
 				assert.Len(t, prices, 2)
 				assert.Equal(t, uint64(1), prices[0].LocalChainID)
 				assert.Equal(t, uint64(2), prices[0].RemoteChainID)
@@ -214,7 +208,7 @@ func TestHTTPClient_DexPrices(t *testing.T) {
 			statusCode: http.StatusOK,
 			wantErr:    false,
 			wantCount:  1,
-			validateResult: func(t *testing.T, prices []*RpcDexPrice) {
+			validateResult: func(t *testing.T, prices []*rpc.RpcDexPrice) {
 				assert.Len(t, prices, 1)
 				assert.Equal(t, uint64(1), prices[0].LocalChainID)
 				assert.Equal(t, uint64(2), prices[0].RemoteChainID)
@@ -236,24 +230,19 @@ func TestHTTPClient_DexPrices(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			// Create test server
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "POST", r.Method)
-				assert.Equal(t, "/v1/query/dex-prices", r.URL.Path)
+				assert.Equal(t, "/v1/query/dex-price", r.URL.Path)
 
 				w.WriteHeader(tt.statusCode)
 				if tt.serverResponse != nil {
 					json.NewEncoder(w).Encode(tt.serverResponse)
 				}
-			}))
-			defer server.Close()
-
-			// Create client
-			client := NewHTTPWithOpts(Opts{
-				Endpoints: []string{server.URL},
-				Timeout:   0,
 			})
+
+			client := newTestRPCClient(handler)
 
 			// Execute
 			results, err := client.DexPrices(context.Background())
@@ -269,9 +258,9 @@ func TestHTTPClient_DexPrices(t *testing.T) {
 
 				if tt.validateResult != nil {
 					// Convert DB models back to RPC models for validation
-					rpcPrices := make([]*RpcDexPrice, len(results))
+					rpcPrices := make([]*rpc.RpcDexPrice, len(results))
 					for i, r := range results {
-						rpcPrices[i] = &RpcDexPrice{
+						rpcPrices[i] = &rpc.RpcDexPrice{
 							LocalChainID:  r.LocalChainID,
 							RemoteChainID: r.RemoteChainID,
 							LocalPool:     r.LocalPool,
@@ -289,7 +278,7 @@ func TestHTTPClient_DexPrices(t *testing.T) {
 // TestHTTPClient_DexPrice_Retry tests the retry logic with circuit breaker.
 func TestHTTPClient_DexPrice_Retry(t *testing.T) {
 	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
 		if requestCount <= 2 {
 			// Fail first 2 requests
@@ -305,13 +294,11 @@ func TestHTTPClient_DexPrice_Retry(t *testing.T) {
 			"RemotePool":    float64(2000000),
 			"E6ScaledPrice": float64(500000),
 		})
-	}))
-	defer server.Close()
+	})
 
-	client := NewHTTPWithOpts(Opts{
-		Endpoints:       []string{server.URL, server.URL, server.URL},
-		Timeout:         0,
-		BreakerFailures: 5, // High threshold to allow retries
+	client := newTestRPCClientWithOpts(handler, rpc.Opts{
+		Endpoints:       []string{"http://mock1", "http://mock2", "http://mock3"},
+		BreakerFailures: 5,
 	})
 
 	result, err := client.DexPrice(context.Background(), 2)

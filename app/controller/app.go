@@ -23,10 +23,10 @@ import (
 
 const (
 	backlogLowWatermark  = int64(10)
-	backlogHighWatermark = int64(1000)
+	BacklogHighWatermark = int64(1000) // Exported for testing
 	queueRequestTimeout  = 2 * time.Second
 	queueStatsTTL        = 30 * time.Second // Increased from 10s to reduce Temporal API calls
-	scaleCooldown        = 60 * time.Second
+	ScaleCooldown        = 60 * time.Second // Exported for testing
 )
 
 // App reads the desired state from IndexerDB (chain table) and reconciles
@@ -417,7 +417,7 @@ func (a *App) populateChain(ctx context.Context, ch *Chain) {
 		zap.Float64("backlog_age_seconds", stats.BacklogAgeSeconds),
 		zap.Int64("queue_backlog_total", stats.PendingWorkflowTasks+stats.PendingActivityTasks),
 	)
-	ch.Replicas = a.desiredReplicas(ch, stats)
+	ch.Replicas = a.DesiredReplicas(ch, stats)
 
 	// Update queue health status based on backlog
 	a.updateQueueHealthStatus(ctx, ch.ID, computeQueueHealthStatus(stats), "")
@@ -433,9 +433,9 @@ func computeQueueHealthStatus(stats QueueStats) string {
 	switch {
 	case backlog < backlogLowWatermark:
 		return "healthy"
-	case backlog >= backlogLowWatermark && backlog < backlogHighWatermark:
+	case backlog >= backlogLowWatermark && backlog < BacklogHighWatermark:
 		return "warning"
-	case backlog >= backlogHighWatermark:
+	case backlog >= BacklogHighWatermark:
 		return "critical"
 	default:
 		return "unknown"
@@ -467,10 +467,10 @@ func (a *App) updateQueueHealthStatus(ctx context.Context, chainID, status, cust
 				totalBacklog, backlogLowWatermark, liveBacklog, liveBacklogAge, histBacklog, histBacklogAge)
 		case "warning":
 			message = fmt.Sprintf("Total backlog: %d tasks (between %d and %d) | Live queue: %d tasks (age: %.0fs) | Historical queue: %d tasks (age: %.0fs)",
-				totalBacklog, backlogLowWatermark, backlogHighWatermark, liveBacklog, liveBacklogAge, histBacklog, histBacklogAge)
+				totalBacklog, backlogLowWatermark, BacklogHighWatermark, liveBacklog, liveBacklogAge, histBacklog, histBacklogAge)
 		case "critical":
 			message = fmt.Sprintf("Total backlog: %d tasks (above high watermark of %d) | Live queue: %d tasks (age: %.0fs) | Historical queue: %d tasks (age: %.0fs)",
-				totalBacklog, backlogHighWatermark, liveBacklog, liveBacklogAge, histBacklog, histBacklogAge)
+				totalBacklog, BacklogHighWatermark, liveBacklog, liveBacklogAge, histBacklog, histBacklogAge)
 		default:
 			message = "Queue status unknown"
 		}
@@ -633,7 +633,9 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 	return stats, nil
 }
 
-func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
+// DesiredReplicas calculates the desired number of replicas based on queue stats and chain configuration.
+// Exported for testing.
+func (a *App) DesiredReplicas(ch *Chain, stats QueueStats) int32 {
 	minReplicas := ch.MinReplicas
 	maxReplicas := ch.MaxReplicas
 	if maxReplicas < minReplicas {
@@ -674,13 +676,13 @@ func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
 	var desired, calculated int32
 	ratio := 0.0
 	switch {
-	case backlog >= backlogHighWatermark:
+	case backlog >= BacklogHighWatermark:
 		desired = maxReplicas
 	case backlog <= backlogLowWatermark:
 		desired = minReplicas
 	default:
 		span := float64(maxReplicas - minReplicas)
-		ratio = float64(backlog-backlogLowWatermark) / float64(backlogHighWatermark-backlogLowWatermark)
+		ratio = float64(backlog-backlogLowWatermark) / float64(BacklogHighWatermark-backlogLowWatermark)
 		if ratio < 0 {
 			ratio = 0
 		} else if ratio > 1 {
@@ -704,7 +706,7 @@ func (a *App) desiredReplicas(ch *Chain, stats QueueStats) int32 {
 		ch.Hysteresis.LastDecisionReplicas = desired
 		ch.Hysteresis.LastChangeTime = now
 	} else if desired != ch.Hysteresis.LastDecisionReplicas {
-		if now.Sub(ch.Hysteresis.LastChangeTime) < scaleCooldown {
+		if now.Sub(ch.Hysteresis.LastChangeTime) < ScaleCooldown {
 			desired = ch.Hysteresis.LastDecisionReplicas
 			cooldownActive = true
 		} else {

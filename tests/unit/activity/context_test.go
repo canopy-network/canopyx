@@ -1,8 +1,10 @@
-package activity
+package activity_test
 
 import (
 	"runtime"
 	"testing"
+
+	"github.com/canopy-network/canopyx/pkg/indexer/activity"
 )
 
 func TestSchedulerParallelism(t *testing.T) {
@@ -40,7 +42,7 @@ func TestSchedulerParallelism(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := schedulerParallelism(tt.override)
+			got := activity.SchedulerParallelism(tt.override)
 
 			// For default case, verify it's within expected range
 			if tt.override == 0 {
@@ -119,7 +121,7 @@ func TestSchedulerQueueSize(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := schedulerQueueSize(tt.parallelism, tt.batchSize)
+			got := activity.SchedulerQueueSize(tt.parallelism, tt.batchSize)
 
 			if got < tt.wantMin {
 				t.Errorf("schedulerQueueSize(%v, %v) = %v, want at least %v",
@@ -148,7 +150,7 @@ func TestSchedulerQueueSizeBounds(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		got := schedulerQueueSize(tc.parallelism, tc.batchSize)
+		got := activity.SchedulerQueueSize(tc.parallelism, tc.batchSize)
 
 		// Queue must always be within bounds
 		if got < 4096 {
@@ -180,12 +182,12 @@ func TestSchedulerPoolSizeIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &Context{
+			ctx := &activity.Context{
 				SchedulerMaxParallelism: tt.override,
 			}
 
 			got := ctx.SchedulerPoolSize()
-			expected := schedulerParallelism(tt.override)
+			expected := activity.SchedulerParallelism(tt.override)
 
 			if got != expected {
 				t.Errorf("SchedulerPoolSize() = %v, want %v", got, expected)
@@ -197,7 +199,7 @@ func TestSchedulerPoolSizeIntegration(t *testing.T) {
 // BenchmarkSchedulerParallelism benchmarks the parallelism calculation
 func BenchmarkSchedulerParallelism(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_ = schedulerParallelism(0)
+		_ = activity.SchedulerParallelism(0)
 	}
 }
 
@@ -207,6 +209,6 @@ func BenchmarkSchedulerQueueSize(b *testing.B) {
 	batchSize := 750000
 
 	for i := 0; i < b.N; i++ {
-		_ = schedulerQueueSize(parallelism, batchSize)
+		_ = activity.SchedulerQueueSize(parallelism, batchSize)
 	}
 }

@@ -8,6 +8,13 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
+// kubectl get pods
+
+// canopyx-indexer-1
+// canopyx-indexer-2
+// ...
+// canopyx-indexer-n
+
 type Chain struct {
 	ChainID      string    `json:"chain_id" ch:"chain_id"` // ORDER BY set via builder
 	ChainName    string    `json:"chain_name" ch:"chain_name"`

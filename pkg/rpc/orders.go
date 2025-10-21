@@ -24,8 +24,8 @@ type RpcOrder struct {
 	Status          string  `json:"status"`          // Order status: "open", "filled", "cancelled", "expired"
 }
 
-// ordersResponse wraps the paginated response from the orders endpoint.
-type ordersResponse struct {
+// OrdersResponse wraps the paginated response from the orders endpoint.
+type OrdersResponse struct {
 	Results    []*RpcOrder `json:"results"`
 	PageNumber int         `json:"pageNumber"`
 	PerPage    int         `json:"perPage"`
@@ -53,7 +53,7 @@ func (c *HTTPClient) OrdersByHeight(ctx context.Context, height uint64, chainID 
 	}
 
 	// Fetch first page to determine total pages
-	var firstPage ordersResponse
+	var firstPage OrdersResponse
 	if err := c.doJSON(ctx, http.MethodPost, ordersByHeightPath, args, &firstPage); err != nil {
 		return nil, fmt.Errorf("fetch orders page 1 at height %d, chainId %d: %w", height, chainID, err)
 	}
@@ -83,7 +83,7 @@ func (c *HTTPClient) OrdersByHeight(ctx context.Context, height uint64, chainID 
 				"perPage":    1000,
 			}
 
-			var pageResp ordersResponse
+			var pageResp OrdersResponse
 			if err := c.doJSON(ctx, http.MethodPost, ordersByHeightPath, pageArgs, &pageResp); err != nil {
 				resultsCh <- pageResult{nil, fmt.Errorf("fetch orders page %d at height %d, chainId %d: %w", pageNum, height, chainID, err)}
 				return

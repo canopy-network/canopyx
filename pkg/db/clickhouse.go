@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -147,6 +148,7 @@ func NewChainDb(ctx context.Context, logger *zap.Logger, chainId string) (*Chain
 	return chainDbWrapper, nil
 }
 
+// SanitizeDbName sanitizes the provided database name to be compatible with ClickHouse.
 func SanitizeDbName(id string) string {
 	s := strings.ToLower(id)
 	s = strings.ReplaceAll(s, "-", "_")
@@ -178,37 +180,37 @@ func extractHost(dsn string) string {
 	return dsn
 }
 
-// Helper method to execute raw SQL queries
+// Exec Helper method to execute raw SQL queries
 func (c *Client) Exec(ctx context.Context, query string, args ...interface{}) error {
 	return c.Db.Exec(ctx, query, args...)
 }
 
-// Helper method to query a single row
+// QueryRow Helper method to query a single row
 func (c *Client) QueryRow(ctx context.Context, query string, args ...interface{}) driver.Row {
 	return c.Db.QueryRow(ctx, query, args...)
 }
 
-// Helper method to query multiple rows
+// Query Helper method to query multiple rows
 func (c *Client) Query(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 	return c.Db.Query(ctx, query, args...)
 }
 
-// Helper method to select into a slice
+// Select Helper method to select into a slice
 func (c *Client) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	return c.Db.Select(ctx, dest, query, args...)
 }
 
-// Helper method for batch inserts
+// PrepareBatch Helper method for batch inserts
 func (c *Client) PrepareBatch(ctx context.Context, query string) (driver.Batch, error) {
 	return c.Db.PrepareBatch(ctx, query)
 }
 
-// Helper method to close the connection
+// Close Helper method to close the connection
 func (c *Client) Close() error {
 	return c.Db.Close()
 }
 
-// Helper to check if error is no rows
+// IsNoRows Helper to check if error is no rows
 func IsNoRows(err error) bool {
-	return err == sql.ErrNoRows
+	return errors.Is(err, sql.ErrNoRows)
 }

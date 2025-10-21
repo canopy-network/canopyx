@@ -1,9 +1,10 @@
-package activity
+package activity_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/canopy-network/canopyx/pkg/indexer/activity"
 	"testing"
 	"time"
 
@@ -47,12 +48,12 @@ func (m *mockGenesisRPCClient) TxsByHeight(ctx context.Context, height uint64) (
 	return args.Get(0).([]*indexermodels.Transaction), args.Error(1)
 }
 
-func (m *mockGenesisRPCClient) AccountsByHeight(ctx context.Context, height uint64) ([]*rpc.RpcAccount, error) {
+func (m *mockGenesisRPCClient) AccountsByHeight(ctx context.Context, height uint64) ([]*rpc.Account, error) {
 	args := m.Called(ctx, height)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*rpc.RpcAccount), args.Error(1)
+	return args.Get(0).([]*rpc.Account), args.Error(1)
 }
 
 func (m *mockGenesisRPCClient) GetGenesisState(ctx context.Context, height uint64) (*rpc.GenesisState, error) {
@@ -96,6 +97,10 @@ type mockGenesisChainDB struct {
 	genesisData  string
 }
 
+func (m *mockGenesisChainDB) InsertAccountsStaging(ctx context.Context, accounts []*indexermodels.Account) error {
+	return nil
+}
+
 func (m *mockGenesisChainDB) DatabaseName() string { return m.databaseName }
 func (m *mockGenesisChainDB) ChainKey() string     { return m.chainID }
 
@@ -135,6 +140,14 @@ func (m *mockGenesisChainDB) DeleteTransactions(ctx context.Context, height uint
 func (m *mockGenesisChainDB) Exec(ctx context.Context, query string, args ...any) error {
 	mockArgs := m.Called(ctx, query, args)
 	return mockArgs.Error(0)
+}
+
+func (m *mockGenesisChainDB) GetGenesisData(_ context.Context, _ uint64) (string, error) {
+	return m.genesisData, nil
+}
+
+func (m *mockGenesisChainDB) GetAccountCreatedHeight(context.Context, string) uint64 {
+	return 0
 }
 
 func (m *mockGenesisChainDB) QueryBlocks(ctx context.Context, height uint64, limit int, desc bool) ([]indexermodels.Block, error) {
@@ -265,7 +278,7 @@ func TestEnsureGenesisCached_FirstTime(t *testing.T) {
 	// Mock genesis state
 	genesis := &rpc.GenesisState{
 		Time: 1234567890,
-		Accounts: []*rpc.RpcAccount{
+		Accounts: []*rpc.Account{
 			{Address: "0xgenesis1", Amount: 1000000},
 			{Address: "0xgenesis2", Amount: 2000000},
 			{Address: "0xgenesis3", Amount: 3000000},
@@ -364,7 +377,7 @@ func TestEnsureGenesisCached_RPCFailure(t *testing.T) {
 	chainsMap.Store("chain-A", mockChainDB)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -401,9 +414,9 @@ func TestEnsureGenesisCached_LargeGenesis(t *testing.T) {
 
 	// Create large genesis state - 100,000 accounts
 	numAccounts := 100000
-	accounts := make([]*rpc.RpcAccount, numAccounts)
+	accounts := make([]*rpc.Account, numAccounts)
 	for i := 0; i < numAccounts; i++ {
-		accounts[i] = &rpc.RpcAccount{
+		accounts[i] = &rpc.Account{
 			Address: "0x" + string(rune(i)),
 			Amount:  uint64(i * 1000),
 		}
@@ -464,7 +477,7 @@ func TestEnsureGenesisCached_InvalidChain(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -497,7 +510,7 @@ func TestEnsureGenesisCached_ConcurrentCalls(t *testing.T) {
 
 	genesis := &rpc.GenesisState{
 		Time: 1234567890,
-		Accounts: []*rpc.RpcAccount{
+		Accounts: []*rpc.Account{
 			{Address: "0x1", Amount: 1000},
 		},
 	}

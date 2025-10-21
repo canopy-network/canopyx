@@ -1,7 +1,8 @@
-package activity
+package activity_test
 
 import (
 	"context"
+	"github.com/canopy-network/canopyx/pkg/indexer/activity"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func TestIndexTransactions_MixedTypes(t *testing.T) {
 		txs:   txs,
 	}
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -203,7 +204,7 @@ func TestIndexTransactions_CountsByType(t *testing.T) {
 				txs:   tt.txs,
 			}
 
-			activityCtx := &Context{
+			activityCtx := &activity.Context{
 				Logger:     logger,
 				IndexerDB:  adminStore,
 				ChainsDB:   chainsMap,
@@ -253,7 +254,7 @@ func TestIndexTransactions_EmptyBlock(t *testing.T) {
 		txs:   []*indexermodels.Transaction{},
 	}
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -307,7 +308,7 @@ func TestIndexTransactions_SingleType(t *testing.T) {
 		txs:   txs,
 	}
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -364,7 +365,7 @@ func TestIndexTransactions_AllTypes(t *testing.T) {
 		txs:   txs,
 	}
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -426,7 +427,7 @@ func TestIndexTransactions_HeightTimePopulation(t *testing.T) {
 		txs:   txs,
 	}
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -465,6 +466,9 @@ type testChainStore struct {
 	hasBlock                bool
 	deletedBlocks           []uint64
 	deletedTransactions     []uint64
+	insertedAccounts        []*indexermodels.Account
+	accountCreatedHeights   map[string]uint64
+	genesisJSON             string
 }
 
 func (f *testChainStore) DatabaseName() string { return f.databaseName }
@@ -525,6 +529,22 @@ func (f *testChainStore) DeleteTransactions(_ context.Context, height uint64) er
 
 func (f *testChainStore) Exec(_ context.Context, query string, args ...any) error {
 	return nil
+}
+
+func (f *testChainStore) InsertAccountsStaging(_ context.Context, accounts []*indexermodels.Account) error {
+	f.insertedAccounts = append(f.insertedAccounts, accounts...)
+	return nil
+}
+
+func (f *testChainStore) GetGenesisData(_ context.Context, _ uint64) (string, error) {
+	return f.genesisJSON, nil
+}
+
+func (f *testChainStore) GetAccountCreatedHeight(_ context.Context, address string) uint64 {
+	if f.accountCreatedHeights == nil {
+		return 0
+	}
+	return f.accountCreatedHeights[address]
 }
 
 func (*testChainStore) QueryBlocks(context.Context, uint64, int, bool) ([]indexermodels.Block, error) {

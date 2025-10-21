@@ -1,9 +1,10 @@
-package activity
+package activity_test
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/canopy-network/canopyx/pkg/indexer/activity"
 	"testing"
 	"time"
 
@@ -83,6 +84,24 @@ func (m *MockChainStore) DeleteTransactions(ctx context.Context, height uint64) 
 func (m *MockChainStore) Exec(ctx context.Context, query string, args ...any) error {
 	callArgs := m.Called(ctx, query, args)
 	return callArgs.Error(0)
+}
+
+func (m *MockChainStore) InsertAccountsStaging(ctx context.Context, accounts []*indexer.Account) error {
+	args := m.Called(ctx, accounts)
+	return args.Error(0)
+}
+
+func (m *MockChainStore) GetGenesisData(ctx context.Context, height uint64) (string, error) {
+	args := m.Called(ctx, height)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockChainStore) GetAccountCreatedHeight(ctx context.Context, address string) uint64 {
+	args := m.Called(ctx, address)
+	if args.Get(0) == nil {
+		return 0
+	}
+	return args.Get(0).(uint64)
 }
 
 func (m *MockChainStore) QueryBlocks(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Block, error) {
@@ -257,7 +276,7 @@ func TestPromoteData_Success(t *testing.T) {
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: chainsDB,
 	}
@@ -290,7 +309,7 @@ func TestPromoteData_InvalidEntity(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: xsync.NewMap[string, db.ChainStore](),
 	}
@@ -321,7 +340,7 @@ func TestPromoteData_DatabaseError(t *testing.T) {
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: chainsDB,
 	}
@@ -353,7 +372,7 @@ func TestPromoteData_ChainNotFound(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	// Create activity context with empty chains map
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: xsync.NewMap[string, db.ChainStore](),
 	}
@@ -384,7 +403,7 @@ func TestCleanPromotedData_Success(t *testing.T) {
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: chainsDB,
 	}
@@ -417,7 +436,7 @@ func TestCleanPromotedData_InvalidEntity(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: xsync.NewMap[string, db.ChainStore](),
 	}
@@ -448,7 +467,7 @@ func TestCleanPromotedData_NonCriticalFailure(t *testing.T) {
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: chainsDB,
 	}
@@ -490,7 +509,7 @@ func TestPromoteData_AllEntities(t *testing.T) {
 			chainsDB.Store("test-chain", mockChainStore)
 
 			// Create activity context
-			activityCtx := &Context{
+			activityCtx := &activity.Context{
 				Logger:   logger,
 				ChainsDB: chainsDB,
 			}
@@ -532,7 +551,7 @@ func TestCleanPromotedData_AllEntities(t *testing.T) {
 			chainsDB.Store("test-chain", mockChainStore)
 
 			// Create activity context
-			activityCtx := &Context{
+			activityCtx := &activity.Context{
 				Logger:   logger,
 				ChainsDB: chainsDB,
 			}
@@ -572,7 +591,7 @@ func BenchmarkPromoteData(b *testing.B) {
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: chainsDB,
 	}
@@ -604,7 +623,7 @@ func BenchmarkCleanPromotedData(b *testing.B) {
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:   logger,
 		ChainsDB: chainsDB,
 	}

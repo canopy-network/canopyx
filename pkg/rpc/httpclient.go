@@ -14,12 +14,12 @@ import (
 )
 
 const (
-	headPath           = "/v1/query/height"
-	blockByHeightPath  = "/v1/query/block-by-height"
-	txsByHeightPath    = "/v1/query/txs-by-height"
-	eventsByHeightPath = "/v1/query/events-by-height"
-	dexPricePath       = "/v1/query/dex-price"
-	dexPricesPath      = "/v1/query/dex-prices"
+	headPath             = "/v1/query/height"
+	accountsByHeightPath = "/v1/query/accounts"
+	blockByHeightPath    = "/v1/query/block-by-height"
+	txsByHeightPath      = "/v1/query/txs-by-height"
+	eventsByHeightPath   = "/v1/query/events-by-height"
+	dexPricePath         = "/v1/query/dex-price"
 )
 
 // HTTPClient is a wrapper around an http.Client that implements a circuit-breaker and token-bucket.
@@ -50,6 +50,7 @@ type Opts struct {
 	Burst           int
 	BreakerFailures int
 	BreakerCooldown time.Duration
+	HTTPClient      *http.Client
 }
 
 // NewHTTPWithOpts creates a new HTTPClient with the given options.
@@ -70,9 +71,16 @@ func NewHTTPWithOpts(o Opts) *HTTPClient {
 		o.BreakerCooldown = 5 * time.Second
 	}
 
+	client := o.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: o.Timeout}
+	} else if client.Timeout == 0 {
+		client.Timeout = o.Timeout
+	}
+
 	c := &HTTPClient{
 		endpoints:        utils.Dedup(o.Endpoints),
-		client:           &http.Client{Timeout: o.Timeout},
+		client:           client,
 		maxTokens:        int64(o.Burst),
 		refillEvery:      time.Second / time.Duration(o.RPS),
 		failures:         map[string]int{},
@@ -221,10 +229,10 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, payload an
 		}
 
 		// Success: drain+close (close error rarely actionable; log if you want).
-		if cerr := utils.DrainAndClose(resp.Body); cerr != nil && lastErr == nil {
-			lastErr = cerr
+		if cerr := utils.DrainAndClose(resp.Body); cerr != nil {
+			return cerr
 		}
-		return lastErr
+		return nil
 	}
 
 	return lastErr
@@ -244,7 +252,7 @@ type pageResp[T any] struct {
 }
 
 // ListPaged lists all pages of a given path
-func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args map[string]any) ([]T, error) {
+func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args QueryByHeightRequest) ([]T, error) {
 	var first pageResp[T]
 	if err := c.doJSON(ctx, http.MethodPost, path, args, &first); err != nil {
 		return nil, err
@@ -262,7 +270,7 @@ func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args map[
 	for p := 2; p <= first.TotalPages; p++ {
 		go func(page int) {
 			var pr pageResp[T]
-			payload := map[string]any{}
+			payload := QueryByHeightRequest{}
 			for k, v := range args {
 				payload[k] = v
 			}

@@ -43,9 +43,9 @@ type Transaction struct {
 	TxHash string `json:"txHash"`
 }
 
-// detectMessageType infers message type from RPC transaction data.
+// DetectMessageType infers message type from RPC transaction data.
 // This examines the messageType field and message structure to determine the type.
-func detectMessageType(msgType string, msg map[string]interface{}) MessageType {
+func DetectMessageType(msgType string, msg map[string]interface{}) MessageType {
 	// Normalize the message type string
 	switch msgType {
 	case "send", "Send", "SEND":
@@ -160,72 +160,72 @@ func detectMessageType(msgType string, msg map[string]interface{}) MessageType {
 
 // parseMessage converts RPC transaction message into a typed Message interface.
 // This handles all supported transaction types and falls back to UnknownMessage for unsupported types.
-func parseMessage(msgType string, msgData map[string]interface{}) (Message, error) {
-	messageType := detectMessageType(msgType, msgData)
+func ParseMessage(msgType string, msgData map[string]interface{}) (Message, error) {
+	messageType := DetectMessageType(msgType, msgData)
 
 	switch messageType {
 	case MsgTypeSend:
 		return &SendMessage{
-			FromAddress: getStringField(msgData, "fromAddress"),
-			ToAddress:   getStringField(msgData, "toAddress"),
-			Amount:      uint64(getIntField(msgData, "amount")),
-			Memo:        getStringField(msgData, "memo"),
+			FromAddress: GetStringField(msgData, "fromAddress"),
+			ToAddress:   GetStringField(msgData, "toAddress"),
+			Amount:      uint64(GetIntField(msgData, "amount")),
+			Memo:        GetStringField(msgData, "memo"),
 		}, nil
 
 	case MsgTypeDelegate:
 		return &DelegateMessage{
-			Delegator:        getStringField(msgData, "delegator"),
-			ValidatorAddress: getStringField(msgData, "validatorAddress"),
-			Amount:           uint64(getIntField(msgData, "amount")),
-			Memo:             getStringField(msgData, "memo"),
+			Delegator:        GetStringField(msgData, "delegator"),
+			ValidatorAddress: GetStringField(msgData, "validatorAddress"),
+			Amount:           uint64(GetIntField(msgData, "amount")),
+			Memo:             GetStringField(msgData, "memo"),
 		}, nil
 
 	case MsgTypeUndelegate:
 		return &UndelegateMessage{
-			Delegator:        getStringField(msgData, "delegator"),
-			ValidatorAddress: getStringField(msgData, "validatorAddress"),
-			Amount:           uint64(getIntField(msgData, "amount")),
+			Delegator:        GetStringField(msgData, "delegator"),
+			ValidatorAddress: GetStringField(msgData, "validatorAddress"),
+			Amount:           uint64(GetIntField(msgData, "amount")),
 		}, nil
 
 	case MsgTypeStake:
-		lockPeriod := getOptionalUint32Field(msgData, "lockPeriod")
+		lockPeriod := GetOptionalUint32Field(msgData, "lockPeriod")
 		return &StakeMessage{
-			Staker:     getStringField(msgData, "staker"),
-			Pool:       getStringField(msgData, "pool"),
-			Amount:     uint64(getIntField(msgData, "amount")),
+			Staker:     GetStringField(msgData, "staker"),
+			Pool:       GetStringField(msgData, "pool"),
+			Amount:     uint64(GetIntField(msgData, "amount")),
 			LockPeriod: lockPeriod,
 		}, nil
 
 	case MsgTypeUnstake:
 		return &UnstakeMessage{
-			Staker: getStringField(msgData, "staker"),
-			Pool:   getStringField(msgData, "pool"),
-			Amount: uint64(getIntField(msgData, "amount")),
+			Staker: GetStringField(msgData, "staker"),
+			Pool:   GetStringField(msgData, "pool"),
+			Amount: uint64(GetIntField(msgData, "amount")),
 		}, nil
 
 	case MsgTypeVote:
 		return &VoteMessage{
-			Voter:      getStringField(msgData, "voter"),
-			ProposalID: uint64(getIntField(msgData, "proposalId")),
-			Option:     getStringField(msgData, "option"),
-			Memo:       getStringField(msgData, "memo"),
+			Voter:      GetStringField(msgData, "voter"),
+			ProposalID: uint64(GetIntField(msgData, "proposalId")),
+			Option:     GetStringField(msgData, "option"),
+			Memo:       GetStringField(msgData, "memo"),
 		}, nil
 
 	case MsgTypeProposal:
 		return &ProposalMessage{
-			Proposer:    getStringField(msgData, "proposer"),
-			Title:       getStringField(msgData, "title"),
-			Description: getStringField(msgData, "description"),
-			Deposit:     uint64(getIntField(msgData, "deposit")),
+			Proposer:    GetStringField(msgData, "proposer"),
+			Title:       GetStringField(msgData, "title"),
+			Description: GetStringField(msgData, "description"),
+			Deposit:     uint64(GetIntField(msgData, "deposit")),
 		}, nil
 
 	case MsgTypeContract:
-		value := getOptionalUint64Field(msgData, "value")
+		value := GetOptionalUint64Field(msgData, "value")
 		return &ContractMessage{
-			Caller:          getStringField(msgData, "caller"),
-			ContractAddress: getStringField(msgData, "contractAddress"),
-			Method:          getStringField(msgData, "method"),
-			CallData:        getStringField(msgData, "callData"),
+			Caller:          GetStringField(msgData, "caller"),
+			ContractAddress: GetStringField(msgData, "contractAddress"),
+			Method:          GetStringField(msgData, "method"),
+			CallData:        GetStringField(msgData, "callData"),
 			Value:           value,
 		}, nil
 
@@ -235,103 +235,103 @@ func parseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 			params = p
 		}
 		return &SystemMessage{
-			Executor: getStringField(msgData, "executor"),
-			Action:   getStringField(msgData, "action"),
+			Executor: GetStringField(msgData, "executor"),
+			Action:   GetStringField(msgData, "action"),
 			Params:   params,
 		}, nil
 
 	case MsgTypePause:
 		return &PauseMessage{
-			Address: getStringField(msgData, "address"),
+			Address: GetStringField(msgData, "address"),
 		}, nil
 
 	case MsgTypeUnpause:
 		return &UnpauseMessage{
-			Address: getStringField(msgData, "address"),
+			Address: GetStringField(msgData, "address"),
 		}, nil
 
 	case MsgTypeChangeParameter:
 		return &ChangeParameterMessage{
-			ParamKey:   getStringField(msgData, "param_key"),
-			ParamValue: getStringField(msgData, "param_value"),
-			Signer:     getStringField(msgData, "signer"),
+			ParamKey:   GetStringField(msgData, "param_key"),
+			ParamValue: GetStringField(msgData, "param_value"),
+			Signer:     GetStringField(msgData, "signer"),
 		}, nil
 
 	case MsgTypeDAOTransfer:
 		return &DAOTransferMessage{
-			FromAddress: getStringField(msgData, "from_address"),
-			ToAddress:   getStringField(msgData, "to_address"),
-			Amount:      uint64(getIntField(msgData, "amount")),
+			FromAddress: GetStringField(msgData, "from_address"),
+			ToAddress:   GetStringField(msgData, "to_address"),
+			Amount:      uint64(GetIntField(msgData, "amount")),
 		}, nil
 
 	case MsgTypeCertificateResults:
 		return &CertificateResultsMessage{
-			Signer:          getStringField(msgData, "signer"),
-			CertificateData: getStringField(msgData, "certificate_data"),
+			Signer:          GetStringField(msgData, "signer"),
+			CertificateData: GetStringField(msgData, "certificate_data"),
 		}, nil
 
 	case MsgTypeSubsidy:
 		return &SubsidyMessage{
-			FromAddress: getStringField(msgData, "from_address"),
-			ToAddress:   getStringField(msgData, "to_address"),
-			Amount:      uint64(getIntField(msgData, "amount")),
-			CommitteeID: uint64(getIntField(msgData, "committee_id")),
+			FromAddress: GetStringField(msgData, "from_address"),
+			ToAddress:   GetStringField(msgData, "to_address"),
+			Amount:      uint64(GetIntField(msgData, "amount")),
+			CommitteeID: uint64(GetIntField(msgData, "committee_id")),
 		}, nil
 
 	case MsgTypeCreateOrder:
 		return &CreateOrderMessage{
-			Signer:     getStringField(msgData, "signer"),
-			OrderID:    getStringField(msgData, "order_id"),
-			ChainID:    uint64(getIntField(msgData, "chain_id")),
-			SellAmount: uint64(getIntField(msgData, "sell_amount")),
-			BuyAmount:  uint64(getIntField(msgData, "buy_amount")),
+			Signer:     GetStringField(msgData, "signer"),
+			OrderID:    GetStringField(msgData, "order_id"),
+			ChainID:    uint64(GetIntField(msgData, "chain_id")),
+			SellAmount: uint64(GetIntField(msgData, "sell_amount")),
+			BuyAmount:  uint64(GetIntField(msgData, "buy_amount")),
 			Price:      getFloat64Field(msgData, "price"),
 		}, nil
 
 	case MsgTypeEditOrder:
 		return &EditOrderMessage{
-			Signer:  getStringField(msgData, "signer"),
-			OrderID: getStringField(msgData, "order_id"),
+			Signer:  GetStringField(msgData, "signer"),
+			OrderID: GetStringField(msgData, "order_id"),
 			Price:   getFloat64Field(msgData, "price"),
 		}, nil
 
 	case MsgTypeDeleteOrder:
 		return &DeleteOrderMessage{
-			Signer:  getStringField(msgData, "signer"),
-			OrderID: getStringField(msgData, "order_id"),
+			Signer:  GetStringField(msgData, "signer"),
+			OrderID: GetStringField(msgData, "order_id"),
 		}, nil
 
 	case MsgTypeDexLimitOrder:
 		return &DexLimitOrderMessage{
-			From:       getStringField(msgData, "from"),
-			ChainID:    uint64(getIntField(msgData, "chain_id")),
-			SellAmount: uint64(getIntField(msgData, "sell_amount")),
-			BuyAmount:  uint64(getIntField(msgData, "buy_amount")),
+			From:       GetStringField(msgData, "from"),
+			ChainID:    uint64(GetIntField(msgData, "chain_id")),
+			SellAmount: uint64(GetIntField(msgData, "sell_amount")),
+			BuyAmount:  uint64(GetIntField(msgData, "buy_amount")),
 			Price:      getFloat64Field(msgData, "price"),
 		}, nil
 
 	case MsgTypeDexLiquidityDeposit:
 		return &DexLiquidityDepositMessage{
-			From:    getStringField(msgData, "from"),
-			ChainID: uint64(getIntField(msgData, "chain_id")),
-			Amount:  uint64(getIntField(msgData, "amount")),
+			From:    GetStringField(msgData, "from"),
+			ChainID: uint64(GetIntField(msgData, "chain_id")),
+			Amount:  uint64(GetIntField(msgData, "amount")),
 		}, nil
 
 	case MsgTypeDexLiquidityWithdraw:
 		return &DexLiquidityWithdrawMessage{
-			From:    getStringField(msgData, "from"),
-			ChainID: uint64(getIntField(msgData, "chain_id")),
-			Amount:  uint64(getIntField(msgData, "amount")),
+			From:    GetStringField(msgData, "from"),
+			ChainID: uint64(GetIntField(msgData, "chain_id")),
+			Amount:  uint64(GetIntField(msgData, "amount")),
 		}, nil
 
 	default:
 		// UnknownMessage fallback - try to extract signer from common fields
-		signer := getStringField(msgData, "sender")
+		signer := GetStringField(msgData, "sender")
 		if signer == "" {
-			signer = getStringField(msgData, "from")
+			signer = GetStringField(msgData, "from")
 		}
 		if signer == "" {
-			signer = getStringField(msgData, "fromAddress")
+			signer = GetStringField(msgData, "fromAddress")
 		}
 		return &UnknownMessage{
 			Signer: signer,
@@ -342,7 +342,7 @@ func parseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 
 // Helper functions to safely extract fields from map[string]interface{}
 
-func getStringField(m map[string]interface{}, key string) string {
+func GetStringField(m map[string]interface{}, key string) string {
 	if v, ok := m[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -351,7 +351,7 @@ func getStringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
-func getIntField(m map[string]interface{}, key string) int {
+func GetIntField(m map[string]interface{}, key string) int {
 	if v, ok := m[key]; ok {
 		switch val := v.(type) {
 		case int:
@@ -365,7 +365,7 @@ func getIntField(m map[string]interface{}, key string) int {
 	return 0
 }
 
-func getOptionalUint32Field(m map[string]interface{}, key string) *uint32 {
+func GetOptionalUint32Field(m map[string]interface{}, key string) *uint32 {
 	if v, ok := m[key]; ok {
 		switch val := v.(type) {
 		case int:
@@ -384,7 +384,7 @@ func getOptionalUint32Field(m map[string]interface{}, key string) *uint32 {
 	return nil
 }
 
-func getOptionalUint64Field(m map[string]interface{}, key string) *uint64 {
+func GetOptionalUint64Field(m map[string]interface{}, key string) *uint64 {
 	if v, ok := m[key]; ok {
 		switch val := v.(type) {
 		case int:
@@ -452,7 +452,7 @@ func (tx *Transaction) ToTransaction() (*indexer.Transaction, error) {
 	}
 
 	// Parse message into typed interface
-	msg, err := parseMessage(tx.MessageType, msgMap)
+	msg, err := ParseMessage(tx.MessageType, msgMap)
 	if err != nil {
 		return nil, fmt.Errorf("parse message: %w", err)
 	}

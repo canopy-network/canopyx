@@ -52,9 +52,9 @@ func (c *Context) NewChainDb(ctx context.Context, chainID string) (db.ChainStore
 // Pool size defaults to four workers per CPU (with sensible caps) but can be overridden.
 func (c *Context) schedulerBatchPool(batchSize int) pond.Pool {
 	c.schedulerPoolOnce.Do(func() {
-		maxWorkers := schedulerParallelism(c.SchedulerMaxParallelism)
+		maxWorkers := SchedulerParallelism(c.SchedulerMaxParallelism)
 		c.schedulerPoolSize = maxWorkers
-		queueSize := schedulerQueueSize(maxWorkers, batchSize)
+		queueSize := SchedulerQueueSize(maxWorkers, batchSize)
 		c.schedulerPool = pond.NewPool(
 			maxWorkers,
 			pond.WithQueueSize(queueSize),
@@ -69,10 +69,11 @@ func (c *Context) SchedulerPoolSize() int {
 	if c.schedulerPoolSize != 0 {
 		return c.schedulerPoolSize
 	}
-	return schedulerParallelism(c.SchedulerMaxParallelism)
+	return SchedulerParallelism(c.SchedulerMaxParallelism)
 }
 
-func schedulerParallelism(override int) int {
+// SchedulerParallelism calculates the optimal parallelism for the scheduler pool.
+func SchedulerParallelism(override int) int {
 	if override > 0 {
 		if override > 512 {
 			return 512
@@ -97,7 +98,8 @@ func schedulerParallelism(override int) int {
 	return parallelism
 }
 
-func schedulerQueueSize(parallelism, batchSize int) int {
+// SchedulerQueueSize calculates the optimal queue size for the scheduler pool.
+func SchedulerQueueSize(parallelism, batchSize int) int {
 	if parallelism < 1 {
 		parallelism = 1
 	}

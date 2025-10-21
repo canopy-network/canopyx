@@ -51,8 +51,8 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 
 	// Parallel RPC fetch using goroutines for performance
 	var (
-		currentAccounts  []*rpc.RpcAccount
-		previousAccounts []*rpc.RpcAccount
+		currentAccounts  []*rpc.Account
+		previousAccounts []*rpc.Account
 		currentErr       error
 		previousErr      error
 		wg               sync.WaitGroup
@@ -72,8 +72,8 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 	go func() {
 		defer wg.Done()
 		if input.Height == 1 {
-			// Genesis case: read from cached genesis
-			previousAccounts, previousErr = c.getGenesisAccounts(ctx, chainDb)
+			// Genesis case: whatever comes at height 1 is the genesis state, so we should save them always.
+			previousAccounts = make([]*rpc.Account, 0)
 		} else if input.Height > 1 {
 			// Normal case: fetch from RPC
 			previousAccounts, previousErr = cli.AccountsByHeight(ctx, input.Height-1)
@@ -107,10 +107,10 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 			var createdHeight uint64
 
 			if !existed {
-				// New account - doesn't exist in previous state
+				// New account - doesn't exist in the previous state
 				createdHeight = input.Height
 			} else {
-				// Existing account - query created_height from production table
+				// Existing account - query created_height from the production table
 				createdHeight = c.queryCreatedHeight(ctx, chainDb, curr.Address)
 				if createdHeight == 0 {
 					// Edge case: not found in DB yet (parallel indexing)
@@ -131,14 +131,7 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 
 	// Insert to staging table
 	if len(changedAccounts) > 0 {
-		// Need to cast to *db.ChainDB to access Db field
-		dbImpl, ok := chainDb.(*db.ChainDB)
-		if !ok {
-			return types.IndexAccountsOutput{}, fmt.Errorf("chainDb is not *db.ChainDB")
-		}
-
-		err = indexer.InsertAccountsStaging(ctx, dbImpl.Db, "accounts_staging", changedAccounts)
-		if err != nil {
+		if err := chainDb.InsertAccountsStaging(ctx, changedAccounts); err != nil {
 			return types.IndexAccountsOutput{}, fmt.Errorf("insert accounts staging: %w", err)
 		}
 	}
@@ -160,15 +153,10 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 
 // getGenesisAccounts reads accounts from the genesis cache in the database.
 // This is used when indexing height 1 to compare RPC(1) vs Genesis(0).
-func (c *Context) getGenesisAccounts(ctx context.Context, chainDb db.ChainStore) ([]*rpc.RpcAccount, error) {
-	// Need to cast to *db.ChainDB to access GetGenesisData method
-	dbImpl, ok := chainDb.(*db.ChainDB)
-	if !ok {
-		return nil, fmt.Errorf("chainDb is not *db.ChainDB")
-	}
 
+func (c *Context) getGenesisAccounts(ctx context.Context, chainDb db.ChainStore) ([]*rpc.Account, error) {
 	// Query genesis table for height 0
-	genesisData, err := dbImpl.GetGenesisData(ctx, 0)
+	genesisData, err := chainDb.GetGenesisData(ctx, 0)
 	if err != nil {
 		return nil, fmt.Errorf("query genesis cache: %w", err)
 	}
@@ -185,11 +173,5 @@ func (c *Context) getGenesisAccounts(ctx context.Context, chainDb db.ChainStore)
 // queryCreatedHeight retrieves the created_height for an existing account.
 // Uses FINAL to ensure we get the most recent version from ReplacingMergeTree.
 func (c *Context) queryCreatedHeight(ctx context.Context, chainDb db.ChainStore, address string) uint64 {
-	// Need to cast to *db.ChainDB to access GetAccountCreatedHeight method
-	dbImpl, ok := chainDb.(*db.ChainDB)
-	if !ok {
-		return 0
-	}
-
-	return dbImpl.GetAccountCreatedHeight(ctx, address)
+	return chainDb.GetAccountCreatedHeight(ctx, address)
 }

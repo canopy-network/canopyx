@@ -43,25 +43,33 @@ type clientSubscriptions struct {
 	chains map[string]bool // chainId -> subscribed
 }
 
-func newClientSubscriptions() *clientSubscriptions {
+// NewClientSubscriptions creates a new clientSubscriptions tracker.
+// Exported for testing.
+func NewClientSubscriptions() *clientSubscriptions {
 	return &clientSubscriptions{
 		chains: make(map[string]bool),
 	}
 }
 
-func (cs *clientSubscriptions) subscribe(chainID string) {
+// Subscribe adds a chain ID to the subscription list.
+// Exported for testing.
+func (cs *clientSubscriptions) Subscribe(chainID string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.chains[chainID] = true
 }
 
-func (cs *clientSubscriptions) unsubscribe(chainID string) {
+// Unsubscribe removes a chain ID from the subscription list.
+// Exported for testing.
+func (cs *clientSubscriptions) Unsubscribe(chainID string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	delete(cs.chains, chainID)
 }
 
-func (cs *clientSubscriptions) isSubscribed(chainID string) bool {
+// IsSubscribed checks if a chain ID is subscribed. Wildcard (*) matches all chains.
+// Exported for testing.
+func (cs *clientSubscriptions) IsSubscribed(chainID string) bool {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	// Check for wildcard subscription
@@ -114,7 +122,7 @@ func (c *Controller) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Track client subscriptions
-	subs := newClientSubscriptions()
+	subs := NewClientSubscriptions()
 
 	// Channel for outgoing messages
 	send := make(chan ServerMessage, 256)
@@ -265,7 +273,7 @@ func (c *Controller) subscribeToRedis(ctx context.Context, send chan<- ServerMes
 		}
 
 		// Calculate next backoff with exponential increase and jitter
-		backoff = calculateNextBackoff(backoff, maxBackoff, backoffFactor, jitterFactor)
+		backoff = CalculateNextBackoff(backoff, maxBackoff, backoffFactor, jitterFactor)
 	}
 }
 
@@ -345,7 +353,7 @@ func (c *Controller) processRedisMessages(
 			}
 
 			// Extract chainID from channel name: "canopy:chainId:block.indexed"
-			chainID := extractChainIDFromChannel(msg.Channel)
+			chainID := ExtractChainIDFromChannel(msg.Channel)
 			if chainID == "" {
 				c.App.Logger.Warn("Failed to extract chainID from channel",
 					zap.String("channel", msg.Channel))
@@ -353,7 +361,7 @@ func (c *Controller) processRedisMessages(
 			}
 
 			// Server-side filtering: only forward if client is subscribed
-			if !subs.isSubscribed(chainID) {
+			if !subs.IsSubscribed(chainID) {
 				continue
 			}
 
@@ -376,9 +384,9 @@ func (c *Controller) processRedisMessages(
 	}
 }
 
-// calculateNextBackoff calculates the next backoff duration using exponential backoff
-// with jitter to prevent thundering herd problem.
-func calculateNextBackoff(current, max time.Duration, factor, jitterFactor float64) time.Duration {
+// CalculateNextBackoff calculates the next backoff duration with exponential growth and jitter.
+// Exported for testing.
+func CalculateNextBackoff(current, max time.Duration, factor, jitterFactor float64) time.Duration {
 	// Calculate exponential increase
 	next := time.Duration(float64(current) * factor)
 
@@ -403,8 +411,9 @@ func calculateNextBackoff(current, max time.Duration, factor, jitterFactor float
 	return nextWithJitter
 }
 
-// extractChainIDFromChannel extracts chainID from channel name "canopy:chainId:block.indexed"
-func extractChainIDFromChannel(channel string) string {
+// ExtractChainIDFromChannel extracts the chain ID from a Redis channel name.
+// Exported for testing.
+func ExtractChainIDFromChannel(channel string) string {
 	parts := strings.Split(channel, ":")
 	if len(parts) != 3 {
 		return ""
@@ -493,7 +502,7 @@ func (c *Controller) readClientMessages(ctx context.Context, conn *websocket.Con
 					send <- ServerMessage{Type: "error", Payload: map[string]string{"message": "chainId is required"}}
 					continue
 				}
-				subs.subscribe(msg.ChainID)
+				subs.Subscribe(msg.ChainID)
 				c.App.Logger.Debug("Client subscribed", zap.String("chainId", msg.ChainID))
 				send <- ServerMessage{Type: "subscribed", Payload: map[string]string{"chainId": msg.ChainID}}
 
@@ -502,7 +511,7 @@ func (c *Controller) readClientMessages(ctx context.Context, conn *websocket.Con
 					send <- ServerMessage{Type: "error", Payload: map[string]string{"message": "chainId is required"}}
 					continue
 				}
-				subs.unsubscribe(msg.ChainID)
+				subs.Unsubscribe(msg.ChainID)
 				c.App.Logger.Debug("Client unsubscribed", zap.String("chainId", msg.ChainID))
 				send <- ServerMessage{Type: "unsubscribed", Payload: map[string]string{"chainId": msg.ChainID}}
 

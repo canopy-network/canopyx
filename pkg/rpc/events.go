@@ -97,7 +97,7 @@ type UnknownEvent struct {
 }
 
 func (e *UnknownEvent) Type() EventType          { return e.EventType }
-func (e *UnknownEvent) GetAddress() string       { return getStringField(e.Data, "address") }
+func (e *UnknownEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
 func (e *UnknownEvent) GetAmount() *uint64       { return nil }
 func (e *UnknownEvent) GetSoldAmount() *uint64   { return nil }
 func (e *UnknownEvent) GetBoughtAmount() *uint64 { return nil }

@@ -1,10 +1,11 @@
-package rpc
+package rpc_test
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -64,14 +65,14 @@ func TestParseSendMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, err := parseMessage(tt.msgType, tt.msgData)
+			msg, err := rpc.ParseMessage(tt.msgType, tt.msgData)
 			require.NoError(t, err)
 			require.NotNil(t, msg)
 
-			sendMsg, ok := msg.(*SendMessage)
+			sendMsg, ok := msg.(*rpc.SendMessage)
 			require.True(t, ok, "expected SendMessage type")
 
-			assert.Equal(t, MsgTypeSend, sendMsg.Type())
+			assert.Equal(t, rpc.MsgTypeSend, sendMsg.Type())
 			assert.Equal(t, tt.expectedSigner, sendMsg.GetSigner())
 			assert.Equal(t, tt.expectedAmount, sendMsg.Amount)
 			assert.Equal(t, tt.expectedMemo, sendMsg.Memo)
@@ -138,13 +139,13 @@ func TestParseDelegateMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, err := parseMessage(tt.msgType, tt.msgData)
+			msg, err := rpc.ParseMessage(tt.msgType, tt.msgData)
 			require.NoError(t, err)
 
-			delegateMsg, ok := msg.(*DelegateMessage)
+			delegateMsg, ok := msg.(*rpc.DelegateMessage)
 			require.True(t, ok, "expected DelegateMessage type")
 
-			assert.Equal(t, MsgTypeDelegate, delegateMsg.Type())
+			assert.Equal(t, rpc.MsgTypeDelegate, delegateMsg.Type())
 			assert.Equal(t, tt.expectedDelegator, delegateMsg.GetSigner())
 			assert.Equal(t, tt.expectedAmount, delegateMsg.Amount)
 
@@ -163,13 +164,13 @@ func TestParseUndelegateMessage(t *testing.T) {
 		"amount":           3000,
 	}
 
-	msg, err := parseMessage("undelegate", msgData)
+	msg, err := rpc.ParseMessage("undelegate", msgData)
 	require.NoError(t, err)
 
-	undelegateMsg, ok := msg.(*UndelegateMessage)
+	undelegateMsg, ok := msg.(*rpc.UndelegateMessage)
 	require.True(t, ok)
 
-	assert.Equal(t, MsgTypeUndelegate, undelegateMsg.Type())
+	assert.Equal(t, rpc.MsgTypeUndelegate, undelegateMsg.Type())
 	assert.Equal(t, "undelegator1", undelegateMsg.GetSigner())
 	assert.Equal(t, uint64(3000), undelegateMsg.Amount)
 
@@ -212,13 +213,13 @@ func TestParseStakeMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, err := parseMessage("stake", tt.msgData)
+			msg, err := rpc.ParseMessage("stake", tt.msgData)
 			require.NoError(t, err)
 
-			stakeMsg, ok := msg.(*StakeMessage)
+			stakeMsg, ok := msg.(*rpc.StakeMessage)
 			require.True(t, ok)
 
-			assert.Equal(t, MsgTypeStake, stakeMsg.Type())
+			assert.Equal(t, rpc.MsgTypeStake, stakeMsg.Type())
 
 			if tt.expectedLockPeriod != nil {
 				require.NotNil(t, stakeMsg.LockPeriod)
@@ -239,13 +240,13 @@ func TestParseVoteMessage(t *testing.T) {
 		"memo":       "I support this",
 	}
 
-	msg, err := parseMessage("vote", msgData)
+	msg, err := rpc.ParseMessage("vote", msgData)
 	require.NoError(t, err)
 
-	voteMsg, ok := msg.(*VoteMessage)
+	voteMsg, ok := msg.(*rpc.VoteMessage)
 	require.True(t, ok)
 
-	assert.Equal(t, MsgTypeVote, voteMsg.Type())
+	assert.Equal(t, rpc.MsgTypeVote, voteMsg.Type())
 	assert.Equal(t, "voter1", voteMsg.GetSigner())
 	assert.Equal(t, uint64(42), voteMsg.ProposalID)
 	assert.Equal(t, "yes", voteMsg.Option)
@@ -265,13 +266,13 @@ func TestParseProposalMessage(t *testing.T) {
 		"deposit":     1000000,
 	}
 
-	msg, err := parseMessage("proposal", msgData)
+	msg, err := rpc.ParseMessage("proposal", msgData)
 	require.NoError(t, err)
 
-	proposalMsg, ok := msg.(*ProposalMessage)
+	proposalMsg, ok := msg.(*rpc.ProposalMessage)
 	require.True(t, ok)
 
-	assert.Equal(t, MsgTypeProposal, proposalMsg.Type())
+	assert.Equal(t, rpc.MsgTypeProposal, proposalMsg.Type())
 	assert.Equal(t, "proposer1", proposalMsg.GetSigner())
 	assert.Equal(t, "Increase block size", proposalMsg.Title)
 	assert.Equal(t, "This proposal increases the block size to 2MB", proposalMsg.Description)
@@ -316,13 +317,13 @@ func TestParseContractMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, err := parseMessage("contract", tt.msgData)
+			msg, err := rpc.ParseMessage("contract", tt.msgData)
 			require.NoError(t, err)
 
-			contractMsg, ok := msg.(*ContractMessage)
+			contractMsg, ok := msg.(*rpc.ContractMessage)
 			require.True(t, ok)
 
-			assert.Equal(t, MsgTypeContract, contractMsg.Type())
+			assert.Equal(t, rpc.MsgTypeContract, contractMsg.Type())
 
 			if tt.expectedValue != nil {
 				require.NotNil(t, contractMsg.Value)
@@ -350,13 +351,13 @@ func TestParseSystemMessage(t *testing.T) {
 		},
 	}
 
-	msg, err := parseMessage("system", msgData)
+	msg, err := rpc.ParseMessage("system", msgData)
 	require.NoError(t, err)
 
-	systemMsg, ok := msg.(*SystemMessage)
+	systemMsg, ok := msg.(*rpc.SystemMessage)
 	require.True(t, ok)
 
-	assert.Equal(t, MsgTypeSystem, systemMsg.Type())
+	assert.Equal(t, rpc.MsgTypeSystem, systemMsg.Type())
 	assert.Equal(t, "admin1", systemMsg.GetSigner())
 	assert.Equal(t, "upgrade_protocol", systemMsg.Action)
 	assert.NotNil(t, systemMsg.Params)
@@ -409,13 +410,13 @@ func TestParseUnknownMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, err := parseMessage("completely_unknown_type", tt.msgData)
+			msg, err := rpc.ParseMessage("completely_unknown_type", tt.msgData)
 			require.NoError(t, err)
 
-			unknownMsg, ok := msg.(*UnknownMessage)
+			unknownMsg, ok := msg.(*rpc.UnknownMessage)
 			require.True(t, ok)
 
-			assert.Equal(t, MsgTypeUnknown, unknownMsg.Type())
+			assert.Equal(t, rpc.MsgTypeUnknown, unknownMsg.Type())
 			assert.Equal(t, tt.expectedSigner, unknownMsg.GetSigner())
 			assert.Nil(t, unknownMsg.GetCounterparty())
 			assert.Nil(t, unknownMsg.GetAmount())
@@ -430,13 +431,13 @@ func TestDetectMessageType(t *testing.T) {
 		name         string
 		msgType      string
 		msgData      map[string]interface{}
-		expectedType MessageType
+		expectedType rpc.MessageType
 	}{
 		{
 			name:         "explicit send",
 			msgType:      "send",
 			msgData:      map[string]interface{}{},
-			expectedType: MsgTypeSend,
+			expectedType: rpc.MsgTypeSend,
 		},
 		{
 			name:    "infer send from toAddress",
@@ -444,7 +445,7 @@ func TestDetectMessageType(t *testing.T) {
 			msgData: map[string]interface{}{
 				"toAddress": "addr1",
 			},
-			expectedType: MsgTypeSend,
+			expectedType: rpc.MsgTypeSend,
 		},
 		{
 			name:    "infer delegate from validatorAddress and delegator",
@@ -453,7 +454,7 @@ func TestDetectMessageType(t *testing.T) {
 				"validatorAddress": "val1",
 				"delegator":        "del1",
 			},
-			expectedType: MsgTypeDelegate,
+			expectedType: rpc.MsgTypeDelegate,
 		},
 		{
 			name:    "infer undelegate from validatorAddress without delegator",
@@ -461,7 +462,7 @@ func TestDetectMessageType(t *testing.T) {
 			msgData: map[string]interface{}{
 				"validatorAddress": "val1",
 			},
-			expectedType: MsgTypeUndelegate,
+			expectedType: rpc.MsgTypeUndelegate,
 		},
 		{
 			name:    "infer stake from pool and staker",
@@ -470,7 +471,7 @@ func TestDetectMessageType(t *testing.T) {
 				"pool":   "pool1",
 				"staker": "staker1",
 			},
-			expectedType: MsgTypeStake,
+			expectedType: rpc.MsgTypeStake,
 		},
 		{
 			name:    "infer unstake from pool without staker",
@@ -478,7 +479,7 @@ func TestDetectMessageType(t *testing.T) {
 			msgData: map[string]interface{}{
 				"pool": "pool1",
 			},
-			expectedType: MsgTypeUnstake,
+			expectedType: rpc.MsgTypeUnstake,
 		},
 		{
 			name:    "infer vote from proposalId and voter",
@@ -487,19 +488,19 @@ func TestDetectMessageType(t *testing.T) {
 				"proposalId": 1,
 				"voter":      "voter1",
 			},
-			expectedType: MsgTypeVote,
+			expectedType: rpc.MsgTypeVote,
 		},
 		{
 			name:         "unknown type with no inference clues",
 			msgType:      "unknown",
 			msgData:      map[string]interface{}{},
-			expectedType: MsgTypeUnknown,
+			expectedType: rpc.MsgTypeUnknown,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			detected := detectMessageType(tt.msgType, tt.msgData)
+			detected := rpc.DetectMessageType(tt.msgType, tt.msgData)
 			assert.Equal(t, tt.expectedType, detected)
 		})
 	}
@@ -509,8 +510,8 @@ func TestDetectMessageType(t *testing.T) {
 func TestMessageInterfaceMethods(t *testing.T) {
 	tests := []struct {
 		name               string
-		msg                Message
-		expectedType       MessageType
+		msg                rpc.Message
+		expectedType       rpc.MessageType
 		expectedSigner     string
 		expectCounterparty bool
 		expectedCounterpty string
@@ -519,12 +520,12 @@ func TestMessageInterfaceMethods(t *testing.T) {
 	}{
 		{
 			name: "SendMessage",
-			msg: &SendMessage{
+			msg: &rpc.SendMessage{
 				FromAddress: "sender",
 				ToAddress:   "receiver",
 				Amount:      1000,
 			},
-			expectedType:       MsgTypeSend,
+			expectedType:       rpc.MsgTypeSend,
 			expectedSigner:     "sender",
 			expectCounterparty: true,
 			expectedCounterpty: "receiver",
@@ -533,12 +534,12 @@ func TestMessageInterfaceMethods(t *testing.T) {
 		},
 		{
 			name: "DelegateMessage",
-			msg: &DelegateMessage{
+			msg: &rpc.DelegateMessage{
 				Delegator:        "delegator",
 				ValidatorAddress: "validator",
 				Amount:           2000,
 			},
-			expectedType:       MsgTypeDelegate,
+			expectedType:       rpc.MsgTypeDelegate,
 			expectedSigner:     "delegator",
 			expectCounterparty: true,
 			expectedCounterpty: "validator",
@@ -547,25 +548,25 @@ func TestMessageInterfaceMethods(t *testing.T) {
 		},
 		{
 			name: "VoteMessage",
-			msg: &VoteMessage{
+			msg: &rpc.VoteMessage{
 				Voter:      "voter",
 				ProposalID: 5,
 				Option:     "yes",
 			},
-			expectedType:       MsgTypeVote,
+			expectedType:       rpc.MsgTypeVote,
 			expectedSigner:     "voter",
 			expectCounterparty: false,
 			expectAmount:       false,
 		},
 		{
 			name: "ProposalMessage",
-			msg: &ProposalMessage{
+			msg: &rpc.ProposalMessage{
 				Proposer:    "proposer",
 				Title:       "Test",
 				Description: "Test proposal",
 				Deposit:     5000,
 			},
-			expectedType:       MsgTypeProposal,
+			expectedType:       rpc.MsgTypeProposal,
 			expectedSigner:     "proposer",
 			expectCounterparty: false,
 			expectAmount:       true,
@@ -573,13 +574,13 @@ func TestMessageInterfaceMethods(t *testing.T) {
 		},
 		{
 			name: "ContractMessage with value",
-			msg: &ContractMessage{
+			msg: &rpc.ContractMessage{
 				Caller:          "caller",
 				ContractAddress: "contract",
 				Method:          "call",
 				Value:           func() *uint64 { v := uint64(300); return &v }(),
 			},
-			expectedType:       MsgTypeContract,
+			expectedType:       rpc.MsgTypeContract,
 			expectedSigner:     "caller",
 			expectCounterparty: true,
 			expectedCounterpty: "contract",
@@ -588,12 +589,12 @@ func TestMessageInterfaceMethods(t *testing.T) {
 		},
 		{
 			name: "ContractMessage without value",
-			msg: &ContractMessage{
+			msg: &rpc.ContractMessage{
 				Caller:          "caller",
 				ContractAddress: "contract",
 				Method:          "query",
 			},
-			expectedType:       MsgTypeContract,
+			expectedType:       rpc.MsgTypeContract,
 			expectedSigner:     "caller",
 			expectCounterparty: true,
 			expectedCounterpty: "contract",
@@ -601,21 +602,21 @@ func TestMessageInterfaceMethods(t *testing.T) {
 		},
 		{
 			name: "SystemMessage",
-			msg: &SystemMessage{
+			msg: &rpc.SystemMessage{
 				Executor: "admin",
 				Action:   "upgrade",
 			},
-			expectedType:       MsgTypeSystem,
+			expectedType:       rpc.MsgTypeSystem,
 			expectedSigner:     "admin",
 			expectCounterparty: false,
 			expectAmount:       false,
 		},
 		{
 			name: "UnknownMessage",
-			msg: &UnknownMessage{
+			msg: &rpc.UnknownMessage{
 				Signer: "unknown_user",
 			},
-			expectedType:       MsgTypeUnknown,
+			expectedType:       rpc.MsgTypeUnknown,
 			expectedSigner:     "unknown_user",
 			expectCounterparty: false,
 			expectAmount:       false,
@@ -650,11 +651,11 @@ func TestMessageInterfaceMethods(t *testing.T) {
 func TestMessageJSONMarshaling(t *testing.T) {
 	tests := []struct {
 		name string
-		msg  Message
+		msg  rpc.Message
 	}{
 		{
 			name: "SendMessage",
-			msg: &SendMessage{
+			msg: &rpc.SendMessage{
 				FromAddress: "alice",
 				ToAddress:   "bob",
 				Amount:      1000,
@@ -663,7 +664,7 @@ func TestMessageJSONMarshaling(t *testing.T) {
 		},
 		{
 			name: "VoteMessage",
-			msg: &VoteMessage{
+			msg: &rpc.VoteMessage{
 				Voter:      "voter1",
 				ProposalID: 42,
 				Option:     "yes",
@@ -671,7 +672,7 @@ func TestMessageJSONMarshaling(t *testing.T) {
 		},
 		{
 			name: "ContractMessage",
-			msg: &ContractMessage{
+			msg: &rpc.ContractMessage{
 				Caller:          "caller1",
 				ContractAddress: "0xcontract",
 				Method:          "transfer",
@@ -701,7 +702,7 @@ func TestToTransaction(t *testing.T) {
 	now := time.Now()
 	nowMicro := now.UnixMicro()
 
-	rpcTx := &Transaction{
+	rpcTx := &rpc.Transaction{
 		Sender:      "sender1",
 		Recipient:   "recipient1",
 		MessageType: "send",
@@ -757,7 +758,7 @@ func TestToTransaction(t *testing.T) {
 
 // TestToTransactionWithNilSignature tests ToTransaction with missing signature fields
 func TestToTransactionWithNilSignature(t *testing.T) {
-	rpcTx := &Transaction{
+	rpcTx := &rpc.Transaction{
 		Sender:      "sender1",
 		MessageType: "vote",
 		Height:      200,
@@ -791,20 +792,20 @@ func TestToTransactionWithNilSignature(t *testing.T) {
 
 // TestHelperFunctions tests the helper functions for extracting fields
 func TestHelperFunctions(t *testing.T) {
-	t.Run("getStringField", func(t *testing.T) {
+	t.Run("rpc.GetStringField", func(t *testing.T) {
 		m := map[string]interface{}{
 			"str":   "value",
 			"int":   123,
 			"empty": "",
 		}
 
-		assert.Equal(t, "value", getStringField(m, "str"))
-		assert.Equal(t, "", getStringField(m, "int"))     // Not a string
-		assert.Equal(t, "", getStringField(m, "empty"))   // Empty string
-		assert.Equal(t, "", getStringField(m, "missing")) // Missing key
+		assert.Equal(t, "value", rpc.GetStringField(m, "str"))
+		assert.Equal(t, "", rpc.GetStringField(m, "int"))     // Not a string
+		assert.Equal(t, "", rpc.GetStringField(m, "empty"))   // Empty string
+		assert.Equal(t, "", rpc.GetStringField(m, "missing")) // Missing key
 	})
 
-	t.Run("getIntField", func(t *testing.T) {
+	t.Run("rpc.GetIntField", func(t *testing.T) {
 		m := map[string]interface{}{
 			"int":     123,
 			"int64":   int64(456),
@@ -812,14 +813,14 @@ func TestHelperFunctions(t *testing.T) {
 			"string":  "999",
 		}
 
-		assert.Equal(t, 123, getIntField(m, "int"))
-		assert.Equal(t, 456, getIntField(m, "int64"))
-		assert.Equal(t, 789, getIntField(m, "float64"))
-		assert.Equal(t, 0, getIntField(m, "string"))  // Not a number type
-		assert.Equal(t, 0, getIntField(m, "missing")) // Missing key
+		assert.Equal(t, 123, rpc.GetIntField(m, "int"))
+		assert.Equal(t, 456, rpc.GetIntField(m, "int64"))
+		assert.Equal(t, 789, rpc.GetIntField(m, "float64"))
+		assert.Equal(t, 0, rpc.GetIntField(m, "string"))  // Not a number type
+		assert.Equal(t, 0, rpc.GetIntField(m, "missing")) // Missing key
 	})
 
-	t.Run("getOptionalUint32Field", func(t *testing.T) {
+	t.Run("rpc.GetOptionalUint32Field", func(t *testing.T) {
 		m := map[string]interface{}{
 			"int":     30,
 			"int64":   int64(40),
@@ -828,30 +829,30 @@ func TestHelperFunctions(t *testing.T) {
 			"string":  "70",
 		}
 
-		val := getOptionalUint32Field(m, "int")
+		val := rpc.GetOptionalUint32Field(m, "int")
 		require.NotNil(t, val)
 		assert.Equal(t, uint32(30), *val)
 
-		val = getOptionalUint32Field(m, "int64")
+		val = rpc.GetOptionalUint32Field(m, "int64")
 		require.NotNil(t, val)
 		assert.Equal(t, uint32(40), *val)
 
-		val = getOptionalUint32Field(m, "float64")
+		val = rpc.GetOptionalUint32Field(m, "float64")
 		require.NotNil(t, val)
 		assert.Equal(t, uint32(50), *val)
 
-		val = getOptionalUint32Field(m, "uint32")
+		val = rpc.GetOptionalUint32Field(m, "uint32")
 		require.NotNil(t, val)
 		assert.Equal(t, uint32(60), *val)
 
-		val = getOptionalUint32Field(m, "string")
+		val = rpc.GetOptionalUint32Field(m, "string")
 		assert.Nil(t, val) // Not a number type
 
-		val = getOptionalUint32Field(m, "missing")
+		val = rpc.GetOptionalUint32Field(m, "missing")
 		assert.Nil(t, val) // Missing key
 	})
 
-	t.Run("getOptionalUint64Field", func(t *testing.T) {
+	t.Run("rpc.GetOptionalUint64Field", func(t *testing.T) {
 		m := map[string]interface{}{
 			"int":     100,
 			"int64":   int64(200),
@@ -859,59 +860,59 @@ func TestHelperFunctions(t *testing.T) {
 			"uint64":  uint64(400),
 		}
 
-		val := getOptionalUint64Field(m, "int")
+		val := rpc.GetOptionalUint64Field(m, "int")
 		require.NotNil(t, val)
 		assert.Equal(t, uint64(100), *val)
 
-		val = getOptionalUint64Field(m, "int64")
+		val = rpc.GetOptionalUint64Field(m, "int64")
 		require.NotNil(t, val)
 		assert.Equal(t, uint64(200), *val)
 
-		val = getOptionalUint64Field(m, "float64")
+		val = rpc.GetOptionalUint64Field(m, "float64")
 		require.NotNil(t, val)
 		assert.Equal(t, uint64(300), *val)
 
-		val = getOptionalUint64Field(m, "uint64")
+		val = rpc.GetOptionalUint64Field(m, "uint64")
 		require.NotNil(t, val)
 		assert.Equal(t, uint64(400), *val)
 
-		val = getOptionalUint64Field(m, "missing")
+		val = rpc.GetOptionalUint64Field(m, "missing")
 		assert.Nil(t, val)
 	})
 }
 
 // TestAllMessageTypes verifies all currently implemented message types can be parsed
-// Note: EditStake is not yet implemented in parseMessage(), so it's excluded
+// Note: EditStake is not yet implemented in rpc.ParseMessage(), so it's excluded
 func TestAllMessageTypes(t *testing.T) {
 	messageTypes := []struct {
 		msgType  string
-		expected MessageType
+		expected rpc.MessageType
 	}{
-		{"send", MsgTypeSend},
-		{"delegate", MsgTypeDelegate},
-		{"undelegate", MsgTypeUndelegate},
-		{"stake", MsgTypeStake},
-		{"unstake", MsgTypeUnstake},
-		// {"edit_stake", MsgTypeEditStake}, // Not yet implemented in parseMessage()
-		{"vote", MsgTypeVote},
-		{"proposal", MsgTypeProposal},
-		{"contract", MsgTypeContract},
-		{"system", MsgTypeSystem},
-		{"unknown_type", MsgTypeUnknown},
+		{"send", rpc.MsgTypeSend},
+		{"delegate", rpc.MsgTypeDelegate},
+		{"undelegate", rpc.MsgTypeUndelegate},
+		{"stake", rpc.MsgTypeStake},
+		{"unstake", rpc.MsgTypeUnstake},
+		// {"edit_stake", MsgTypeEditStake}, // Not yet implemented in rpc.ParseMessage()
+		{"vote", rpc.MsgTypeVote},
+		{"proposal", rpc.MsgTypeProposal},
+		{"contract", rpc.MsgTypeContract},
+		{"system", rpc.MsgTypeSystem},
+		{"unknown_type", rpc.MsgTypeUnknown},
 	}
 
 	for _, tt := range messageTypes {
 		t.Run(tt.msgType, func(t *testing.T) {
-			detected := detectMessageType(tt.msgType, map[string]interface{}{})
+			detected := rpc.DetectMessageType(tt.msgType, map[string]interface{}{})
 			assert.Equal(t, tt.expected, detected)
 		})
 	}
 }
 
-// TestEditStakeMessage - SKIPPED: EditStake parsing is not yet implemented in parseMessage()
+// TestEditStakeMessage - SKIPPED: EditStake parsing is not yet implemented in rpc.ParseMessage()
 // This test is included for completeness but currently skipped
 func TestEditStakeMessage(t *testing.T) {
-	t.Skip("EditStake message parsing not yet implemented in parseMessage()")
+	t.Skip("EditStake message parsing not yet implemented in rpc.ParseMessage()")
 }
 
 // TestUnstakeMessage tests the Unstake message type
@@ -922,13 +923,13 @@ func TestUnstakeMessage(t *testing.T) {
 		"amount": 3000,
 	}
 
-	msg, err := parseMessage("unstake", msgData)
+	msg, err := rpc.ParseMessage("unstake", msgData)
 	require.NoError(t, err)
 
-	unstakeMsg, ok := msg.(*UnstakeMessage)
+	unstakeMsg, ok := msg.(*rpc.UnstakeMessage)
 	require.True(t, ok)
 
-	assert.Equal(t, MsgTypeUnstake, unstakeMsg.Type())
+	assert.Equal(t, rpc.MsgTypeUnstake, unstakeMsg.Type())
 	assert.Equal(t, "unstaker1", unstakeMsg.GetSigner())
 	assert.Equal(t, uint64(3000), unstakeMsg.Amount)
 
@@ -944,15 +945,15 @@ func TestParsePauseMessage(t *testing.T) {
 			"address": "0x123",
 		}
 
-		msg, err := parseMessage("pause", msgMap)
+		msg, err := rpc.ParseMessage("pause", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		pauseMsg, ok := msg.(*PauseMessage)
+		pauseMsg, ok := msg.(*rpc.PauseMessage)
 		require.True(t, ok, "expected PauseMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypePause, pauseMsg.Type())
+		assert.Equal(t, rpc.MsgTypePause, pauseMsg.Type())
 
 		// Verify signer is extracted correctly
 		assert.Equal(t, "0x123", pauseMsg.GetSigner())
@@ -975,15 +976,15 @@ func TestParseUnpauseMessage(t *testing.T) {
 			"address": "0x456",
 		}
 
-		msg, err := parseMessage("unpause", msgMap)
+		msg, err := rpc.ParseMessage("unpause", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		unpauseMsg, ok := msg.(*UnpauseMessage)
+		unpauseMsg, ok := msg.(*rpc.UnpauseMessage)
 		require.True(t, ok, "expected UnpauseMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeUnpause, unpauseMsg.Type())
+		assert.Equal(t, rpc.MsgTypeUnpause, unpauseMsg.Type())
 
 		// Verify signer is extracted correctly
 		assert.Equal(t, "0x456", unpauseMsg.GetSigner())
@@ -1008,15 +1009,15 @@ func TestParseChangeParameterMessage(t *testing.T) {
 			"signer":      "0x123",
 		}
 
-		msg, err := parseMessage("changeParameter", msgMap)
+		msg, err := rpc.ParseMessage("changeParameter", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		changeParamMsg, ok := msg.(*ChangeParameterMessage)
+		changeParamMsg, ok := msg.(*rpc.ChangeParameterMessage)
 		require.True(t, ok, "expected ChangeParameterMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeChangeParameter, changeParamMsg.Type())
+		assert.Equal(t, rpc.MsgTypeChangeParameter, changeParamMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", changeParamMsg.GetSigner())
@@ -1049,15 +1050,15 @@ func TestParseDAOTransferMessage(t *testing.T) {
 			"amount":       float64(5000),
 		}
 
-		msg, err := parseMessage("daoTransfer", msgMap)
+		msg, err := rpc.ParseMessage("daoTransfer", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		daoTransferMsg, ok := msg.(*DAOTransferMessage)
+		daoTransferMsg, ok := msg.(*rpc.DAOTransferMessage)
 		require.True(t, ok, "expected DAOTransferMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeDAOTransfer, daoTransferMsg.Type())
+		assert.Equal(t, rpc.MsgTypeDAOTransfer, daoTransferMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", daoTransferMsg.GetSigner())
@@ -1089,15 +1090,15 @@ func TestParseCertificateResultsMessage(t *testing.T) {
 			"certificate_data": "cert123",
 		}
 
-		msg, err := parseMessage("certificateResults", msgMap)
+		msg, err := rpc.ParseMessage("certificateResults", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		certResultsMsg, ok := msg.(*CertificateResultsMessage)
+		certResultsMsg, ok := msg.(*rpc.CertificateResultsMessage)
 		require.True(t, ok, "expected CertificateResultsMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeCertificateResults, certResultsMsg.Type())
+		assert.Equal(t, rpc.MsgTypeCertificateResults, certResultsMsg.Type())
 
 		// Verify signer is extracted correctly
 		assert.Equal(t, "0x123", certResultsMsg.GetSigner())
@@ -1128,15 +1129,15 @@ func TestParseSubsidyMessage(t *testing.T) {
 			"committee_id": float64(5),
 		}
 
-		msg, err := parseMessage("subsidy", msgMap)
+		msg, err := rpc.ParseMessage("subsidy", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		subsidyMsg, ok := msg.(*SubsidyMessage)
+		subsidyMsg, ok := msg.(*rpc.SubsidyMessage)
 		require.True(t, ok, "expected SubsidyMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeSubsidy, subsidyMsg.Type())
+		assert.Equal(t, rpc.MsgTypeSubsidy, subsidyMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", subsidyMsg.GetSigner())
@@ -1175,15 +1176,15 @@ func TestParseCreateOrderMessage(t *testing.T) {
 			"price":       0.9,
 		}
 
-		msg, err := parseMessage("createOrder", msgMap)
+		msg, err := rpc.ParseMessage("createOrder", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		createOrderMsg, ok := msg.(*CreateOrderMessage)
+		createOrderMsg, ok := msg.(*rpc.CreateOrderMessage)
 		require.True(t, ok, "expected CreateOrderMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeCreateOrder, createOrderMsg.Type())
+		assert.Equal(t, rpc.MsgTypeCreateOrder, createOrderMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", createOrderMsg.GetSigner())
@@ -1229,15 +1230,15 @@ func TestParseEditOrderMessage(t *testing.T) {
 			"price":    0.95,
 		}
 
-		msg, err := parseMessage("editOrder", msgMap)
+		msg, err := rpc.ParseMessage("editOrder", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		editOrderMsg, ok := msg.(*EditOrderMessage)
+		editOrderMsg, ok := msg.(*rpc.EditOrderMessage)
 		require.True(t, ok, "expected EditOrderMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeEditOrder, editOrderMsg.Type())
+		assert.Equal(t, rpc.MsgTypeEditOrder, editOrderMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", editOrderMsg.GetSigner())
@@ -1273,15 +1274,15 @@ func TestParseDeleteOrderMessage(t *testing.T) {
 			"order_id": "order123",
 		}
 
-		msg, err := parseMessage("deleteOrder", msgMap)
+		msg, err := rpc.ParseMessage("deleteOrder", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		deleteOrderMsg, ok := msg.(*DeleteOrderMessage)
+		deleteOrderMsg, ok := msg.(*rpc.DeleteOrderMessage)
 		require.True(t, ok, "expected DeleteOrderMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeDeleteOrder, deleteOrderMsg.Type())
+		assert.Equal(t, rpc.MsgTypeDeleteOrder, deleteOrderMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", deleteOrderMsg.GetSigner())
@@ -1317,15 +1318,15 @@ func TestParseDexLimitOrderMessage(t *testing.T) {
 			"price":       0.95,
 		}
 
-		msg, err := parseMessage("dexLimitOrder", msgMap)
+		msg, err := rpc.ParseMessage("dexLimitOrder", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		dexLimitOrderMsg, ok := msg.(*DexLimitOrderMessage)
+		dexLimitOrderMsg, ok := msg.(*rpc.DexLimitOrderMessage)
 		require.True(t, ok, "expected DexLimitOrderMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeDexLimitOrder, dexLimitOrderMsg.Type())
+		assert.Equal(t, rpc.MsgTypeDexLimitOrder, dexLimitOrderMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", dexLimitOrderMsg.GetSigner())
@@ -1368,15 +1369,15 @@ func TestParseDexLiquidityDepositMessage(t *testing.T) {
 			"amount":   float64(5000),
 		}
 
-		msg, err := parseMessage("dexLiquidityDeposit", msgMap)
+		msg, err := rpc.ParseMessage("dexLiquidityDeposit", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		dexDepositMsg, ok := msg.(*DexLiquidityDepositMessage)
+		dexDepositMsg, ok := msg.(*rpc.DexLiquidityDepositMessage)
 		require.True(t, ok, "expected DexLiquidityDepositMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeDexLiquidityDeposit, dexDepositMsg.Type())
+		assert.Equal(t, rpc.MsgTypeDexLiquidityDeposit, dexDepositMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", dexDepositMsg.GetSigner())
@@ -1413,15 +1414,15 @@ func TestParseDexLiquidityWithdrawMessage(t *testing.T) {
 			"amount":   float64(5000),
 		}
 
-		msg, err := parseMessage("dexLiquidityWithdraw", msgMap)
+		msg, err := rpc.ParseMessage("dexLiquidityWithdraw", msgMap)
 		require.NoError(t, err)
 		require.NotNil(t, msg)
 
-		dexWithdrawMsg, ok := msg.(*DexLiquidityWithdrawMessage)
+		dexWithdrawMsg, ok := msg.(*rpc.DexLiquidityWithdrawMessage)
 		require.True(t, ok, "expected DexLiquidityWithdrawMessage type")
 
 		// Verify message type
-		assert.Equal(t, MsgTypeDexLiquidityWithdraw, dexWithdrawMsg.Type())
+		assert.Equal(t, rpc.MsgTypeDexLiquidityWithdraw, dexWithdrawMsg.Type())
 
 		// Verify all relevant fields are extracted correctly
 		assert.Equal(t, "0x123", dexWithdrawMsg.GetSigner())

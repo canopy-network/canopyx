@@ -23,6 +23,7 @@ type Column struct {
 
 // ChainDB represents a database associated with a blockchain and provides methods to manage and query its data.
 // It includes a database client, a logger for capturing logs, the chain's name, and its unique identifier.
+// It implements ChainStore.
 type ChainDB struct {
 	Client
 	Name    string
@@ -278,7 +279,7 @@ func (db *ChainDB) DatabaseName() string {
 	return db.Name
 }
 
-// ChainID returns the identifier associated with this chain store.
+// ChainKey returns the identifier associated with this chain store.
 func (db *ChainDB) ChainKey() string {
 	return db.ChainID
 }
@@ -1227,6 +1228,11 @@ func (db *ChainDB) InsertGenesis(ctx context.Context, height uint64, data string
 	}
 
 	return nil
+}
+
+// InsertAccountsStaging persists staged account snapshots for the chain.
+func (db *ChainDB) InsertAccountsStaging(ctx context.Context, accounts []*indexer.Account) error {
+	return indexer.InsertAccountsStaging(ctx, db.Db, "accounts_staging", accounts)
 }
 
 // GetAccountCreatedHeight retrieves the created_height for an existing account.

@@ -1,7 +1,8 @@
-package activity
+package activity_test
 
 import (
 	"context"
+	"github.com/canopy-network/canopyx/pkg/indexer/activity"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 			{TxHash: "tx1"}, {TxHash: "tx2"},
 		},
 	}
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -79,7 +80,7 @@ func TestFetchBlockFromRPC(t *testing.T) {
 	rpcClient := &fakeRPCClient{
 		block: &indexermodels.Block{Height: 42, Hash: "abc123"},
 	}
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -115,7 +116,7 @@ func TestSaveBlock(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", chainStore)
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -155,7 +156,7 @@ func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	rpcClient := &fakeRPCClient{
 		block: &indexermodels.Block{Height: 42},
 	}
-	ctx := &Context{
+	ctx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -194,7 +195,7 @@ func TestSaveBlockSummary(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", chainStore)
 
-	ctx := &Context{
+	ctx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -232,7 +233,7 @@ func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", chainStore)
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -260,7 +261,7 @@ func TestPrepareIndexBlockDeletesOnReindex(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", chainStore)
 
-	activityCtx := &Context{
+	activityCtx := &activity.Context{
 		Logger:     logger,
 		IndexerDB:  adminStore,
 		ChainsDB:   chainsMap,
@@ -329,6 +330,9 @@ type fakeChainStore struct {
 	hasBlock                bool
 	deletedBlocks           []uint64
 	deletedTransactions     []uint64
+	insertedAccounts        []*indexermodels.Account
+	accountCreatedHeights   map[string]uint64
+	genesisJSON             string
 }
 
 func (f *fakeChainStore) DatabaseName() string { return f.databaseName }
@@ -460,7 +464,8 @@ func (*fakeChainStore) InitAccounts(context.Context) error {
 	return nil
 }
 
-func (*fakeChainStore) InsertAccountsStaging(context.Context, []*indexermodels.Account) error {
+func (f *fakeChainStore) InsertAccountsStaging(_ context.Context, accounts []*indexermodels.Account) error {
+	f.insertedAccounts = append(f.insertedAccounts, accounts...)
 	return nil
 }
 
@@ -520,6 +525,17 @@ func (*fakeChainStore) GetDexVolume24h(context.Context) ([]db.DexVolumeStats, er
 	return nil, nil
 }
 
+func (f *fakeChainStore) GetGenesisData(_ context.Context, _ uint64) (string, error) {
+	return f.genesisJSON, nil
+}
+
+func (f *fakeChainStore) GetAccountCreatedHeight(_ context.Context, address string) uint64 {
+	if f.accountCreatedHeights == nil {
+		return 0
+	}
+	return f.accountCreatedHeights[address]
+}
+
 func (*fakeChainStore) GetOrderBookDepth(context.Context, uint64, int) ([]db.OrderBookLevel, error) {
 	return nil, nil
 }
@@ -549,7 +565,7 @@ func (f *fakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels.T
 	return f.txs, nil
 }
 
-func (f *fakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.RpcAccount, error) {
+func (f *fakeRPCClient) AccountsByHeight(context.Context, uint64) ([]*rpc.Account, error) {
 	return nil, nil
 }
 

@@ -6,12 +6,16 @@ import (
 	"testing"
 	"time"
 
+	ch "github.com/ClickHouse/clickhouse-go/v2"
+	pkgdb "github.com/canopy-network/canopyx/pkg/db"
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/tests/integration/helpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
 )
 
 // TestPromoteEntity_Success verifies that data is successfully moved from staging to production
@@ -279,7 +283,7 @@ func TestPromoteAllEntities(t *testing.T) {
 
 // Helper functions
 
-func setupTestChainDB(t *testing.T, logger *zaptest.Logger) *ChainDB {
+func setupTestChainDB(t *testing.T, logger *zap.Logger) *pkgdb.ChainDB {
 	// This would connect to a test ClickHouse instance
 	// For unit tests, you might use a mock or test container
 	// Example using testcontainers or local test instance:
@@ -307,8 +311,8 @@ func setupTestChainDB(t *testing.T, logger *zaptest.Logger) *ChainDB {
 	err = admin.InitIndexProgress(ctx, conn, "admin")
 	require.NoError(t, err)
 
-	return &ChainDB{
-		Client: Client{
+	return &pkgdb.ChainDB{
+		Client: pkgdb.Client{
 			Db:     conn,
 			Logger: logger.Sugar(),
 		},
@@ -317,7 +321,7 @@ func setupTestChainDB(t *testing.T, logger *zaptest.Logger) *ChainDB {
 	}
 }
 
-func cleanupTestDB(t *testing.T, db *ChainDB) {
+func cleanupTestDB(t *testing.T, db *pkgdb.ChainDB) {
 	ctx := context.Background()
 
 	// Drop test database
@@ -332,7 +336,7 @@ func cleanupTestDB(t *testing.T, db *ChainDB) {
 	assert.NoError(t, err)
 }
 
-func createTestTables(ctx context.Context, db *ChainDB, entity entities.Entity) error {
+func createTestTables(ctx context.Context, db *pkgdb.ChainDB, entity entities.Entity) error {
 	// Create production table based on entity type
 	prodTableSQL := getCreateTableSQL(entity, entity.TableName(), db.Name)
 	if _, err := db.Db.ExecContext(ctx, prodTableSQL); err != nil {
@@ -398,7 +402,7 @@ func getCreateTableSQL(entity entities.Entity, tableName, dbName string) string 
 	}
 }
 
-func insertTestStagingData(ctx context.Context, db *ChainDB, entity entities.Entity, height uint64) error {
+func insertTestStagingData(ctx context.Context, db *pkgdb.ChainDB, entity entities.Entity, height uint64) error {
 	switch entity {
 	case entities.Blocks:
 		block := &indexer.Block{
@@ -426,7 +430,7 @@ func insertTestStagingData(ctx context.Context, db *ChainDB, entity entities.Ent
 	}
 }
 
-func verifyProductionData(ctx context.Context, db *ChainDB, entity entities.Entity, height uint64) (bool, error) {
+func verifyProductionData(ctx context.Context, db *pkgdb.ChainDB, entity entities.Entity, height uint64) (bool, error) {
 	var count int
 	query := fmt.Sprintf(
 		"SELECT count() FROM %s.%s WHERE height = ?",
@@ -436,7 +440,7 @@ func verifyProductionData(ctx context.Context, db *ChainDB, entity entities.Enti
 	return count > 0, err
 }
 
-func verifyStagingData(ctx context.Context, db *ChainDB, entity entities.Entity, height uint64) (bool, error) {
+func verifyStagingData(ctx context.Context, db *pkgdb.ChainDB, entity entities.Entity, height uint64) (bool, error) {
 	var count int
 	query := fmt.Sprintf(
 		"SELECT count() FROM %s.%s WHERE height = ?",
@@ -446,7 +450,7 @@ func verifyStagingData(ctx context.Context, db *ChainDB, entity entities.Entity,
 	return count > 0, err
 }
 
-func setupIndexProgress(ctx context.Context, db *ChainDB, maxHeight uint64) error {
+func setupIndexProgress(ctx context.Context, db *pkgdb.ChainDB, maxHeight uint64) error {
 	// Insert test data into index_progress
 	for h := uint64(1); h <= maxHeight; h += 100 {
 		ip := &admin.IndexProgress{

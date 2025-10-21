@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	controller "github.com/canopy-network/canopyx/app/query/controller"
 	"github.com/canopy-network/canopyx/app/query/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +58,7 @@ func TestCalculateNextBackoff(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Run multiple times to account for randomness in jitter
 			for i := 0; i < 10; i++ {
-				result := calculateNextBackoff(tt.current, tt.max, tt.factor, tt.jitterFactor)
+				result := controller.CalculateNextBackoff(tt.current, tt.max, tt.factor, tt.jitterFactor)
 				assert.GreaterOrEqual(t, result, tt.expectMin, "backoff should be >= minimum")
 				assert.LessOrEqual(t, result, tt.expectMax, "backoff should be <= maximum")
 			}
@@ -101,7 +102,7 @@ func TestExtractChainIDFromChannel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractChainIDFromChannel(tt.channel)
+			result := controller.ExtractChainIDFromChannel(tt.channel)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -110,48 +111,48 @@ func TestExtractChainIDFromChannel(t *testing.T) {
 // TestClientSubscriptions tests the subscription tracking logic
 func TestClientSubscriptions(t *testing.T) {
 	t.Run("subscribe and check", func(t *testing.T) {
-		subs := newClientSubscriptions()
+		subs := controller.NewClientSubscriptions()
 
-		subs.subscribe("chain1")
-		assert.True(t, subs.isSubscribed("chain1"))
-		assert.False(t, subs.isSubscribed("chain2"))
+		subs.Subscribe("chain1")
+		assert.True(t, subs.IsSubscribed("chain1"))
+		assert.False(t, subs.IsSubscribed("chain2"))
 	})
 
 	t.Run("wildcard subscription", func(t *testing.T) {
-		subs := newClientSubscriptions()
+		subs := controller.NewClientSubscriptions()
 
-		subs.subscribe("*")
-		assert.True(t, subs.isSubscribed("*"))
-		assert.True(t, subs.isSubscribed("chain1"))
-		assert.True(t, subs.isSubscribed("chain2"))
-		assert.True(t, subs.isSubscribed("any_chain"))
+		subs.Subscribe("*")
+		assert.True(t, subs.IsSubscribed("*"))
+		assert.True(t, subs.IsSubscribed("chain1"))
+		assert.True(t, subs.IsSubscribed("chain2"))
+		assert.True(t, subs.IsSubscribed("any_chain"))
 	})
 
 	t.Run("unsubscribe", func(t *testing.T) {
-		subs := newClientSubscriptions()
+		subs := controller.NewClientSubscriptions()
 
-		subs.subscribe("chain1")
-		assert.True(t, subs.isSubscribed("chain1"))
+		subs.Subscribe("chain1")
+		assert.True(t, subs.IsSubscribed("chain1"))
 
-		subs.unsubscribe("chain1")
-		assert.False(t, subs.isSubscribed("chain1"))
+		subs.Unsubscribe("chain1")
+		assert.False(t, subs.IsSubscribed("chain1"))
 	})
 
 	t.Run("concurrent access", func(t *testing.T) {
-		subs := newClientSubscriptions()
+		subs := controller.NewClientSubscriptions()
 		done := make(chan bool)
 
 		// Concurrent writes
 		go func() {
 			for i := 0; i < 100; i++ {
-				subs.subscribe("chain1")
+				subs.Subscribe("chain1")
 			}
 			done <- true
 		}()
 
 		go func() {
 			for i := 0; i < 100; i++ {
-				subs.unsubscribe("chain1")
+				subs.Unsubscribe("chain1")
 			}
 			done <- true
 		}()
@@ -159,7 +160,7 @@ func TestClientSubscriptions(t *testing.T) {
 		// Concurrent reads
 		go func() {
 			for i := 0; i < 100; i++ {
-				_ = subs.isSubscribed("chain1")
+				_ = subs.IsSubscribed("chain1")
 			}
 			done <- true
 		}()
@@ -178,21 +179,21 @@ func TestProcessRedisMessages(t *testing.T) {
 	t.Run("filters messages based on subscription", func(t *testing.T) {
 		// This test demonstrates how to test the message processing logic
 		// In a real implementation, you would mock the Redis PubSub
-		subs := newClientSubscriptions()
-		subs.subscribe("chain1")
+		subs := controller.NewClientSubscriptions()
+		subs.Subscribe("chain1")
 
 		// Verify filtering logic
-		assert.True(t, subs.isSubscribed("chain1"), "should be subscribed to chain1")
-		assert.False(t, subs.isSubscribed("chain2"), "should not be subscribed to chain2")
+		assert.True(t, subs.IsSubscribed("chain1"), "should be subscribed to chain1")
+		assert.False(t, subs.IsSubscribed("chain2"), "should not be subscribed to chain2")
 	})
 
 	t.Run("wildcard matches all chains", func(t *testing.T) {
-		subs := newClientSubscriptions()
-		subs.subscribe("*")
+		subs := controller.NewClientSubscriptions()
+		subs.Subscribe("*")
 
-		assert.True(t, subs.isSubscribed("chain1"))
-		assert.True(t, subs.isSubscribed("chain2"))
-		assert.True(t, subs.isSubscribed("any_chain_id"))
+		assert.True(t, subs.IsSubscribed("chain1"))
+		assert.True(t, subs.IsSubscribed("chain2"))
+		assert.True(t, subs.IsSubscribed("any_chain_id"))
 	})
 }
 
@@ -216,7 +217,7 @@ func TestWebSocketIntegration(t *testing.T) {
 		// RedisClient: mockRedisClient, // Would inject mock here
 	}
 
-	controller := &Controller{App: app}
+	controller := &controller.Controller{App: app}
 
 	// Create test server
 	server := httptest.NewServer(http.HandlerFunc(controller.HandleWebSocket))
@@ -241,7 +242,7 @@ func BenchmarkCalculateNextBackoff(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = calculateNextBackoff(current, max, factor, jitterFactor)
+		_ = controller.CalculateNextBackoff(current, max, factor, jitterFactor)
 	}
 }
 
@@ -249,12 +250,12 @@ func BenchmarkCalculateNextBackoff(b *testing.B) {
 func TestServerMessageSerialization(t *testing.T) {
 	tests := []struct {
 		name    string
-		message ServerMessage
+		message controller.ServerMessage
 		wantErr bool
 	}{
 		{
 			name: "block indexed message",
-			message: ServerMessage{
+			message: controller.ServerMessage{
 				Type: "block.indexed",
 				Payload: map[string]interface{}{
 					"chainId": "chain1",
@@ -265,7 +266,7 @@ func TestServerMessageSerialization(t *testing.T) {
 		},
 		{
 			name: "error message with reconnect info",
-			message: ServerMessage{
+			message: controller.ServerMessage{
 				Type: "error",
 				Payload: map[string]interface{}{
 					"message":     "Redis connection lost, attempting to reconnect...",
@@ -278,7 +279,7 @@ func TestServerMessageSerialization(t *testing.T) {
 		},
 		{
 			name: "info message",
-			message: ServerMessage{
+			message: controller.ServerMessage{
 				Type: "info",
 				Payload: map[string]interface{}{
 					"message": "Redis connection established",
@@ -299,7 +300,7 @@ func TestServerMessageSerialization(t *testing.T) {
 			require.NoError(t, err)
 
 			// Verify we can unmarshal back
-			var decoded ServerMessage
+			var decoded controller.ServerMessage
 			err = json.Unmarshal(data, &decoded)
 			require.NoError(t, err)
 			assert.Equal(t, tt.message.Type, decoded.Type)
@@ -312,13 +313,13 @@ func TestClientMessageParsing(t *testing.T) {
 	tests := []struct {
 		name    string
 		json    string
-		want    ClientMessage
+		want    controller.ClientMessage
 		wantErr bool
 	}{
 		{
 			name: "subscribe to specific chain",
 			json: `{"action":"subscribe","chainId":"chain1"}`,
-			want: ClientMessage{
+			want: controller.ClientMessage{
 				Action:  "subscribe",
 				ChainID: "chain1",
 			},
@@ -327,7 +328,7 @@ func TestClientMessageParsing(t *testing.T) {
 		{
 			name: "subscribe to all chains",
 			json: `{"action":"subscribe","chainId":"*"}`,
-			want: ClientMessage{
+			want: controller.ClientMessage{
 				Action:  "subscribe",
 				ChainID: "*",
 			},
@@ -336,7 +337,7 @@ func TestClientMessageParsing(t *testing.T) {
 		{
 			name: "unsubscribe",
 			json: `{"action":"unsubscribe","chainId":"chain1"}`,
-			want: ClientMessage{
+			want: controller.ClientMessage{
 				Action:  "unsubscribe",
 				ChainID: "chain1",
 			},
@@ -351,7 +352,7 @@ func TestClientMessageParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var msg ClientMessage
+			var msg controller.ClientMessage
 			err := json.Unmarshal([]byte(tt.json), &msg)
 
 			if tt.wantErr {

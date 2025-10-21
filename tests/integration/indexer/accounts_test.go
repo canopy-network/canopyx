@@ -343,7 +343,7 @@ func TestAccountsGenesisHandling(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Store genesis state (height 0) in genesis table
-	genesisAccounts := []*rpc.RpcAccount{
+	genesisAccounts := []*rpc.Account{
 		{Address: "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", Amount: 10000},
 		{Address: "0x0000000000000000000000000000000000000000", Amount: 20000},
 	}

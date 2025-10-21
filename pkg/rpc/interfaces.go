@@ -12,7 +12,7 @@ type Client interface {
 	BlockByHeight(ctx context.Context, height uint64) (*indexer.Block, error)
 	TxsByHeight(ctx context.Context, height uint64) ([]*indexer.Transaction, error)
 	EventsByHeight(ctx context.Context, height uint64) ([]*indexer.Event, error)
-	AccountsByHeight(ctx context.Context, height uint64) ([]*RpcAccount, error)
+	AccountsByHeight(ctx context.Context, height uint64) ([]*Account, error)
 	OrdersByHeight(ctx context.Context, height uint64, chainID uint64) ([]*RpcOrder, error)
 	GetGenesisState(ctx context.Context, height uint64) (*GenesisState, error)
 	DexPrice(ctx context.Context, chainID uint64) (*indexer.DexPrice, error)

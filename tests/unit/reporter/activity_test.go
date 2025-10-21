@@ -1,4 +1,4 @@
-package activity
+package activity_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/reporter/activity"
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/testsuite"
@@ -27,7 +28,7 @@ func TestComputeTxsAllChainsExecutesQueriesForActiveChains(t *testing.T) {
 	chainsMap := xsync.NewMap[string, db.ChainStore]()
 	chainsMap.Store("chain-A", chainA)
 
-	ctx := &Context{
+	ctx := &activity.Context{
 		Logger:    logger,
 		IndexerDB: adminStore,
 		ReportsDB: &reporterFakeReportsStore{name: "reports_db"},

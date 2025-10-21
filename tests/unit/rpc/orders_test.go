@@ -1,12 +1,12 @@
-package rpc
+package rpc_test
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
+	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,7 +15,7 @@ import (
 func TestHTTPClient_OrderByID(t *testing.T) {
 	buyerAddr := "buyer1"
 	deadline := uint64(10000)
-	response := RpcOrder{
+	response := rpc.RpcOrder{
 		OrderID:         "order456",
 		Committee:       2,
 		AmountForSale:   5000,
@@ -26,14 +26,13 @@ func TestHTTPClient_OrderByID(t *testing.T) {
 		Status:          "open",
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, "/v1/query/order")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
+	})
 
-	client := NewHTTPWithOpts(Opts{Endpoints: []string{server.URL}})
+	client := newTestRPCClient(handler)
 	height := uint64(1000)
 	order, err := client.OrderByID(context.Background(), "order456", 2, &height)
 
@@ -46,8 +45,8 @@ func TestHTTPClient_OrderByID(t *testing.T) {
 
 // TestHTTPClient_OrdersByHeight tests fetching orders at a specific height.
 func TestHTTPClient_OrdersByHeight(t *testing.T) {
-	response := ordersResponse{
-		Results: []*RpcOrder{
+	response := rpc.OrdersResponse{
+		Results: []*rpc.RpcOrder{
 			{OrderID: "order1", Committee: 1, AmountForSale: 1000, Status: "open"},
 			{OrderID: "order2", Committee: 2, AmountForSale: 2000, Status: "filled"},
 		},
@@ -57,14 +56,13 @@ func TestHTTPClient_OrdersByHeight(t *testing.T) {
 		TotalCount: 2,
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/query/orders", r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
+	})
 
-	client := NewHTTPWithOpts(Opts{Endpoints: []string{server.URL}})
+	client := newTestRPCClient(handler)
 	orders, err := client.OrdersByHeight(context.Background(), 1000, 1)
 
 	require.NoError(t, err)
