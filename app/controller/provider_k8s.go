@@ -184,7 +184,12 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 // EnsureChain ensures a Kubernetes Deployment exists for the specified chain, updating or creating it as necessary.
 func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 	start := time.Now()
-	name := deploymentName(c.ID)
+	chainIDUint, parseErr := strconv.ParseUint(c.ID, 10, 64)
+	if parseErr != nil {
+		p.Logger.Error("invalid chain ID format", zap.String("chain_id", c.ID), zap.Error(parseErr))
+		return fmt.Errorf("invalid chain ID: %w", parseErr)
+	}
+	name := deploymentName(chainIDUint)
 	labels := map[string]string{
 		"app":        "indexer",
 		"managed-by": "canopyx-controller",
@@ -324,7 +329,12 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 
 // PauseChain scales down the Kubernetes deployment associated with the given chainID to zero replicas, effectively pausing it.
 func (p *K8sProvider) PauseChain(ctx context.Context, chainID string) error {
-	name := deploymentName(chainID)
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		p.Logger.Error("invalid chain ID format", zap.String("chain_id", chainID), zap.Error(parseErr))
+		return fmt.Errorf("invalid chain ID: %w", parseErr)
+	}
+	name := deploymentName(chainIDUint)
 	p.Logger.Info("pause requested", zap.String("chain_id", chainID), zap.String("deployment", name))
 
 	deploy, err := p.client.AppsV1().Deployments(p.ns).Get(ctx, name, meta.GetOptions{})
@@ -352,7 +362,12 @@ func (p *K8sProvider) PauseChain(ctx context.Context, chainID string) error {
 // DeleteChain removes the Kubernetes resources associated with a specific chain by its chainID.
 // It deletes the deployment and its corresponding horizontal pod autoscaler, if present.
 func (p *K8sProvider) DeleteChain(ctx context.Context, chainID string) error {
-	name := deploymentName(chainID)
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		p.Logger.Error("invalid chain ID format", zap.String("chain_id", chainID), zap.Error(parseErr))
+		return fmt.Errorf("invalid chain ID: %w", parseErr)
+	}
+	name := deploymentName(chainIDUint)
 	p.Logger.Info("delete requested", zap.String("chain_id", chainID), zap.String("deployment", name))
 
 	_ = p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Delete(ctx, name, meta.DeleteOptions{})
@@ -369,7 +384,11 @@ func (p *K8sProvider) DeleteChain(ctx context.Context, chainID string) error {
 // GetDeploymentHealth checks the health status of a chain's deployment by inspecting
 // the Kubernetes deployment and pod status.
 func (p *K8sProvider) GetDeploymentHealth(ctx context.Context, chainID string) (status, message string, err error) {
-	name := deploymentName(chainID)
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return "unknown", fmt.Sprintf("invalid chain ID format: %v", parseErr), parseErr
+	}
+	name := deploymentName(chainIDUint)
 
 	// Get the deployment
 	deploy, err := p.client.AppsV1().Deployments(p.ns).Get(ctx, name, meta.GetOptions{})
@@ -633,15 +652,10 @@ func int32FromEnv(key string, def int32) int32 {
 func int32Ptr(i int32) *int32 { return &i }
 
 // deploymentName generates a DNS-compliant deployment name based on the given chainID, ensuring it meets K8s constraints.
-func deploymentName(chainID string) string {
-	s := strings.ToLower(chainID)
-	s = strings.ReplaceAll(s, "_", "-")
-	s = strings.ReplaceAll(s, ".", "-")
-	s = dns1123.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if len(s) == 0 {
-		s = "chain"
-	}
+func deploymentName(chainID uint64) string {
+	// Convert uint64 to string for DNS name generation
+	s := strconv.FormatUint(chainID, 10)
+	// Numeric strings are already DNS-compliant, no need for complex transformations
 	if !strings.HasPrefix(s, "canopyx-indexer-") {
 		s = "canopyx-indexer-" + s
 	}

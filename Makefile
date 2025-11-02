@@ -68,8 +68,6 @@ help:
 	@echo "  make docker-admin-web   - build admin web docker image"
 	@echo "  make docker-indexer     - build indexer docker image"
 	@echo "  make docker-controller  - build controller docker image"
-	@echo "  make docker-query       - build query docker image"
-	@echo "  make docker-reporter    - build reporter docker image"
 	@echo "  make docker-all         - build all docker images (tag=$(TAG), prefix=$(IMAGE_PREFIX))"
 	@echo ""
 	@echo "  make kind-up            - ensure local registry + kind cluster, wire together"
@@ -194,8 +192,6 @@ build-go:
 	@$(GO) build -trimpath -o bin/admin     ./cmd/admin
 	@$(GO) build -trimpath -o bin/controller ./cmd/controller
 	@$(GO) build -trimpath -o bin/indexer   ./cmd/indexer
-	@$(GO) build -trimpath -o bin/reporter  ./cmd/reporter
-	@$(GO) build -trimpath -o bin/query     ./cmd/query
 
 .PHONY: build
 build: build-web build-go
@@ -308,20 +304,8 @@ docker-controller:
 		-f Dockerfile.controller \
 		-t $(IMAGE_PREFIX)/controller:$(TAG) .
 
-.PHONY: docker-query
-docker-query:
-	$(DOCKER) build \
-		-f Dockerfile.query \
-		-t $(IMAGE_PREFIX)/query:$(TAG) .
-
-.PHONY: docker-reporter
-docker-reporter:
-	$(DOCKER) build \
-		-f Dockerfile.reporter \
-		-t $(IMAGE_PREFIX)/reporter:$(TAG) .
-
 .PHONY: docker-all
-docker-all: docker-admin docker-admin-web docker-indexer docker-controller docker-query docker-reporter
+docker-all: docker-admin docker-admin-web docker-indexer docker-controller
 	@echo "✅ All Docker images built with tag $(TAG)"
 
 # ----------------------------

@@ -40,7 +40,7 @@ interface WebSocketProviderProps {
  * - Automatic reconnection with exponential backoff
  * - Per-chain event tracking
  * - Connection pooling (keeps connection alive after last unsubscribe)
- * - Uses same-origin proxy pattern (/api/ws) - no environment variables needed
+ * - Uses same-origin proxy pattern (/api/admin/ws) - no environment variables needed
  *
  * @example
  * ```tsx
@@ -51,11 +51,11 @@ interface WebSocketProviderProps {
  */
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // Use same-origin WebSocket connection
-  // The nginx proxy routes /api/query/ws to Query service internally
-  // Development: ws://localhost:3003/api/query/ws (via nginx proxy)
-  // Production: wss://yourdomain.com/api/query/ws (via ingress)
+  // The nginx proxy routes /api/admin/ws to Admin service internally
+  // Development: ws://localhost:3003/api/admin/ws (via nginx proxy)
+  // Production: wss://yourdomain.com/api/admin/ws (via ingress)
   const wsUrl = typeof window !== 'undefined'
-    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/query/ws`
+    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/admin/ws`
     : ''
 
   // Track active subscriptions from all components

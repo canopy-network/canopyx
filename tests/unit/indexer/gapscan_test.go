@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db"
-	"github.com/canopy-network/canopyx/pkg/indexer/activity"
-	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
+	"github.com/canopy-network/canopyx/app/indexer/activity"
+	"github.com/canopy-network/canopyx/app/indexer/workflow"
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +24,7 @@ func TestGapScanWorkflow_SingleSmallGap(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:  2000,
 		lastIndexed: 0,
-		gaps: []db.Gap{
+		gaps: []adminstore.Gap{
 			{From: 1000, To: 1099}, // 100 blocks
 		},
 		shouldFail:   make(map[string]bool),
@@ -89,7 +89,7 @@ func TestGapScanWorkflow_MultipleSmallGaps(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:  1000,
 		lastIndexed: 0,
-		gaps: []db.Gap{
+		gaps: []adminstore.Gap{
 			{From: 100, To: 149}, // 50 blocks
 			{From: 500, To: 599}, // 100 blocks
 		},
@@ -151,7 +151,7 @@ func TestGapScanWorkflow_LargeGap(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:  50000,
 		lastIndexed: 0,
-		gaps: []db.Gap{
+		gaps: []adminstore.Gap{
 			{From: 1, To: 10000}, // 10,000 blocks
 		},
 		shouldFail:   make(map[string]bool),
@@ -216,7 +216,7 @@ func TestGapScanWorkflow_NoGaps(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:   1000,
 		lastIndexed:  1000,
-		gaps:         []db.Gap{}, // No gaps
+		gaps:         []adminstore.Gap{}, // No gaps
 		shouldFail:   make(map[string]bool),
 		failureCount: make(map[string]int),
 	}
@@ -274,7 +274,7 @@ func TestGapScanWorkflow_SchedulerAlreadyRunning(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:  10000,
 		lastIndexed: 0,
-		gaps: []db.Gap{
+		gaps: []adminstore.Gap{
 			{From: 1, To: 5000}, // 5,000 blocks
 		},
 		shouldFail:   make(map[string]bool),
@@ -340,7 +340,7 @@ func TestGapScanWorkflow_MultipleGapsLargeTotal(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:  2000,
 		lastIndexed: 0,
-		gaps: []db.Gap{
+		gaps: []adminstore.Gap{
 			{From: 100, To: 699},   // 600 blocks
 			{From: 1000, To: 1499}, // 500 blocks
 		},
@@ -418,7 +418,7 @@ func TestGapScanWorkflow_ErrorHandling(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:  1000,
 		lastIndexed: 0,
-		gaps:        []db.Gap{},
+		gaps:        []adminstore.Gap{},
 		shouldFail: map[string]bool{
 			"FindGaps": true, // Simulate FindGaps failure
 		},
@@ -480,7 +480,7 @@ func TestGapScanWorkflow_GetLatestHeadError(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:  1000,
 		lastIndexed: 0,
-		gaps:        []db.Gap{},
+		gaps:        []adminstore.Gap{},
 		shouldFail: map[string]bool{
 			"GetLatestHead": true, // Simulate GetLatestHead failure
 		},
@@ -536,7 +536,7 @@ func TestGapScanWorkflow_EdgeCase_ExactlyThreshold(t *testing.T) {
 	mock := &mockSchedulerActivities{
 		latestHead:  2000,
 		lastIndexed: 0,
-		gaps: []db.Gap{
+		gaps: []adminstore.Gap{
 			{From: 1, To: 1000}, // Exactly 1000 blocks
 		},
 		shouldFail:   make(map[string]bool),
@@ -589,10 +589,10 @@ func TestGapScanWorkflow_PerformanceLargeNumberOfGaps(t *testing.T) {
 	env := suite.NewTestWorkflowEnvironment()
 
 	// Create 100 small gaps (5 blocks each = 500 blocks total)
-	gaps := make([]db.Gap, 100)
+	gaps := make([]adminstore.Gap, 100)
 	for i := 0; i < 100; i++ {
 		start := uint64(i*10 + 1)
-		gaps[i] = db.Gap{From: start, To: start + 4} // 5 blocks per gap
+		gaps[i] = adminstore.Gap{From: start, To: start + 4} // 5 blocks per gap
 	}
 
 	mock := &mockSchedulerActivities{

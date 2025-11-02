@@ -2,11 +2,12 @@ package indexer
 
 import (
 	"context"
+	"strconv"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db"
-	"github.com/canopy-network/canopyx/pkg/indexer/activity"
-	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
+	"github.com/canopy-network/canopyx/app/indexer/activity"
+	"github.com/canopy-network/canopyx/app/indexer/workflow"
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/rpc"
@@ -64,9 +65,10 @@ func Initialize(ctx context.Context) *App {
 		panic(err)
 	}
 
-	indexerDb, _, basicDbsErr := db.NewBasicDbs(ctx, logger)
-	if basicDbsErr != nil {
-		logger.Fatal("Unable to initialize basic databases", zap.Error(basicDbsErr))
+	indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
+	indexerDb, err := adminstore.New(ctx, logger, indexerDbName)
+	if err != nil {
+		logger.Fatal("Unable to initialize indexer database", zap.Error(err))
 	}
 
 	chainsDb, chainsDbErr := indexerDb.EnsureChainsDbs(ctx)
@@ -79,6 +81,11 @@ func Initialize(ctx context.Context) *App {
 		logger.Fatal("Unable to establish temporal connection", zap.Error(err))
 	}
 
+	if err := temporalClient.EnsureNamespace(ctx, 7*24*time.Hour); err != nil {
+		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
+	}
+	logger.Info("Temporal namespace ready", zap.String("namespace", temporalClient.Namespace))
+
 	// Initialize Redis client for real-time event publishing
 	redisClient, err := redis.NewClient(ctx, logger)
 	if err != nil {
@@ -88,6 +95,11 @@ func Initialize(ctx context.Context) *App {
 	chainID := utils.Env("CHAIN_ID", "")
 	if chainID == "" {
 		logger.Fatal("CHAIN_ID environment variable is required")
+	}
+	// Parse chainID to uint64 for Temporal queue names
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		logger.Fatal("CHAIN_ID must be a valid unsigned integer", zap.String("chain_id", chainID), zap.Error(parseErr))
 	}
 
 	// RPC rate limiting: Configured for high-throughput parallel block indexing (700k+ blocks)
@@ -117,7 +129,7 @@ func Initialize(ctx context.Context) *App {
 
 	activityContext := &activity.Context{
 		Logger:                  logger,
-		IndexerDB:               indexerDb,
+		AdminDB:                 indexerDb,
 		ChainsDB:                chainsDb,
 		RPCFactory:              rpc.NewHTTPFactory(rpcOpts),
 		RPCOpts:                 rpcOpts,
@@ -139,7 +151,7 @@ func Initialize(ctx context.Context) *App {
 	// Create Live Worker - optimized for low-latency, high-priority blocks
 	liveWorker := worker.New(
 		temporalClient.TClient,
-		temporalClient.GetIndexerLiveQueue(chainID),
+		temporalClient.GetIndexerLiveQueue(chainIDUint),
 		worker.Options{
 			// Lower poller count - live queue should have small backlog
 			MaxConcurrentWorkflowTaskPollers: 10,
@@ -154,7 +166,7 @@ func Initialize(ctx context.Context) *App {
 	// Create Historical Worker - optimized for high-throughput batch processing
 	historicalWorker := worker.New(
 		temporalClient.TClient,
-		temporalClient.GetIndexerHistoricalQueue(chainID),
+		temporalClient.GetIndexerHistoricalQueue(chainIDUint),
 		worker.Options{
 			// Higher poller count for large backlogs
 			MaxConcurrentWorkflowTaskPollers: 50,
@@ -200,7 +212,7 @@ func Initialize(ctx context.Context) *App {
 
 	opsWorker := worker.New(
 		temporalClient.TClient,
-		temporalClient.GetIndexerOpsQueue(chainID),
+		temporalClient.GetIndexerOpsQueue(chainIDUint),
 		worker.Options{
 			MaxConcurrentWorkflowTaskPollers: 5,
 			MaxConcurrentActivityTaskPollers: 5,

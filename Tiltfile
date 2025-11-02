@@ -477,55 +477,14 @@ k8s_resource(
 )
 
 # ------------------------------------------
-# QUERY API (Optional)
+# QUERY API - REMOVED (Phase 4: Query Service Deprecation)
 # ------------------------------------------
-
-if components.get('query', True):
-    print("Query API enabled")
-
-    docker_build_with_restart(
-        "localhost:5001/canopyx-query",
-        ".",
-        dockerfile="./Dockerfile.query",
-        entrypoint=["/app/query"],
-        live_update=[sync("bin/query", "/app/query")],
-        ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
-    )
-
-    # Load query manifests and apply resource limits from profile
-    query_objects = decode_yaml_stream(kustomize("./deploy/k8s/query/overlays/local"))
-
-    for o in query_objects:
-        if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-query':
-            containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
-            for container in containers:
-                if container.get('name') == 'query':
-                    query_cpu = canopyx_cfg.get('query_cpu_limit', '1000m')
-                    query_mem = canopyx_cfg.get('query_memory_limit', '1Gi')
-                    container['resources'] = {
-                        'limits': {
-                            'cpu': query_cpu,
-                            'memory': query_mem
-                        },
-                        'requests': {
-                            'cpu': str(int(query_cpu.replace('m', '')) // 2) + 'm' if 'm' in query_cpu else str(float(query_cpu) / 2),
-                            'memory': str(int(query_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in query_mem else str(int(query_mem.replace('Mi', '')) // 2) + 'Mi'
-                        }
-                    }
-                    print("CanopyX Query resources: CPU=%s, Memory=%s" % (query_cpu, query_mem))
-            break
-
-    k8s_yaml(encode_yaml_stream(query_objects))
-
-    k8s_resource(
-        "canopyx-query",
-        port_forwards=["%s:3001" % get_port('query', 3001)],
-        labels=['apps'],
-        resource_deps=["clickhouse-server", "canopyx-admin"],
-        pod_readiness='wait',
-    )
-else:
-    print("Query API disabled")
+# Query service has been deprecated and removed.
+# Essential endpoints migrated to admin service:
+#   - /api/admin/entities (schema introspection)
+#   - /api/admin/chains/{id}/schema (table schemas)
+#   - /api/admin/ws (WebSocket real-time events)
+# Entity query endpoints will be replaced by external service built by engineering team.
 
 # ------------------------------------------
 # ADMIN WEB (Optional)
@@ -607,7 +566,7 @@ if components.get('admin_web', True):
         "admin-web-proxy",
         port_forwards=["%s:80" % get_port('admin_web', 3003)],
         labels=['apps'],
-        resource_deps=["canopyx-admin-web", "canopyx-query", "canopyx-admin"],
+        resource_deps=["canopyx-admin-web", "canopyx-admin"],
         pod_readiness='wait',
         objects=["admin-web-proxy-config:configmap"]
     )
@@ -671,16 +630,74 @@ k8s_resource(
 )
 
 # ------------------------------------------
-# CANOPY LOCAL NODE (Optional)
+# CANOPY LOCAL NODES (Optional - Dual Node Setup)
 # ------------------------------------------
 
 # Get configured Canopy source path
 canopy_path = paths_cfg.get('canopy_source', '../canopy')
 # Note: Tilt/Starlark doesn't have os.path.expanduser, so use absolute paths in config or relative paths
 
-if components.get('canopy_node', False):
+# Get Canopy deployment mode: "off" | "single" | "dual"
+canopy_mode = components.get('canopy', 'off')
+
+if canopy_mode == 'dual':
     if os.path.exists(canopy_path):
-        print("Canopy node enabled - found source at %s" % canopy_path)
+        print("Canopy dual-node setup enabled - found source at %s" % canopy_path)
+
+        # Build single image for both nodes
+        docker_build(
+            "localhost:5001/canopy-node",
+            canopy_path,
+            dockerfile=canopy_path + "/.docker/Dockerfile",
+            live_update=[],
+        )
+
+        # Deploy both nodes
+        k8s_yaml(kustomize("./deploy/k8s/canopy-nodes/overlays/local"))
+
+        # Node 1 resource (Chain ID 1)
+        k8s_resource(
+            "canopy-node-1",
+            objects=[
+                "canopy-node-1-config:configmap",
+                "canopy-node-1-genesis:configmap",
+                "canopy-node-1-keystore:configmap"
+            ],
+            port_forwards=[
+                "%s:50000" % get_port('canopy1_wallet', 50000),
+                "%s:50001" % get_port('canopy1_explorer', 50001),
+                "%s:50002" % get_port('canopy1_rpc', 50002),
+                "%s:50003" % get_port('canopy1_admin', 50003),
+                "%s:9001" % get_port('canopy1_p2p', 9001),
+            ],
+            labels=['blockchain'],
+            pod_readiness='wait',
+        )
+
+        # Node 2 resource (Chain ID 2)
+        k8s_resource(
+            "canopy-node-2",
+            objects=[
+                "canopy-node-2-config:configmap",
+                "canopy-node-2-genesis:configmap",
+                "canopy-node-2-keystore:configmap"
+            ],
+            port_forwards=[
+                "%s:40000" % get_port('canopy2_wallet', 40000),
+                "%s:40001" % get_port('canopy2_explorer', 40001),
+                "%s:40002" % get_port('canopy2_rpc', 40002),
+                "%s:40003" % get_port('canopy2_admin', 40003),
+                "%s:9001" % get_port('canopy2_p2p', 9002),
+            ],
+            labels=['blockchain'],
+            pod_readiness='wait',
+        )
+    else:
+        fail("Canopy dual nodes enabled but source not found at: %s\nPlease update paths.canopy_source in tilt-config.yaml" % canopy_path)
+
+elif canopy_mode == 'single':
+    if os.path.exists(canopy_path):
+        print("Canopy single node enabled - found source at %s" % canopy_path)
 
         docker_build(
             "localhost:5001/canopy-node",
@@ -706,9 +723,12 @@ if components.get('canopy_node', False):
             pod_readiness='wait',
         )
     else:
-        fail("Canopy node enabled but source not found at: %s\nPlease update paths.canopy_source in tilt-config.yaml" % canopy_path)
+        fail("Canopy single node enabled but source not found at: %s\nPlease update paths.canopy_source in tilt-config.yaml" % canopy_path)
+
+elif canopy_mode == 'off':
+    print("Canopy nodes disabled")
 else:
-    print("Canopy node disabled")
+    fail("Invalid canopy mode: '%s'. Must be 'off', 'single', or 'dual'" % canopy_mode)
 
 # ------------------------------------------
 # INDEXER (Always Required)
@@ -739,7 +759,93 @@ local_resource(
 # TRIGGER DEFAULT CHAIN (Conditional on Canopy node)
 # ------------------------------------------
 
-if components.get('canopy_node', False) and os.path.exists(canopy_path):
+# Auto-register dual nodes
+if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
+    if dev_cfg.get('auto_register_chain', True):
+        print("Auto-registering dual Canopy chains")
+
+        local_resource(
+            name="register-canopy-chains",
+            cmd="""
+            # Wait for admin API to be ready
+            echo "Waiting for admin API..."
+            for i in {1..30}; do
+              if curl -f http://localhost:3000/api/health 2>/dev/null; then
+                echo "✓ Admin API is ready"
+                break
+              fi
+              echo "  Waiting for admin API... attempt $i/30"
+              sleep 2
+            done
+
+            # Wait for Canopy Node 1 to produce at least one block
+            echo "Waiting for Canopy Node 1 to produce blocks..."
+            for i in {1..60}; do
+              CHAIN_ID=$(curl -s -X POST http://canopy-node-1.default.svc.cluster.local:50002/v1/query/cert-by-height \\
+                -H 'Content-Type: application/json' \\
+                -d '{"height":0}' 2>/dev/null | grep -o '"chainId":[0-9]*' | cut -d: -f2)
+              if [ ! -z "$CHAIN_ID" ] && [ "$CHAIN_ID" != "0" ]; then
+                echo "✓ Node 1 is ready (Chain ID: $CHAIN_ID)"
+                break
+              fi
+              echo "  Waiting for node 1... attempt $i/60"
+              sleep 2
+            done
+
+            # Wait for Canopy Node 2 to produce at least one block
+            echo "Waiting for Canopy Node 2 to produce blocks..."
+            for i in {1..60}; do
+              CHAIN_ID=$(curl -s -X POST http://canopy-node-2.default.svc.cluster.local:40002/v1/query/cert-by-height \\
+                -H 'Content-Type: application/json' \\
+                -d '{"height":0}' 2>/dev/null | grep -o '"chainId":[0-9]*' | cut -d: -f2)
+              if [ ! -z "$CHAIN_ID" ] && [ "$CHAIN_ID" != "0" ]; then
+                echo "✓ Node 2 is ready (Chain ID: $CHAIN_ID)"
+                break
+              fi
+              echo "  Waiting for node 2... attempt $i/60"
+              sleep 2
+            done
+
+            # Register Chain 1 (Root Chain) - NO chain_id field, let controller discover it
+            echo ""
+            echo "Registering Canopy Chain 1..."
+            if curl -X POST -f http://localhost:3000/api/chains \\
+              -H 'Authorization: Bearer devtoken' \\
+              -H 'Content-Type: application/json' \\
+              -d '{"rpc_endpoints":["http://canopy-node-1.default.svc.cluster.local:50002"], "chain_name":"Canopy Chain 1","image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
+              echo "✓ Successfully registered Canopy Chain 1"
+            else
+              echo "✗ Failed to register Canopy Chain 1 (may already exist or still starting)"
+            fi
+
+            # Wait a bit before registering second chain
+            sleep 3
+
+            # Register Chain 2 (Subchain) - NO chain_id field, let controller discover it
+            echo "Registering Canopy Chain 2..."
+            if curl -X POST -f http://localhost:3000/api/chains \\
+              -H 'Authorization: Bearer devtoken' \\
+              -H 'Content-Type: application/json' \\
+              -d '{"rpc_endpoints":["http://canopy-node-2.default.svc.cluster.local:40002"], "chain_name":"Canopy Chain 2","image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
+              echo "✓ Successfully registered Canopy Chain 2"
+            else
+              echo "✗ Failed to register Canopy Chain 2 (may already exist or still starting)"
+            fi
+
+            echo ""
+            echo "Chain registration complete!"
+            """,
+            deps=[],
+            labels=['setup'],
+            resource_deps=["canopyx-admin", "canopy-node-1", "canopy-node-2"],
+            allow_parallel=False,
+            auto_init=True,
+        )
+    else:
+        print("Auto-register chains disabled in config")
+
+# Auto-register single node (legacy support)
+elif components.get('canopy', 'off') == 'single' and os.path.exists(canopy_path):
     if dev_cfg.get('auto_register_chain', True):
         print("Auto-registering local Canopy chain")
 

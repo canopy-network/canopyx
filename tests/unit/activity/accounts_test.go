@@ -2,15 +2,15 @@ package activity_test
 
 import (
 	"context"
-	"github.com/canopy-network/canopyx/pkg/indexer/activity"
+	"github.com/canopy-network/canopyx/app/indexer/activity"
 	"testing"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db"
+	"github.com/canopy-network/canopyx/app/indexer/types"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/assert"
@@ -165,11 +165,31 @@ func (m *mockAccountsChainStore) GetGenesisData(_ context.Context, _ uint64) (st
 	return m.genesisJSON, nil
 }
 
+func (m *mockAccountsChainStore) HasGenesis(context.Context, uint64) (bool, error) {
+	return m.genesisJSON != "", nil
+}
+
+func (m *mockAccountsChainStore) InsertGenesis(_ context.Context, height uint64, data string, _ time.Time) error {
+	if height != 0 {
+		return nil
+	}
+	m.genesisJSON = data
+	return nil
+}
+
 func (m *mockAccountsChainStore) GetAccountCreatedHeight(_ context.Context, address string) uint64 {
 	if m.createdHeights == nil {
 		return 0
 	}
 	return m.createdHeights[address]
+}
+
+func (m *mockAccountsChainStore) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.Order) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) GetOrderCreatedHeight(_ context.Context, orderID string) uint64 {
+	return 0
 }
 
 func (m *mockAccountsChainStore) QueryBlocks(ctx context.Context, height uint64, limit int, desc bool) ([]indexermodels.Block, error) {
@@ -204,12 +224,12 @@ func (m *mockAccountsChainStore) QueryTransactionsRaw(ctx context.Context, heigh
 	return args.Get(0).([]map[string]interface{}), args.Error(1)
 }
 
-func (m *mockAccountsChainStore) DescribeTable(ctx context.Context, table string) ([]db.Column, error) {
+func (m *mockAccountsChainStore) DescribeTable(ctx context.Context, table string) ([]chainstore.Column, error) {
 	args := m.Called(ctx, table)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]db.Column), args.Error(1)
+	return args.Get(0).([]chainstore.Column), args.Error(1)
 }
 
 func (m *mockAccountsChainStore) PromoteEntity(ctx context.Context, entity entities.Entity, height uint64) error {
@@ -320,11 +340,11 @@ func (m *mockAccountsChainStore) InsertPoolsStaging(ctx context.Context, pools [
 	return nil
 }
 
-func (m *mockAccountsChainStore) GetDexVolume24h(ctx context.Context) ([]db.DexVolumeStats, error) {
+func (m *mockAccountsChainStore) GetDexVolume24h(ctx context.Context) ([]chainstore.DexVolumeStats, error) {
 	return nil, nil
 }
 
-func (m *mockAccountsChainStore) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]db.OrderBookLevel, error) {
+func (m *mockAccountsChainStore) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]chainstore.OrderBookLevel, error) {
 	return nil, nil
 }
 
@@ -374,13 +394,13 @@ func TestIndexAccounts_Success(t *testing.T) {
 	}
 
 	// Setup chains map
-	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap := xsync.NewMap[string, chainstore.Store]()
 	chainsMap.Store("chain-A", mockChainStore)
 
 	// Create activity context
 	activityCtx := &activity.Context{
 		Logger:     logger,
-		IndexerDB:  adminStore,
+		AdminDB:    adminStore,
 		ChainsDB:   chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
@@ -438,12 +458,12 @@ func TestIndexAccounts_NoChanges(t *testing.T) {
 		databaseName: "chain_a",
 	}
 
-	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap := xsync.NewMap[string, chainstore.Store]()
 	chainsMap.Store("chain-A", mockChainStore)
 
 	activityCtx := &activity.Context{
 		Logger:     logger,
-		IndexerDB:  adminStore,
+		AdminDB:    adminStore,
 		ChainsDB:   chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
@@ -528,19 +548,11 @@ func TestIndexAccounts_HeightOne(t *testing.T) {
 		prevAmount, existed := prevMap[curr.Address]
 
 		if curr.Amount != prevAmount {
-			var createdHeight uint64
-			if !existed {
-				createdHeight = 1 // New account at height 1
-			} else {
-				createdHeight = 0 // Existed in genesis
-			}
-
 			changedAccounts = append(changedAccounts, &indexermodels.Account{
-				Address:       curr.Address,
-				Amount:        curr.Amount,
-				Height:        1,
-				HeightTime:    input.BlockTime,
-				CreatedHeight: createdHeight,
+				Address:    curr.Address,
+				Amount:     curr.Amount,
+				Height:     1,
+				HeightTime: input.BlockTime,
 			})
 		}
 	}
@@ -549,11 +561,9 @@ func TestIndexAccounts_HeightOne(t *testing.T) {
 	assert.Len(t, changedAccounts, 2) // 0xaaa changed, 0xccc is new
 	assert.Equal(t, "0xaaa", changedAccounts[0].Address)
 	assert.Equal(t, uint64(5000), changedAccounts[0].Amount)
-	assert.Equal(t, uint64(0), changedAccounts[0].CreatedHeight) // Existed in genesis
 
 	assert.Equal(t, "0xccc", changedAccounts[1].Address)
 	assert.Equal(t, uint64(7000), changedAccounts[1].Amount)
-	assert.Equal(t, uint64(1), changedAccounts[1].CreatedHeight) // New at height 1
 }
 
 // TestIndexAccounts_RPCFailure tests handling of RPC errors
@@ -580,12 +590,12 @@ func TestIndexAccounts_RPCFailure(t *testing.T) {
 		databaseName: "chain_a",
 	}
 
-	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap := xsync.NewMap[string, chainstore.Store]()
 	chainsMap.Store("chain-A", mockChainStore)
 
 	activityCtx := &activity.Context{
 		Logger:     logger,
-		IndexerDB:  adminStore,
+		AdminDB:    adminStore,
 		ChainsDB:   chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
@@ -665,12 +675,12 @@ func TestIndexAccounts_LargeDataset(t *testing.T) {
 	}
 	mockChainStore.createdHeights = make(map[string]uint64)
 
-	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap := xsync.NewMap[string, chainstore.Store]()
 	chainsMap.Store("chain-A", mockChainStore)
 
 	activityCtx := &activity.Context{
 		Logger:     logger,
-		IndexerDB:  adminStore,
+		AdminDB:    adminStore,
 		ChainsDB:   chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}

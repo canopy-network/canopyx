@@ -22,10 +22,6 @@ data:
         server canopyx-admin-web.default.svc.cluster.local:3003;
       }
 
-      upstream query_service {
-        server canopyx-query.default.svc.cluster.local:3001;
-      }
-
       upstream admin_api {
         server canopyx-admin.default.svc.cluster.local:3000;
       }
@@ -34,9 +30,9 @@ data:
         listen 80;
         server_name _;
 
-        # Query service WebSocket endpoint
-        location /api/query/ws {
-          proxy_pass http://query_service/ws;
+        # Admin API WebSocket endpoint (migrated from query service)
+        location /api/admin/ws {
+          proxy_pass http://admin_api/api/ws;
           proxy_http_version 1.1;
           proxy_set_header Upgrade $http_upgrade;
           proxy_set_header Connection $connection_upgrade;
@@ -48,16 +44,6 @@ data:
           # WebSocket timeout settings
           proxy_read_timeout 86400s;
           proxy_send_timeout 86400s;
-        }
-
-        # Query service REST API
-        location /api/query/ {
-          proxy_pass http://query_service/;
-          proxy_http_version 1.1;
-          proxy_set_header Host $host;
-          proxy_set_header X-Real-IP $remote_addr;
-          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-          proxy_set_header X-Forwarded-Proto $scheme;
         }
 
         # Admin API

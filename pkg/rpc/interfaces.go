@@ -15,10 +15,13 @@ type Client interface {
 	AccountsByHeight(ctx context.Context, height uint64) ([]*Account, error)
 	OrdersByHeight(ctx context.Context, height uint64, chainID uint64) ([]*RpcOrder, error)
 	GetGenesisState(ctx context.Context, height uint64) (*GenesisState, error)
+	State(ctx context.Context) (*StateResponse, error)
 	DexPrice(ctx context.Context, chainID uint64) (*indexer.DexPrice, error)
 	DexPrices(ctx context.Context) ([]*indexer.DexPrice, error)
 	PoolByID(ctx context.Context, id uint64) (*RpcPool, error)
 	Pools(ctx context.Context) ([]*RpcPool, error)
+	DexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*RpcDexBatch, error)
+	NextDexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*RpcDexBatch, error)
 }
 
 // Factory produces RPC clients for a given set of endpoints.

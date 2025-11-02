@@ -1,12 +1,11 @@
 package indexer
 
 import (
-	"context"
-	"fmt"
 	"time"
-
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
+
+const TxsProductionTableName = "txs"
+const TxsStagingTableName = "txs_staging"
 
 // Transaction stores ALL transaction data in a single table.
 // Common queryable fields are typed columns.
@@ -58,43 +57,4 @@ type Transaction struct {
 	// Signature fields (compressed, permanent audit trail)
 	PublicKey *string `ch:"public_key" json:"public_key,omitempty"` // Compressed with ZSTD
 	Signature *string `ch:"signature" json:"signature,omitempty"`   // Compressed with ZSTD
-
-	// Deduplication field
-	CreatedHeight uint64 `ch:"created_height" json:"created_height"`
-}
-
-// InitTransactions creates the single transactions table with ZSTD compression.
-func InitTransactions(ctx context.Context, db driver.Conn, dbName string) error {
-	query := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s".txs (
-			height UInt64,
-			tx_hash String,
-			time DateTime64(6),
-			height_time DateTime64(6),
-			message_type LowCardinality(String),
-			signer String,
-			counterparty Nullable(String),
-			amount Nullable(UInt64),
-			fee UInt64,
-			validator_address Nullable(String),
-			commission Nullable(Float64),
-			chain_id Nullable(UInt64),
-			sell_amount Nullable(UInt64),
-			buy_amount Nullable(UInt64),
-			liquidity_amount Nullable(UInt64),
-			order_id Nullable(String),
-			price Nullable(Float64),
-			param_key Nullable(String),
-			param_value Nullable(String),
-			committee_id Nullable(UInt64),
-			recipient Nullable(String),
-			msg String CODEC(ZSTD(3)),
-			public_key Nullable(String) CODEC(ZSTD(3)),
-			signature Nullable(String) CODEC(ZSTD(3)),
-			created_height UInt64
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (height, tx_hash)
-	`, dbName)
-
-	return db.Exec(ctx, query)
 }

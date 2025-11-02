@@ -98,6 +98,13 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.Handle("/api/chains/{id}/gapscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerGapScan))).Methods(http.MethodPost)
 	r.Handle("/api/chains/{id}/reindex", c.RequireAuth(http.HandlerFunc(c.HandleReindex))).Methods(http.MethodPost)
 
+	// Schema introspection endpoints (migrated from query service)
+	r.Handle("/api/admin/entities", c.RequireAuth(http.HandlerFunc(c.HandleEntities))).Methods(http.MethodGet)
+	r.Handle("/api/admin/chains/{id}/schema", c.RequireAuth(http.HandlerFunc(c.HandleSchema))).Methods(http.MethodGet)
+
+	// WebSocket endpoint for real-time events (migrated from query service)
+	r.HandleFunc("/api/admin/ws", c.HandleWebSocket).Methods(http.MethodGet)
+
 	// Swagger UI - Serve API documentation at root
 	r.HandleFunc("/", c.HandleSwaggerUI).Methods(http.MethodGet)
 	r.HandleFunc("/openapi.yaml", c.HandleOpenAPISpec).Methods(http.MethodGet)

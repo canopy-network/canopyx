@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/canopy-network/canopyx/pkg/indexer/activity"
+	"github.com/canopy-network/canopyx/app/indexer/activity"
 )
 
 func TestSchedulerParallelism(t *testing.T) {

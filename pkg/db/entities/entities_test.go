@@ -25,8 +25,8 @@ func TestEntityConstants(t *testing.T) {
 		{
 			name:          "Transactions entity",
 			entity:        Transactions,
-			expectedTable: "transactions",
-			expectedStage: "transactions_staging",
+			expectedTable: "txs",
+			expectedStage: "txs_staging",
 		},
 		{
 			name:          "BlockSummaries entity",
@@ -70,7 +70,7 @@ func TestEntityString(t *testing.T) {
 		expected string
 	}{
 		{"Blocks", Blocks, "blocks"},
-		{"Transactions", Transactions, "transactions"},
+		{"Transactions", Transactions, "txs"},
 		{"BlockSummaries", BlockSummaries, "block_summaries"},
 		{"Accounts", Accounts, "accounts"},
 		{"Events", Events, "events"},
@@ -91,7 +91,7 @@ func TestEntityTableNames(t *testing.T) {
 		expectedStaging string
 	}{
 		{Blocks, "blocks", "blocks_staging"},
-		{Transactions, "transactions", "transactions_staging"},
+		{Transactions, "txs", "txs_staging"},
 		{BlockSummaries, "block_summaries", "block_summaries_staging"},
 		{Accounts, "accounts", "accounts_staging"},
 		{Events, "events", "events_staging"},
@@ -147,8 +147,8 @@ func TestFromString(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "Valid transactions",
-			input:     "transactions",
+			name:      "Valid txs",
+			input:     "txs",
 			expected:  Transactions,
 			wantError: false,
 		},

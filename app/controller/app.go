@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db/models/admin"
-
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/canopy-network/canopyx/pkg/utils"
@@ -17,8 +17,6 @@ import (
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
-
-	"github.com/canopy-network/canopyx/pkg/db"
 )
 
 const (
@@ -32,9 +30,7 @@ const (
 // App reads the desired state from IndexerDB (chain table) and reconciles
 // the real world via a Provider (e.g. Kubernetes), every Cron tick.
 type App struct {
-	// Clickhouse DB
-	DBClient  *db.Client
-	IndexerDB *db.AdminDB
+	IndexerDB *adminstore.AdminDB
 
 	// Cron is the scheduler that triggers reconciliation tasks at specified intervals, according to CronSpec.
 	Cron     *cron.Cron
@@ -74,15 +70,21 @@ func Initialize(ctx context.Context, provider Provider) (*App, error) {
 	// Scope the logger for this component
 	logger = logger.With(zap.String("component", "controller"))
 
-	indexerDb, _, basicDbsErr := db.NewBasicDbs(ctx, logger)
-	if basicDbsErr != nil {
-		logger.Fatal("unable to initialize basic databases", zap.Error(basicDbsErr))
+	indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
+	indexerDb, err := adminstore.New(ctx, logger, indexerDbName)
+	if err != nil {
+		logger.Fatal("unable to initialize indexer database", zap.Error(err))
 	}
 
 	temporalClient, err := temporal.NewClient(ctx, logger)
 	if err != nil {
 		logger.Fatal("unable to initialize temporal client", zap.Error(err))
 	}
+
+	if err := temporalClient.EnsureNamespace(ctx, 7*24*time.Hour); err != nil {
+		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
+	}
+	logger.Info("Temporal namespace ready", zap.String("namespace", temporalClient.Namespace))
 
 	app := &App{
 		IndexerDB:  indexerDb,
@@ -319,7 +321,7 @@ func (a *App) loadDesired(ctx context.Context) ([]Chain, error) {
 			maxReplicas = minReplicas
 		}
 		out = append(out, Chain{
-			ID:          r.ChainID,
+			ID:          strconv.FormatUint(r.ChainID, 10),
 			Image:       r.Image,
 			Paused:      r.Paused != 0,
 			Deleted:     r.Deleted != 0,
@@ -388,9 +390,17 @@ func (a *App) Start(ctx context.Context) {
 }
 
 func (a *App) populateChain(ctx context.Context, ch *Chain) {
+	// Convert chain ID string to uint64 for Temporal methods
+	chainIDUint, parseErr := strconv.ParseUint(ch.ID, 10, 64)
+	if parseErr != nil {
+		a.Logger.Error("invalid chain ID format", zap.String("chain_id", ch.ID), zap.Error(parseErr))
+		ch.Replicas = 0
+		return
+	}
+
 	// With dual-queue architecture, we have both live and historical queues
 	// For backward compatibility with display/logging, we'll show both queue names
-	ch.TaskQueue = fmt.Sprintf("%s,%s", a.Temporal.GetIndexerLiveQueue(ch.ID), a.Temporal.GetIndexerHistoricalQueue(ch.ID))
+	ch.TaskQueue = fmt.Sprintf("%s,%s", a.Temporal.GetIndexerLiveQueue(chainIDUint), a.Temporal.GetIndexerHistoricalQueue(chainIDUint))
 
 	if ch.Paused || ch.Deleted {
 		ch.Replicas = 0
@@ -398,12 +408,12 @@ func (a *App) populateChain(ctx context.Context, ch *Chain) {
 	}
 
 	// Fetch and update queue stats
-	stats, err := a.fetchQueueStats(ctx, ch.ID)
+	stats, err := a.fetchQueueStats(ctx, chainIDUint)
 	if err != nil {
 		a.Logger.Warn("queue stats fetch failed", zap.String("chain_id", ch.ID), zap.Error(err))
 		ch.Replicas = ch.MinReplicas
 		// Update queue health to unknown on error
-		a.updateQueueHealthStatus(ctx, ch.ID, "unknown", fmt.Sprintf("failed to fetch queue stats: %v", err))
+		a.updateQueueHealthStatus(ctx, chainIDUint, "unknown", fmt.Sprintf("failed to fetch queue stats: %v", err))
 		return
 	}
 
@@ -420,10 +430,10 @@ func (a *App) populateChain(ctx context.Context, ch *Chain) {
 	ch.Replicas = a.DesiredReplicas(ch, stats)
 
 	// Update queue health status based on backlog
-	a.updateQueueHealthStatus(ctx, ch.ID, computeQueueHealthStatus(stats), "")
+	a.updateQueueHealthStatus(ctx, chainIDUint, computeQueueHealthStatus(stats), "")
 
 	// Update deployment health status
-	a.updateDeploymentHealthStatus(ctx, ch.ID)
+	a.updateDeploymentHealthStatus(ctx, chainIDUint)
 }
 
 // computeQueueHealthStatus determines queue health based on backlog size
@@ -443,14 +453,15 @@ func computeQueueHealthStatus(stats QueueStats) string {
 }
 
 // updateQueueHealthStatus updates queue health in the database
-func (a *App) updateQueueHealthStatus(ctx context.Context, chainID, status, customMessage string) {
+func (a *App) updateQueueHealthStatus(ctx context.Context, chainID uint64, status, customMessage string) {
 	totalBacklog := int64(0)
 	liveBacklog := int64(0)
 	liveBacklogAge := 0.0
 	histBacklog := int64(0)
 	histBacklogAge := 0.0
 
-	if cached, ok := a.queueCache.Load(chainID); ok {
+	chainIDStr := strconv.FormatUint(chainID, 10)
+	if cached, ok := a.queueCache.Load(chainIDStr); ok {
 		totalBacklog = cached.stats.PendingWorkflowTasks + cached.stats.PendingActivityTasks
 		liveBacklog = cached.liveStats.PendingWorkflowTasks + cached.liveStats.PendingActivityTasks
 		liveBacklogAge = cached.liveStats.BacklogAgeSeconds
@@ -476,15 +487,15 @@ func (a *App) updateQueueHealthStatus(ctx context.Context, chainID, status, cust
 		}
 	}
 
-	if err := admin.UpdateQueueHealth(ctx, a.IndexerDB.Db, chainID, status, message); err != nil {
+	if err := a.IndexerDB.UpdateQueueHealth(ctx, chainID, status, message); err != nil {
 		a.Logger.Warn("failed to update queue health status",
-			zap.String("chain_id", chainID),
+			zap.String("chain_id", chainIDStr),
 			zap.String("status", status),
 			zap.Error(err),
 		)
 	} else {
 		a.Logger.Debug("queue health updated",
-			zap.String("chain_id", chainID),
+			zap.String("chain_id", chainIDStr),
 			zap.String("status", status),
 			zap.String("message", message),
 		)
@@ -492,11 +503,12 @@ func (a *App) updateQueueHealthStatus(ctx context.Context, chainID, status, cust
 }
 
 // updateDeploymentHealthStatus updates deployment health in the database
-func (a *App) updateDeploymentHealthStatus(ctx context.Context, chainID string) {
-	status, message, err := a.Provider.GetDeploymentHealth(ctx, chainID)
+func (a *App) updateDeploymentHealthStatus(ctx context.Context, chainID uint64) {
+	chainIDStr := strconv.FormatUint(chainID, 10)
+	status, message, err := a.Provider.GetDeploymentHealth(ctx, chainIDStr)
 	if err != nil {
 		a.Logger.Warn("failed to get deployment health",
-			zap.String("chain_id", chainID),
+			zap.String("chain_id", chainIDStr),
 			zap.Error(err),
 		)
 		// Still update with unknown status
@@ -504,26 +516,27 @@ func (a *App) updateDeploymentHealthStatus(ctx context.Context, chainID string) 
 		message = fmt.Sprintf("failed to check deployment: %v", err)
 	}
 
-	if err := admin.UpdateDeploymentHealth(ctx, a.IndexerDB.Db, chainID, status, message); err != nil {
+	if err := a.IndexerDB.UpdateDeploymentHealth(ctx, chainID, status, message); err != nil {
 		a.Logger.Warn("failed to update deployment health status",
-			zap.String("chain_id", chainID),
+			zap.String("chain_id", chainIDStr),
 			zap.String("status", status),
 			zap.Error(err),
 		)
 	} else {
 		a.Logger.Debug("deployment health updated",
-			zap.String("chain_id", chainID),
+			zap.String("chain_id", chainIDStr),
 			zap.String("status", status),
 			zap.String("message", message),
 		)
 	}
 }
 
-func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, error) {
+func (a *App) fetchQueueStats(ctx context.Context, chainID uint64) (QueueStats, error) {
+	chainIDStr := strconv.FormatUint(chainID, 10)
 	if a.Temporal == nil {
 		return QueueStats{}, fmt.Errorf("temporal client not initialized")
 	}
-	if cached, ok := a.queueCache.Load(chainID); ok {
+	if cached, ok := a.queueCache.Load(chainIDStr); ok {
 		if time.Since(cached.fetched) < queueStatsTTL {
 			return cached.stats, nil
 		}
@@ -540,7 +553,7 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 	livePendingWF, livePendingAct, livePollers, liveBacklogAge, liveErr := a.Temporal.GetQueueStats(ctx, liveQueue)
 	if liveErr != nil {
 		a.Logger.Warn("failed to fetch live queue stats, continuing with historical",
-			zap.String("chain_id", chainID),
+			zap.String("chain_id", chainIDStr),
 			zap.String("queue", liveQueue),
 			zap.Error(liveErr),
 		)
@@ -555,7 +568,7 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 	histPendingWF, histPendingAct, histPollers, histBacklogAge, histErr := a.Temporal.GetQueueStats(ctx, historicalQueue)
 	if histErr != nil {
 		a.Logger.Warn("failed to fetch historical queue stats",
-			zap.String("chain_id", chainID),
+			zap.String("chain_id", chainIDStr),
 			zap.String("queue", historicalQueue),
 			zap.Error(histErr),
 		)
@@ -584,7 +597,7 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 
 	// Log both queues separately for visibility
 	a.Logger.Debug("queue stats fetched",
-		zap.String("chain_id", chainID),
+		zap.String("chain_id", chainIDStr),
 		zap.String("live_queue", liveQueue),
 		zap.Int64("live_queue_wf", livePendingWF),
 		zap.Int64("live_queue_act", livePendingAct),
@@ -624,7 +637,7 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID string) (QueueStats, 
 		BacklogAgeSeconds:    histBacklogAge,
 	}
 
-	a.queueCache.Store(chainID, cachedQueueStats{
+	a.queueCache.Store(chainIDStr, cachedQueueStats{
 		stats:           stats,
 		liveStats:       liveStats,
 		historicalStats: historicalStats,

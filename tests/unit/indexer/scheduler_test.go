@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/indexer/activity"
-	"github.com/canopy-network/canopyx/pkg/indexer/types"
-	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
+	"github.com/canopy-network/canopyx/app/indexer/activity"
+	"github.com/canopy-network/canopyx/app/indexer/types"
+	"github.com/canopy-network/canopyx/app/indexer/workflow"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

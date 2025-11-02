@@ -85,40 +85,19 @@ func (s *explorerService) GetTableSchema(ctx context.Context, chainID, tableName
 		return nil, fmt.Errorf("error accessing chain database: %w", err)
 	}
 
-	// Get database name for the chain
-	dbName := chainDB.DatabaseName()
-
-	// Query to get column information from ClickHouse system tables
-	query := `
-		SELECT
-			name,
-			type
-		FROM system.columns
-		WHERE database = ? AND table = ?
-		ORDER BY position
-	`
-
-	rows, err := s.controller.App.AdminDB.Db.Query(ctx, query, dbName, tableName)
+	// Get table schema from chain store
+	dbColumns, err := chainDB.GetTableSchema(ctx, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("error querying schema: %w", err)
 	}
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			s.logger.Warn("failed to close rows", zap.Error(closeErr))
-		}
-	}()
 
+	// Convert to ColumnInfo format
 	var columns []ColumnInfo
-	for rows.Next() {
-		var col ColumnInfo
-		if err := rows.Scan(&col.Name, &col.Type); err != nil {
-			return nil, fmt.Errorf("error scanning column info: %w", err)
-		}
-		columns = append(columns, col)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
+	for _, col := range dbColumns {
+		columns = append(columns, ColumnInfo{
+			Name: col.Name,
+			Type: col.Type,
+		})
 	}
 
 	if len(columns) == 0 {
@@ -154,111 +133,10 @@ func (s *explorerService) GetTableData(ctx context.Context, chainID, tableName s
 		return nil, fmt.Errorf("error accessing chain database: %w", err)
 	}
 
-	dbName := chainDB.DatabaseName()
-
-	// Build WHERE conditions for height filtering
-	conditions := []string{}
-	args := []interface{}{}
-
-	if fromHeight != nil {
-		conditions = append(conditions, "height >= ?")
-		args = append(args, *fromHeight)
-	}
-	if toHeight != nil {
-		conditions = append(conditions, "height <= ?")
-		args = append(args, *toHeight)
-	}
-
-	whereClause := ""
-	if len(conditions) > 0 {
-		whereClause = "WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	// Count total rows (with filters applied)
-	countQuery := fmt.Sprintf(`
-		SELECT count(*)
-		FROM "%s"."%s"
-		%s
-	`, dbName, tableName, whereClause)
-
-	var total int64
-	if err := s.controller.App.AdminDB.Db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		s.logger.Warn("failed to count rows", zap.String("chain_id", chainID), zap.String("table", tableName), zap.Error(err))
-		// Continue without total count
-		total = -1
-	}
-
-	// Query data with pagination
-	dataQuery := fmt.Sprintf(`
-		SELECT *
-		FROM "%s"."%s"
-		%s
-		ORDER BY height DESC
-		LIMIT ? OFFSET ?
-	`, dbName, tableName, whereClause)
-
-	args = append(args, limit, offset)
-
-	rows, err := s.controller.App.AdminDB.Db.Query(ctx, dataQuery, args...)
+	// Get table data from chain store
+	results, total, hasMore, err := chainDB.GetTableDataPaginated(ctx, tableName, limit, offset, fromHeight, toHeight)
 	if err != nil {
 		return nil, fmt.Errorf("error querying data: %w", err)
-	}
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			s.logger.Warn("failed to close rows", zap.Error(closeErr))
-		}
-	}()
-
-	// Get column names from the result set
-	columns := rows.Columns()
-
-	// Prepare result slice
-	results := make([]map[string]interface{}, 0, limit)
-
-	// Create a slice of interface{} to hold pointers to column values
-	values := make([]interface{}, len(columns))
-	valuePtrs := make([]interface{}, len(columns))
-
-	for rows.Next() {
-		// Reset value pointers for each row
-		for i := range columns {
-			valuePtrs[i] = &values[i]
-		}
-
-		if err := rows.Scan(valuePtrs...); err != nil {
-			return nil, fmt.Errorf("error scanning row: %w", err)
-		}
-
-		// Create a map for this row
-		rowMap := make(map[string]interface{})
-		for i, col := range columns {
-			val := values[i]
-			// Handle NULL values
-			if val == nil {
-				rowMap[col] = nil
-			} else {
-				// Convert []byte to string for better JSON serialization
-				if b, ok := val.([]byte); ok {
-					rowMap[col] = string(b)
-				} else {
-					rowMap[col] = val
-				}
-			}
-		}
-		results = append(results, rowMap)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating rows: %w", err)
-	}
-
-	// Determine if there are more rows
-	hasMore := false
-	if total > 0 {
-		hasMore = int64(offset+len(results)) < total
-	} else if len(results) == limit {
-		// If we got exactly the limit, there might be more
-		hasMore = true
 	}
 
 	return &DataResponse{

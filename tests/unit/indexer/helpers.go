@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db"
-	"github.com/canopy-network/canopyx/pkg/indexer/types"
-	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
+	"github.com/canopy-network/canopyx/app/indexer/types"
+	"github.com/canopy-network/canopyx/app/indexer/workflow"
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 )
 
 //nolint:unused // Test helpers used by multiple test files
@@ -42,7 +42,7 @@ type mockSchedulerActivities struct {
 	// Mock data
 	latestHead   uint64
 	lastIndexed  uint64
-	gaps         []db.Gap
+	gaps         []adminstore.Gap
 	shouldFail   map[string]bool
 	failureCount map[string]int
 
@@ -79,7 +79,7 @@ func (m *mockSchedulerActivities) GetLastIndexed(ctx context.Context, in *types.
 }
 
 //nolint:unused // Test helper method used by test files
-func (m *mockSchedulerActivities) FindGaps(ctx context.Context, in *types.ChainIdInput) ([]db.Gap, error) {
+func (m *mockSchedulerActivities) FindGaps(ctx context.Context, in *types.ChainIdInput) ([]adminstore.Gap, error) {
 	m.findGapsCalls.Add(1)
 	if m.shouldFail["FindGaps"] {
 		m.failureCount["FindGaps"]++

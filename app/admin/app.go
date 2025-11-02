@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/app/admin/types"
-	"github.com/canopy-network/canopyx/pkg/db"
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	"github.com/canopy-network/canopyx/pkg/logging"
-	reporteractivity "github.com/canopy-network/canopyx/pkg/reporter/activity"
-	reporterworkflow "github.com/canopy-network/canopyx/pkg/reporter/workflow"
+	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/temporal"
+	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
 )
@@ -21,19 +21,11 @@ func Initialize(ctx context.Context) *types.App {
 		panic(err)
 	}
 
-	indexerDb, reportsDb, basicDbsErr := db.NewBasicDbs(ctx, logger)
-	if basicDbsErr != nil {
-		logger.Fatal("Unable to initialize basic databases", zap.Error(basicDbsErr))
-	}
+	indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
 
-	indexerDbInitErr := indexerDb.InitializeDB(ctx)
-	if indexerDbInitErr != nil {
-		logger.Fatal("Unable to initialize indexer database", zap.Error(indexerDbInitErr))
-	}
-
-	reportsDbInitErr := reportsDb.InitializeDB(ctx)
-	if reportsDbInitErr != nil {
-		logger.Fatal("Unable to initialize reports database", zap.Error(reportsDbInitErr))
+	indexerDb, err := adminstore.New(ctx, logger, indexerDbName)
+	if err != nil {
+		logger.Fatal("Unable to initialize indexer database", zap.Error(err))
 	}
 
 	chainsDb, chainsDbErr := indexerDb.EnsureChainsDbs(ctx)
@@ -61,27 +53,34 @@ func Initialize(ctx context.Context) *types.App {
 		WorkerStopTimeout:                1 * time.Minute,
 	})
 
+	// Initialize Redis client for real-time WebSocket events (optional)
+	var redisClient *redis.Client
+	if utils.Env("REDIS_ENABLED", "false") == "true" {
+		redisClient, err = redis.NewClient(ctx, logger)
+		if err != nil {
+			logger.Warn("Failed to initialize Redis client - WebSocket real-time events will be disabled",
+				zap.Error(err))
+			redisClient = nil
+		} else {
+			logger.Info("Redis client initialized for WebSocket real-time events")
+		}
+	} else {
+		logger.Info("Redis disabled - WebSocket real-time events will not be available")
+	}
+
 	app := &types.App{
 		// Database initialization
 		AdminDB:  indexerDb,
-		ReportDB: reportsDb,
 		ChainsDB: chainsDb,
 
 		// Temporal initialization
 		TemporalClient: temporalClient,
 
+		// Redis initialization
+		RedisClient: redisClient,
+
 		// Logger initialization
 		Logger: logger,
-
-		// Context initialization
-		ReporterWorkflowContext: &reporterworkflow.Context{
-			ActivityContext: &reporteractivity.Context{
-				IndexerDB:      indexerDb,
-				ReportsDB:      reportsDb,
-				ChainsDB:       chainsDb,
-				TemporalClient: temporalClient,
-			},
-		},
 
 		// Worker initialization
 		Worker: managerTemporalWorker,

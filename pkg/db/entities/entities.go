@@ -92,6 +92,26 @@ const (
 	// Staging table: dex_prices_staging
 	DexPrices Entity = "dex_prices"
 
+	// DexOrders represents the DEX limit orders entity.
+	// Production table: dex_orders
+	// Staging table: dex_orders_staging
+	DexOrders Entity = "dex_orders"
+
+	// DexDeposits represents the DEX liquidity deposits entity.
+	// Production table: dex_deposits
+	// Staging table: dex_deposits_staging
+	DexDeposits Entity = "dex_deposits"
+
+	// DexWithdrawals represents the DEX liquidity withdrawals entity.
+	// Production table: dex_withdrawals
+	// Staging table: dex_withdrawals_staging
+	DexWithdrawals Entity = "dex_withdrawals"
+
+	// DexPoolPointsByHolder represents the DEX pool points by holder entity.
+	// Production table: dex_pool_points_by_holder
+	// Staging table: dex_pool_points_by_holder_staging
+	DexPoolPointsByHolder Entity = "dex_pool_points_by_holder"
+
 	// Future entities (uncomment and add to allEntities when implementing):
 	// Validators Entity = "validators"
 	// Logs Entity = "logs"
@@ -111,6 +131,10 @@ var allEntities = []Entity{
 	Orders,
 	Pools,
 	DexPrices,
+	DexOrders,
+	DexDeposits,
+	DexWithdrawals,
+	DexPoolPointsByHolder,
 }
 
 // entitySet is a pre-computed map for O(1) validation lookups.

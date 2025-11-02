@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # Node 1 Resources
+  - node-1-configmap-config.yaml
+  - node-1-configmap-genesis.yaml
+  - node-1-configmap-keystore.yaml
+  - node-1-deployment.yaml
+  - node-1-service.yaml
+
+  # Node 2 Resources
+  - node-2-configmap-config.yaml
+  - node-2-configmap-genesis.yaml
+  - node-2-configmap-keystore.yaml
+  - node-2-deployment.yaml
+  - node-2-service.yaml
+
+commonLabels:
+  app.kubernetes.io/component: blockchain
+  app.kubernetes.io/part-of: canopyx

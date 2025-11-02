@@ -90,8 +90,6 @@ jobs:
           - { name: admin-web,  file: web/admin/Dockerfile,  context: "./web/admin", build-args: "" }
           - { name: indexer,    file: Dockerfile.indexer,    context: ".",           build-args: "" }
           - { name: controller, file: Dockerfile.controller, context: ".",           build-args: "" }
-          - { name: query,      file: Dockerfile.query,      context: ".",           build-args: "" }
-          - { name: reporter,   file: Dockerfile.reporter,   context: ".",           build-args: "" }
     steps:
       - name: Checkout
         uses: actions/checkout@v5

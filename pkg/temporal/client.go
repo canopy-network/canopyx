@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/canopy-network/canopyx/pkg/retry"
 	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.uber.org/zap"
 
@@ -46,17 +47,34 @@ type Health struct {
 }
 
 func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
+	// Add timeout to context for initial connection
+	connCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	host := utils.Env("TEMPORAL_HOSTPORT", "localhost:7233")
 	ns := utils.Env("TEMPORAL_NAMESPACE", "canopyx")
 	loggerWrapper := NewZapAdapter(logger)
+	retryConfig := retry.DefaultConfig()
+
+	var tClient client.Client
 
 	logger.Info("Connecting to Temporal", zap.String("host", host), zap.String("namespace", ns))
-	tClient, err := Dial(ctx, host, ns, loggerWrapper)
-	if err != nil {
-		return nil, err
-	}
 
-	if _, err = tClient.CheckHealth(ctx, nil); err != nil {
+	err := retry.WithBackoff(connCtx, retryConfig, logger, "temporal_connection", func() error {
+		var err error
+		tClient, err = Dial(connCtx, host, ns, loggerWrapper)
+		if err != nil {
+			return err
+		}
+
+		if _, err = tClient.CheckHealth(connCtx, nil); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
 		return nil, err
 	}
 
@@ -102,28 +120,28 @@ func (c *Client) GetGlobalReportsQueue() string { return c.ReportsQueue }
 
 // GetIndexerLiveQueue returns the live indexer queue for the given chain.
 // This queue is for blocks within the LiveBlockThreshold of the chain head.
-func (c *Client) GetIndexerLiveQueue(chainID string) string {
+func (c *Client) GetIndexerLiveQueue(chainID uint64) string {
 	return fmt.Sprintf(c.IndexerLiveQueue, chainID)
 }
 
 // GetIndexerHistoricalQueue returns the historical indexer queue for the given chain.
 // This queue is for blocks beyond the LiveBlockThreshold from the chain head.
-func (c *Client) GetIndexerHistoricalQueue(chainID string) string {
+func (c *Client) GetIndexerHistoricalQueue(chainID uint64) string {
 	return fmt.Sprintf(c.IndexerHistoricalQueue, chainID)
 }
 
 // GetIndexerOpsQueue returns the operations queue for the given chain.
-func (c *Client) GetIndexerOpsQueue(chainID string) string {
+func (c *Client) GetIndexerOpsQueue(chainID uint64) string {
 	return fmt.Sprintf(c.IndexerOpsQueue, chainID)
 }
 
 // GetHeadScheduleID returns the schedule ID for the head scan for the given chain.
-func (c *Client) GetHeadScheduleID(chainID string) string {
+func (c *Client) GetHeadScheduleID(chainID uint64) string {
 	return fmt.Sprintf(c.HeadScheduleID, chainID)
 }
 
 // GetGapScanScheduleID returns the schedule ID for the gap scan for the given chain.
-func (c *Client) GetGapScanScheduleID(chainID string) string {
+func (c *Client) GetGapScanScheduleID(chainID uint64) string {
 	return fmt.Sprintf(c.GapScanScheduleID, chainID)
 }
 
@@ -133,23 +151,23 @@ func (c *Client) GetGlobalReportsScheduleID() string {
 }
 
 // GetIndexBlockWorkflowId returns the workflow ID for the indexing block for the given chain and height.
-func (c *Client) GetIndexBlockWorkflowId(chainID string, height uint64) string {
+func (c *Client) GetIndexBlockWorkflowId(chainID uint64, height uint64) string {
 	return fmt.Sprintf(c.IndexBlockWorkflowId, chainID, height)
 }
 
 // GetIndexBlockWorkflowIdWithTime returns the workflow ID for the indexing block for the given chain and height with a timestamp.
-func (c *Client) GetIndexBlockWorkflowIdWithTime(chainID string, height uint64) string {
+func (c *Client) GetIndexBlockWorkflowIdWithTime(chainID uint64, height uint64) string {
 	return fmt.Sprintf(c.IndexBlockWorkflowId+":%d", chainID, height, time.Now().UnixNano())
 }
 
 // GetSchedulerWorkflowID returns the deterministic workflow ID for the SchedulerWorkflow for a given chain.
-func (c *Client) GetSchedulerWorkflowID(chainID string) string {
+func (c *Client) GetSchedulerWorkflowID(chainID uint64) string {
 	return fmt.Sprintf(c.SchedulerWorkflowID, chainID)
 }
 
 // GetCleanupStagingWorkflowID returns the workflow ID for the cleanup staging workflow.
 // This workflow is triggered after promotion to clean up staging tables asynchronously.
-func (c *Client) GetCleanupStagingWorkflowID(chainID string, height uint64) string {
+func (c *Client) GetCleanupStagingWorkflowID(chainID uint64, height uint64) string {
 	return fmt.Sprintf(c.CleanupStagingWorkflowID, chainID, height)
 }
 

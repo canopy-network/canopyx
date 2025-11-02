@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: canopy-node-2
+  labels:
+    app: canopy-node
+    node-id: "2"
+spec:
+  type: ClusterIP
+  selector:
+    app: canopy-node
+    node-id: "2"
+  ports:
+    - name: wallet
+      port: 40000
+      targetPort: 40000
+      protocol: TCP
+    - name: explorer
+      port: 40001
+      targetPort: 40001
+      protocol: TCP
+    - name: rpc
+      port: 40002
+      targetPort: 40002
+      protocol: TCP
+    - name: admin
+      port: 40003
+      targetPort: 40003
+      protocol: TCP
+    - name: p2p
+      port: 9001
+      targetPort: 9001
+      protocol: TCP
+    - name: prometheus
+      port: 9091
+      targetPort: 9091
+      protocol: TCP

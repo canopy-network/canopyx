@@ -731,7 +731,6 @@ func TestToTransaction(t *testing.T) {
 	assert.Equal(t, "send", tx.MessageType)
 	assert.Equal(t, "sender1", tx.Signer)
 	assert.Equal(t, uint64(10), tx.Fee)
-	assert.Equal(t, uint64(99), tx.CreatedHeight)
 
 	// Check counterparty
 	require.NotNil(t, tx.Counterparty)

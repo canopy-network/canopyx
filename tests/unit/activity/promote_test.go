@@ -4,23 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/canopy-network/canopyx/pkg/indexer/activity"
+	"github.com/canopy-network/canopyx/app/indexer/activity"
 	"testing"
 	"time"
 
+	"github.com/canopy-network/canopyx/app/indexer/types"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
+	"github.com/canopy-network/canopyx/pkg/db/entities"
+	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
-
-	"github.com/canopy-network/canopyx/pkg/db"
-	"github.com/canopy-network/canopyx/pkg/db/entities"
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/indexer/types"
 )
 
-// MockChainStore is a mock implementation of db.ChainStore for testing
+// MockChainStore is a mock implementation of chain.Store for testing
 type MockChainStore struct {
 	mock.Mock
 }
@@ -104,6 +103,22 @@ func (m *MockChainStore) GetAccountCreatedHeight(ctx context.Context, address st
 	return args.Get(0).(uint64)
 }
 
+func (m *MockChainStore) GetOrderCreatedHeight(ctx context.Context, orderID string) uint64 {
+	args := m.Called(ctx, orderID)
+	if args.Get(0) == nil {
+		return 0
+	}
+	return args.Get(0).(uint64)
+}
+
+func (m *MockChainStore) HasGenesis(context.Context, uint64) (bool, error) {
+	return true, nil
+}
+
+func (m *MockChainStore) InsertGenesis(context.Context, uint64, string, time.Time) error {
+	return nil
+}
+
 func (m *MockChainStore) QueryBlocks(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]indexer.Block, error) {
 	args := m.Called(ctx, cursor, limit, sortDesc)
 	if args.Get(0) == nil {
@@ -136,12 +151,12 @@ func (m *MockChainStore) QueryTransactionsRaw(ctx context.Context, cursor uint64
 	return args.Get(0).([]map[string]interface{}), args.Error(1)
 }
 
-func (m *MockChainStore) DescribeTable(ctx context.Context, tableName string) ([]db.Column, error) {
+func (m *MockChainStore) DescribeTable(ctx context.Context, tableName string) ([]chainstore.Column, error) {
 	args := m.Called(ctx, tableName)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]db.Column), args.Error(1)
+	return args.Get(0).([]chainstore.Column), args.Error(1)
 }
 
 func (m *MockChainStore) PromoteEntity(ctx context.Context, entity entities.Entity, height uint64) error {
@@ -212,6 +227,10 @@ func (m *MockChainStore) QueryOrders(ctx context.Context, cursor uint64, limit i
 	return nil, nil
 }
 
+func (m *MockChainStore) InsertOrdersStaging(context.Context, []*indexer.Order) error {
+	return nil
+}
+
 func (m *MockChainStore) QueryDexPrices(ctx context.Context, cursor uint64, limit int, sortDesc bool, localChainID, remoteChainID uint64) ([]indexer.DexPrice, error) {
 	return nil, nil
 }
@@ -252,11 +271,11 @@ func (m *MockChainStore) InsertPoolsStaging(ctx context.Context, pools []*indexe
 	return nil
 }
 
-func (m *MockChainStore) GetDexVolume24h(ctx context.Context) ([]db.DexVolumeStats, error) {
+func (m *MockChainStore) GetDexVolume24h(ctx context.Context) ([]chainstore.DexVolumeStats, error) {
 	return nil, nil
 }
 
-func (m *MockChainStore) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]db.OrderBookLevel, error) {
+func (m *MockChainStore) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]chainstore.OrderBookLevel, error) {
 	return nil, nil
 }
 
@@ -272,7 +291,7 @@ func TestPromoteData_Success(t *testing.T) {
 
 	// Setup mocks
 	mockChainStore := new(MockChainStore)
-	chainsDB := xsync.NewMap[string, db.ChainStore]()
+	chainsDB := xsync.NewMap[string, chainstore.Store]()
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
@@ -311,7 +330,7 @@ func TestPromoteData_InvalidEntity(t *testing.T) {
 	// Create activity context
 	activityCtx := &activity.Context{
 		Logger:   logger,
-		ChainsDB: xsync.NewMap[string, db.ChainStore](),
+		ChainsDB: xsync.NewMap[string, chainstore.Store](),
 	}
 
 	// Test input with invalid entity
@@ -336,7 +355,7 @@ func TestPromoteData_DatabaseError(t *testing.T) {
 
 	// Setup mocks
 	mockChainStore := new(MockChainStore)
-	chainsDB := xsync.NewMap[string, db.ChainStore]()
+	chainsDB := xsync.NewMap[string, chainstore.Store]()
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
@@ -374,7 +393,7 @@ func TestPromoteData_ChainNotFound(t *testing.T) {
 	// Create activity context with empty chains map
 	activityCtx := &activity.Context{
 		Logger:   logger,
-		ChainsDB: xsync.NewMap[string, db.ChainStore](),
+		ChainsDB: xsync.NewMap[string, chainstore.Store](),
 	}
 
 	// Test input
@@ -399,7 +418,7 @@ func TestCleanPromotedData_Success(t *testing.T) {
 
 	// Setup mocks
 	mockChainStore := new(MockChainStore)
-	chainsDB := xsync.NewMap[string, db.ChainStore]()
+	chainsDB := xsync.NewMap[string, chainstore.Store]()
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
@@ -438,7 +457,7 @@ func TestCleanPromotedData_InvalidEntity(t *testing.T) {
 	// Create activity context
 	activityCtx := &activity.Context{
 		Logger:   logger,
-		ChainsDB: xsync.NewMap[string, db.ChainStore](),
+		ChainsDB: xsync.NewMap[string, chainstore.Store](),
 	}
 
 	// Test input with invalid entity
@@ -463,7 +482,7 @@ func TestCleanPromotedData_NonCriticalFailure(t *testing.T) {
 
 	// Setup mocks
 	mockChainStore := new(MockChainStore)
-	chainsDB := xsync.NewMap[string, db.ChainStore]()
+	chainsDB := xsync.NewMap[string, chainstore.Store]()
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
@@ -505,7 +524,7 @@ func TestPromoteData_AllEntities(t *testing.T) {
 		t.Run(fmt.Sprintf("Promote_%s", entity), func(t *testing.T) {
 			// Setup mocks
 			mockChainStore := new(MockChainStore)
-			chainsDB := xsync.NewMap[string, db.ChainStore]()
+			chainsDB := xsync.NewMap[string, chainstore.Store]()
 			chainsDB.Store("test-chain", mockChainStore)
 
 			// Create activity context
@@ -547,7 +566,7 @@ func TestCleanPromotedData_AllEntities(t *testing.T) {
 		t.Run(fmt.Sprintf("Clean_%s", entity), func(t *testing.T) {
 			// Setup mocks
 			mockChainStore := new(MockChainStore)
-			chainsDB := xsync.NewMap[string, db.ChainStore]()
+			chainsDB := xsync.NewMap[string, chainstore.Store]()
 			chainsDB.Store("test-chain", mockChainStore)
 
 			// Create activity context
@@ -587,7 +606,7 @@ func BenchmarkPromoteData(b *testing.B) {
 
 	// Setup mocks
 	mockChainStore := new(MockChainStore)
-	chainsDB := xsync.NewMap[string, db.ChainStore]()
+	chainsDB := xsync.NewMap[string, chainstore.Store]()
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context
@@ -619,7 +638,7 @@ func BenchmarkCleanPromotedData(b *testing.B) {
 
 	// Setup mocks
 	mockChainStore := new(MockChainStore)
-	chainsDB := xsync.NewMap[string, db.ChainStore]()
+	chainsDB := xsync.NewMap[string, chainstore.Store]()
 	chainsDB.Store("test-chain", mockChainStore)
 
 	// Create activity context

@@ -20,6 +20,7 @@ const (
 	txsByHeightPath      = "/v1/query/txs-by-height"
 	eventsByHeightPath   = "/v1/query/events-by-height"
 	dexPricePath         = "/v1/query/dex-price"
+	certByHeightPath     = "/v1/query/cert-by-height"
 )
 
 // HTTPClient is a wrapper around an http.Client that implements a circuit-breaker and token-bucket.

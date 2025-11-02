@@ -3,7 +3,7 @@ package indexer
 import (
 	"testing"
 
-	"github.com/canopy-network/canopyx/pkg/indexer/types"
+	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/stretchr/testify/assert"
 )

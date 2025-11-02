@@ -10,7 +10,7 @@ type HealthInfo struct {
 }
 
 type ChainStatus struct {
-	ChainID        string         `json:"chain_id"`
+	ChainID        uint64         `json:"chain_id"`
 	ChainName      string         `json:"chain_name"`
 	Image          string         `json:"image"`
 	Notes          string         `json:"notes,omitempty"`

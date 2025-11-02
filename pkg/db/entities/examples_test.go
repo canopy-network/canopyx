@@ -89,9 +89,13 @@ func Example_workflowUsage() {
 
 	// Output:
 	// Promoting blocks at height 1000
-	// Promoting transactions at height 1000
-	// Promoting transactions_raw at height 1000
+	// Promoting txs at height 1000
 	// Promoting block_summaries at height 1000
+	// Promoting accounts at height 1000
+	// Promoting events at height 1000
+	// Promoting orders at height 1000
+	// Promoting pools at height 1000
+	// Promoting dex_prices at height 1000
 	// All entities promoted
 }
 

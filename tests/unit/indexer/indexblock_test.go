@@ -5,13 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db"
+	"github.com/canopy-network/canopyx/app/indexer/activity"
+	"github.com/canopy-network/canopyx/app/indexer/types"
+	"github.com/canopy-network/canopyx/app/indexer/workflow"
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/indexer/activity"
-	"github.com/canopy-network/canopyx/pkg/indexer/types"
-	"github.com/canopy-network/canopyx/pkg/indexer/workflow"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/puzpuzpuz/xsync/v4"
@@ -34,7 +35,7 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 		},
 	}
 	chainStore := &wfFakeChainStore{chainID: "chain-A", databaseName: "chain_a"}
-	chainsMap := xsync.NewMap[string, db.ChainStore]()
+	chainsMap := xsync.NewMap[string, chainstore.Store]()
 	chainsMap.Store("chain-A", chainStore)
 
 	rpcClient := &wfFakeRPCClient{
@@ -46,7 +47,7 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 
 	activityCtx := &activity.Context{
 		Logger:     logger,
-		IndexerDB:  adminStore,
+		AdminDB:    adminStore,
 		ChainsDB:   chainsMap,
 		RPCFactory: &wfFakeRPCFactory{client: rpcClient},
 	}
@@ -132,7 +133,7 @@ func (f *wfFakeAdminStore) LastIndexed(context.Context, string) (uint64, error) 
 	return 0, nil
 }
 
-func (f *wfFakeAdminStore) FindGaps(context.Context, string) ([]db.Gap, error) {
+func (f *wfFakeAdminStore) FindGaps(context.Context, string) ([]adminstore.Gap, error) {
 	return nil, nil
 }
 
@@ -154,6 +155,8 @@ type wfFakeChainStore struct {
 	hasBlock                         bool
 	deletedBlocks                    []uint64
 	deletedTransactions              []uint64
+	accountCreatedHeights            map[string]uint64
+	genesisJSON                      string
 }
 
 func (f *wfFakeChainStore) DatabaseName() string { return f.databaseName }
@@ -231,7 +234,7 @@ func (*wfFakeChainStore) QueryTransactionsWithFilter(context.Context, uint64, in
 	return nil, nil
 }
 
-func (*wfFakeChainStore) DescribeTable(context.Context, string) ([]db.Column, error) {
+func (*wfFakeChainStore) DescribeTable(context.Context, string) ([]chainstore.Column, error) {
 	return nil, nil
 }
 
@@ -328,11 +331,43 @@ func (*wfFakeChainStore) InsertPoolsStaging(context.Context, []*indexermodels.Po
 	return nil
 }
 
-func (*wfFakeChainStore) GetDexVolume24h(context.Context) ([]db.DexVolumeStats, error) {
+func (*wfFakeChainStore) InsertOrdersStaging(context.Context, []*indexermodels.Order) error {
+	return nil
+}
+
+func (*wfFakeChainStore) InsertAccountsStaging(context.Context, []*indexermodels.Account) error {
+	return nil
+}
+
+func (f *wfFakeChainStore) GetGenesisData(context.Context, uint64) (string, error) {
+	return f.genesisJSON, nil
+}
+
+func (f *wfFakeChainStore) HasGenesis(context.Context, uint64) (bool, error) {
+	return f.genesisJSON != "", nil
+}
+
+func (f *wfFakeChainStore) InsertGenesis(_ context.Context, height uint64, data string, _ time.Time) error {
+	if height != 0 {
+		return nil
+	}
+	f.genesisJSON = data
+	return nil
+}
+
+func (f *wfFakeChainStore) GetAccountCreatedHeight(context.Context, string) uint64 {
+	return 0
+}
+
+func (f *wfFakeChainStore) GetOrderCreatedHeight(context.Context, string) uint64 {
+	return 0
+}
+
+func (*wfFakeChainStore) GetDexVolume24h(context.Context) ([]chainstore.DexVolumeStats, error) {
 	return nil, nil
 }
 
-func (*wfFakeChainStore) GetOrderBookDepth(context.Context, uint64, int) ([]db.OrderBookLevel, error) {
+func (*wfFakeChainStore) GetOrderBookDepth(context.Context, uint64, int) ([]chainstore.OrderBookLevel, error) {
 	return nil, nil
 }
 

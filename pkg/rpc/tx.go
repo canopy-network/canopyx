@@ -497,7 +497,6 @@ func (tx *Transaction) ToTransaction() (*indexer.Transaction, error) {
 		Msg:              string(msgJSON),
 		PublicKey:        publicKey,
 		Signature:        signature,
-		CreatedHeight:    uint64(tx.Transaction.CreatedHeight),
 	}, nil
 }
 

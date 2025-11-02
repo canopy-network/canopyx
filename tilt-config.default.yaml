@@ -35,16 +35,20 @@ components:
                           # Enable this for: performance testing, debugging, demos
                           # Disable for: normal development, laptop environments
 
-  # --- Optional Blockchain Node ---
-  canopy_node: false      # Local Canopy blockchain node (adds ~2GB RAM, +1 CPU)
-                          # Enable if: testing against local chain, developing blockchain features
-                          # Disable if: using remote RPC endpoints only
+  # --- Optional Blockchain Nodes ---
+  canopy: "off"           # Canopy blockchain node deployment mode
+                          # Options: "off" | "single" | "dual"
+                          #
+                          # "off"    - No Canopy nodes (use remote RPC endpoints)
+                          # "single" - Single legacy node (adds ~2GB RAM, +1 CPU)
+                          #            Use for: basic blockchain testing, single chain development
+                          # "dual"   - Dual nodes for DEX testing (adds ~4GB RAM, +2 CPU)
+                          #            Use for: DEX/liquidity pools, cross-chain operations
+                          #            Deploys: Node 1 (Chain ID 1) + Node 2 (Chain ID 2)
+                          #
                           # Requires: paths.canopy_source must exist
 
   # --- Optional Services (you can disable these if not needed) ---
-  query: true             # Public query API
-                          # Disable if: only working on admin/indexer, not using query features
-
   admin_web: true         # Next.js admin UI
                           # Disable if: only using API directly, not working on UI
 
@@ -57,7 +61,7 @@ components:
 paths:
   # Path to Canopy blockchain source code (if using local node)
   # The Canopy node will only be deployed if:
-  #   1. components.canopy_node = true
+  #   1. components.canopy is set to "single" or "dual"
   #   2. This path exists and contains a valid Canopy repository
   #
   # Examples:
@@ -93,8 +97,6 @@ resources:
       admin_memory_limit: "512Mi"
       controller_cpu_limit: "500m"
       controller_memory_limit: "512Mi"
-      query_cpu_limit: "500m"
-      query_memory_limit: "512Mi"
       admin_web_cpu_limit: "200m"
       admin_web_memory_limit: "512Mi"  # Higher for Next.js dev mode with hot reload
 
@@ -130,8 +132,6 @@ resources:
       admin_memory_limit: "1Gi"
       controller_cpu_limit: "1000m"
       controller_memory_limit: "1Gi"
-      query_cpu_limit: "1000m"
-      query_memory_limit: "1Gi"
       admin_web_cpu_limit: "500m"
       admin_web_memory_limit: "512Mi"
 
@@ -175,8 +175,6 @@ resources:
       admin_memory_limit: "2Gi"
       controller_cpu_limit: "2000m"
       controller_memory_limit: "2Gi"
-      query_cpu_limit: "2000m"
-      query_memory_limit: "2Gi"
       admin_web_cpu_limit: "1000m"
       admin_web_memory_limit: "1Gi"
 
@@ -221,10 +219,9 @@ ports:
 
   # CanopyX Services
   admin: 3000                # Admin API
-  query: 3001                # Query API
   admin_web: 3003            # Admin web UI
 
-  # Canopy Node (only if components.canopy_node = true)
+  # Canopy Nodes (only if components.canopy = "single" or "dual")
   canopy_wallet: 50000       # Wallet RPC
   canopy_explorer: 50001     # Explorer API
   canopy_rpc: 50002          # JSON-RPC
@@ -262,18 +259,16 @@ monitoring:
 chains: []
   # Uncomment and modify to connect to external Canopy networks:
   #
-  # - chain_id: "canopy-mainnet"
-  #   chain_name: "Canopy Mainnet"
+  # - chain_name: "Canopy Mainnet"
   #   rpc_endpoints: ["https://node1.canopy.us.nodefleet.net/rpc"]
-  #   min_replicas: 3
-  #   max_replicas: 6
+  #   min_replicas: 1
+  #   max_replicas: 2
   #   image: "localhost:5001/canopyx-indexer:dev"  # Optional, defaults to dev.indexer_tag
   #
-  # - chain_id: "canopy-canary"
-  #   chain_name: "Canopy Canary"
+  # - chain_name: "Canopy Canary"
   #   rpc_endpoints: ["https://node2.canopy.us.nodefleet.net/rpc"]
-  #   min_replicas: 3
-  #   max_replicas: 6
+  #   min_replicas: 1
+  #   max_replicas: 2
   #   image: "localhost:5001/canopyx-indexer:dev"  # Optional, defaults to dev.indexer_tag
 
 # ==============================================================================
@@ -303,7 +298,7 @@ dev:
   # Auto-rebuild on code changes
   auto_rebuild: true
 
-  # Automatically register local Canopy chain (if canopy_node enabled)
+  # Automatically register local Canopy chain(s) (if canopy is "single" or "dual")
   auto_register_chain: true
 
   # Indexer image tag
@@ -321,23 +316,28 @@ dev:
 #   profile: minimal
 #   components:
 #     monitoring: false
-#     canopy_node: false
-#     query: false  # Only if you don't need query API
+#     canopy: "off"
 #
 # Full-Stack Developer (normal development):
 #   profile: development
 #   components:
 #     monitoring: false  # Enable only when debugging
-#     canopy_node: true  # If testing against local node
+#     canopy: "single"   # If testing against local node
+#
+# DEX/Pools Developer:
+#   profile: development
+#   components:
+#     monitoring: false
+#     canopy: "dual"     # For cross-chain DEX testing
 #
 # Performance Testing / Benchmarking:
 #   profile: production
 #   components:
 #     monitoring: true   # MUST be enabled for benchmarking
-#     canopy_node: true  # If testing local node performance
+#     canopy: "single"   # If testing local node performance
 #
 # Demo / Presentation:
 #   profile: production
 #   components:
 #     monitoring: true   # Show off the dashboards!
-#     canopy_node: true
+#     canopy: "dual"     # Show dual-chain DEX features

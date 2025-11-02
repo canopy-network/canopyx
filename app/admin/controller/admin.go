@@ -4,16 +4,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/canopy-network/canopyx/app/admin/controller/types"
 	"github.com/go-jose/go-jose/v4/json"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // HandleAdminLogin handles admin login
 func (c *Controller) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
+	var in types.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "bad json"})

@@ -1,11 +1,19 @@
 package indexer
 
 import (
-	"context"
-	"fmt"
+	"math"
 	"time"
+)
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+const PoolsProductionTableName = "pools"
+const PoolsStagingTableName = "pools_staging"
+
+// Pool ID calculation constants (from Canopy blockchain logic)
+const (
+	MaxChainID          = uint64(math.MaxUint16 / 4)
+	HoldingPoolAddend   = uint64(1 * math.MaxUint16 / 4)
+	LiquidityPoolAddend = uint64(2 * math.MaxUint16 / 4)
+	EscrowPoolAddend    = uint64(4 * math.MaxUint16 / 4)
 )
 
 // Pool stores pool state snapshots at each height.
@@ -31,58 +39,20 @@ type Pool struct {
 
 	// Time fields for range queries
 	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp
+
+	// Calculated pool IDs for different pool types
+	// These IDs are calculated using: Addend + ChainID
+	LiquidityPoolID uint64 `ch:"liquidity_pool_id" json:"liquidity_pool_id"` // LiquidityPoolAddend + ChainID
+	HoldingPoolID   uint64 `ch:"holding_pool_id" json:"holding_pool_id"`     // HoldingPoolAddend + ChainID
+	EscrowPoolID    uint64 `ch:"escrow_pool_id" json:"escrow_pool_id"`       // EscrowPoolAddend + ChainID
+	RewardPoolID    uint64 `ch:"reward_pool_id" json:"reward_pool_id"`       // Same as ChainID
 }
 
-// InitPools creates the pools table with ReplacingMergeTree engine.
-// Uses height as the deduplication version key.
-// The table stores pool state snapshots that change at each height.
-func InitPools(ctx context.Context, db driver.Conn) error {
-	query := `
-		CREATE TABLE IF NOT EXISTS pools (
-			pool_id UInt64,
-			height UInt64,
-			chain_id UInt64,
-			amount UInt64,
-			total_points UInt64,
-			lp_count UInt32,
-			height_time DateTime64(6)
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (pool_id, height)
-	`
-	return db.Exec(ctx, query)
-}
-
-// InsertPoolsStaging inserts pools to the staging table.
-// Staging tables are used for new data before promotion to production.
-// This follows the two-phase commit pattern for data consistency.
-func InsertPoolsStaging(ctx context.Context, db driver.Conn, tableName string, pools []*Pool) error {
-	if len(pools) == 0 {
-		return nil
-	}
-
-	query := fmt.Sprintf(`INSERT INTO %s (pool_id, height, chain_id, amount, total_points, lp_count, height_time) VALUES`, tableName)
-	batch, err := db.PrepareBatch(ctx, query)
-	if err != nil {
-		return err
-	}
-	defer func(batch driver.Batch) {
-		_ = batch.Abort()
-	}(batch)
-
-	for _, pool := range pools {
-		err = batch.Append(
-			pool.PoolID,
-			pool.Height,
-			pool.ChainID,
-			pool.Amount,
-			pool.TotalPoints,
-			pool.LPCount,
-			pool.HeightTime,
-		)
-		if err != nil {
-			return err
-		}
-	}
-
-	return batch.Send()
+// CalculatePoolIDs populates the calculated pool ID fields based on the ChainID.
+// This should be called after setting the ChainID field.
+func (p *Pool) CalculatePoolIDs() {
+	p.LiquidityPoolID = LiquidityPoolAddend + p.ChainID
+	p.HoldingPoolID = HoldingPoolAddend + p.ChainID
+	p.EscrowPoolID = EscrowPoolAddend + p.ChainID
+	p.RewardPoolID = p.ChainID
 }

@@ -3,13 +3,16 @@ package types
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db"
-	indexerworkflow "github.com/canopy-network/canopyx/pkg/indexer/workflow"
-	reporterworkflows "github.com/canopy-network/canopyx/pkg/reporter/workflow"
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
+	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/temporal"
+	indexer "github.com/canopy-network/canopyx/pkg/workflows/indexer"
 	"github.com/puzpuzpuz/xsync/v4"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
@@ -17,24 +20,10 @@ import (
 	"go.uber.org/zap"
 )
 
-type CachedQueueStats struct {
-	OpsQueue        QueueStatus
-	IndexerQueue    QueueStatus // Deprecated: Aggregated stats for backward compatibility
-	LiveQueue       QueueStatus // NEW: Live queue stats (blocks within threshold)
-	HistoricalQueue QueueStatus // NEW: Historical queue stats (blocks beyond threshold)
-	Fetched         time.Time
-}
-
-// NewQueueStatsCache creates a new queue stats cache
-func NewQueueStatsCache() *xsync.Map[string, CachedQueueStats] {
-	return xsync.NewMap[string, CachedQueueStats]()
-}
-
 type App struct {
 	// Database Client wrappers
-	AdminDB  *db.AdminDB
-	ReportDB *db.ReportsDB
-	ChainsDB *xsync.Map[string, db.ChainStore]
+	AdminDB  *adminstore.AdminDB
+	ChainsDB *xsync.Map[string, chainstore.Store]
 
 	// Temporal Client wrapper
 	TemporalClient *temporal.Client
@@ -42,11 +31,11 @@ type App struct {
 	// Temporal Worker Client
 	Worker worker.Worker
 
+	// Redis Client (for WebSocket real-time events)
+	RedisClient *redis.Client
+
 	// Zap Logger
 	Logger *zap.Logger
-
-	// Contexts
-	ReporterWorkflowContext *reporterworkflows.Context
 
 	// HTTP Server
 	Server *http.Server
@@ -66,14 +55,8 @@ func (a *App) Start(ctx context.Context) {
 		a.Logger.Error("Failed to close database connection", zap.Error(err))
 	}
 
-	a.Logger.Info("closing reports database connection")
-	err = a.ReportDB.Close()
-	if err != nil {
-		a.Logger.Error("Failed to close database connection", zap.Error(err))
-	}
-
 	// Close all chain database connections
-	a.ChainsDB.Range(func(key string, chainStore db.ChainStore) bool {
+	a.ChainsDB.Range(func(key string, chainStore chainstore.Store) bool {
 		a.Logger.Info("closing chain database connection", zap.String("chainID", chainStore.ChainKey()))
 		err = chainStore.Close()
 		if err != nil {
@@ -97,13 +80,19 @@ func (a *App) Start(ctx context.Context) {
 // NewChainDb initializes or retrieves an instance of ChainDB for a given blockchain identified by chainID.
 // It ensures the database and required tables are created if not already present.
 // Returns the ChainDB instance or an error in case of failure.
-func (a *App) NewChainDb(ctx context.Context, chainID string) (db.ChainStore, error) {
+func (a *App) NewChainDb(ctx context.Context, chainID string) (chainstore.Store, error) {
 	if chainDb, ok := a.ChainsDB.Load(chainID); ok {
 		// chainDb is already loaded
 		return chainDb, nil
 	}
 
-	chainDB, chainDBErr := db.NewChainDb(ctx, a.Logger, chainID)
+	// Convert string chainID to uint64
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return nil, fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+
+	chainDB, chainDBErr := chainstore.New(ctx, a.Logger, chainIDUint)
 	if chainDBErr != nil {
 		return nil, chainDBErr
 	}
@@ -115,55 +104,28 @@ func (a *App) NewChainDb(ctx context.Context, chainID string) (db.ChainStore, er
 
 // ReconcileSchedules ensures the required schedules for indexing are created if they do not already exist.
 func (a *App) ReconcileSchedules(ctx context.Context) error {
-	globalReportsScheduleErr := a.EnsureGlobalReportsSchedule(ctx)
-	if globalReportsScheduleErr != nil {
-		return globalReportsScheduleErr
-	}
-
 	chains, err := a.AdminDB.ListChain(ctx)
 	if err != nil {
 		return err
 	}
 
 	for _, c := range chains {
-		if chainScheduleErr := a.EnsureChainSchedules(ctx, c.ChainID); chainScheduleErr != nil {
+		chainIDStr := strconv.FormatUint(c.ChainID, 10)
+		if chainScheduleErr := a.EnsureChainSchedules(ctx, chainIDStr); chainScheduleErr != nil {
 			return chainScheduleErr
 		}
 	}
 	return nil
 }
 
-// EnsureGlobalReportsSchedule ensures the global reports schedule is created if it does not already exist.
-func (a *App) EnsureGlobalReportsSchedule(ctx context.Context) error {
-	id := a.TemporalClient.GetGlobalReportsScheduleID()
-	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
-	_, err := h.Describe(ctx)
-	if err == nil {
-		return nil
-	}
-
-	var notFound *serviceerror.NotFound
-	if errors.As(err, &notFound) {
-		a.Logger.Info("Creating global reports schedule", zap.String("id", id))
-		_, scheduleErr := a.TemporalClient.TSClient.Create(
-			ctx,
-			client.ScheduleOptions{
-				ID:   id,
-				Spec: a.TemporalClient.ThreeMinuteSpec(),
-				Action: &client.ScheduleWorkflowAction{
-					Workflow:  a.ReporterWorkflowContext.ComputeTxStatsWorkflow,
-					TaskQueue: a.TemporalClient.ReportsQueue,
-				},
-			},
-		)
-		return scheduleErr
-	}
-	return err
-}
-
 // EnsureHeadSchedule ensures the required schedules for indexing are created if they do not already exist.
 func (a *App) EnsureHeadSchedule(ctx context.Context, chainID string) error {
-	id := a.TemporalClient.GetHeadScheduleID(chainID)
+	// Convert string chainID to uint64
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	id := a.TemporalClient.GetHeadScheduleID(chainIDUint)
 	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
 	_, err := h.Describe(ctx)
 	if err == nil {
@@ -178,9 +140,9 @@ func (a *App) EnsureHeadSchedule(ctx context.Context, chainID string) error {
 				ID:   id,
 				Spec: a.TemporalClient.TwoSecondSpec(),
 				Action: &client.ScheduleWorkflowAction{
-					Workflow:  indexerworkflow.HeadScanWorkflowName,
-					Args:      []interface{}{indexerworkflow.HeadScanInput{ChainID: chainID}},
-					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainID),
+					Workflow:  indexer.HeadScanWorkflowName,
+					Args:      []interface{}{indexer.HeadScanInput{ChainID: chainIDUint}},
+					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
 				},
 			},
 		)
@@ -191,7 +153,12 @@ func (a *App) EnsureHeadSchedule(ctx context.Context, chainID string) error {
 
 // EnsureGapScanSchedule ensures the required schedules for indexing are created if they do not already exist.
 func (a *App) EnsureGapScanSchedule(ctx context.Context, chainID string) error {
-	id := a.TemporalClient.GetGapScanScheduleID(chainID)
+	// Convert string chainID to uint64
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	id := a.TemporalClient.GetGapScanScheduleID(chainIDUint)
 	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
 	_, err := h.Describe(ctx)
 	if err == nil {
@@ -208,9 +175,9 @@ func (a *App) EnsureGapScanSchedule(ctx context.Context, chainID string) error {
 				ID:   id,
 				Spec: a.TemporalClient.OneHourSpec(),
 				Action: &client.ScheduleWorkflowAction{
-					Workflow:  indexerworkflow.GapScanWorkflowName,
-					Args:      []interface{}{indexerworkflow.GapScanInput{ChainID: chainID}},
-					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainID),
+					Workflow:  indexer.GapScanWorkflowName,
+					Args:      []interface{}{indexer.GapScanInput{ChainID: chainIDUint}},
+					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
 				},
 			},
 		)
@@ -230,4 +197,21 @@ func (a *App) EnsureChainSchedules(ctx context.Context, chainID string) error {
 	}
 
 	return nil
+}
+
+// LoadChainStore loads or creates a chain store for the given chain ID.
+// Returns the store and a boolean indicating if the chain was loaded successfully.
+func (a *App) LoadChainStore(ctx context.Context, chainID string) (chainstore.Store, bool) {
+	if store, ok := a.ChainsDB.Load(chainID); ok {
+		return store, true
+	}
+
+	// Try to create the store if it doesn't exist
+	store, err := a.NewChainDb(ctx, chainID)
+	if err != nil {
+		a.Logger.Error("Failed to load chain store", zap.String("chainID", chainID), zap.Error(err))
+		return nil, false
+	}
+
+	return store, true
 }

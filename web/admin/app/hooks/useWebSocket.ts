@@ -41,7 +41,7 @@ interface UseWebSocketReturn {
 }
 
 /**
- * Custom hook for managing WebSocket connection to Query App for real-time block events.
+ * Custom hook for managing WebSocket connection to Admin App for real-time block events.
  *
  * Features:
  * - Automatic reconnection with exponential backoff
@@ -53,7 +53,7 @@ interface UseWebSocketReturn {
  * @example
  * ```typescript
  * const { isConnected, lastEvent, subscribe } = useWebSocket({
- *   url: 'ws://localhost:3001/ws',
+ *   url: '/api/admin/ws',
  *   chainId: 'canopy_local',
  *   onBlockIndexed: (event) => {
  *     console.log('New block:', event.height);
