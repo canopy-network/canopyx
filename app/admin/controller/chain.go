@@ -533,7 +533,7 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 
 	for _, chn := range chains {
 		chainIDStr := strconv.FormatUint(chn.ChainID, 10)
-		history, err := c.App.AdminDB.ListReindexRequests(ctx, chainIDStr, 10)
+		history, err := c.App.AdminDB.ListReindexRequests(ctx, chn.ChainID, 10)
 		if err != nil {
 			c.App.Logger.Warn("list reindex history failed", zap.String("chain_id", chainIDStr), zap.Error(err))
 			continue

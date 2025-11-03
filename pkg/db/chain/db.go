@@ -234,7 +234,7 @@ func (db *DB) PromoteEntity(ctx context.Context, entity entities.Entity, height 
 }
 
 // CleanEntityStaging removes promoted data from staging table.
-// Uses ALTER TABLE DELETE for efficient deletion in ClickHouse.
+// Uses DELETE FROM for synchronous deletion (OLTP-friendly).
 // The operation is idempotent - safe to retry if it fails.
 func (db *DB) CleanEntityStaging(ctx context.Context, entity entities.Entity, height uint64) error {
 	// Validate entity is known
@@ -242,9 +242,9 @@ func (db *DB) CleanEntityStaging(ctx context.Context, entity entities.Entity, he
 		return fmt.Errorf("invalid entity: %q", entity)
 	}
 
-	// Build cleanup query: ALTER TABLE staging DELETE WHERE height = ?
+	// Build cleanup query using lightweight DELETE FROM (not ALTER TABLE DELETE which is async)
 	query := fmt.Sprintf(
-		`ALTER TABLE "%s"."%s" DELETE WHERE height = ?`,
+		`DELETE FROM "%s"."%s" WHERE height = ?`,
 		db.Name, entity.StagingTableName(),
 	)
 
