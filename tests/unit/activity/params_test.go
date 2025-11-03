@@ -7,6 +7,8 @@ import (
 
 	"github.com/canopy-network/canopyx/app/indexer/activity"
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
@@ -25,7 +27,7 @@ func TestIndexParams_Success_ParamsChanged(t *testing.T) {
 	// Setup mock admin store
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -122,7 +124,7 @@ func TestIndexParams_Success_ParamsChanged(t *testing.T) {
 
 	// Execute activity
 	input := types.IndexParamsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -149,7 +151,7 @@ func TestIndexParams_Success_NoChanges(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -199,7 +201,7 @@ func TestIndexParams_Success_NoChanges(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexParams)
 
 	input := types.IndexParamsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -224,7 +226,7 @@ func TestIndexParams_GenesisBlock(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -270,7 +272,7 @@ func TestIndexParams_GenesisBlock(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexParams)
 
 	input := types.IndexParamsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    1,
 		BlockTime: time.Now().UTC(),
 	}
@@ -296,7 +298,7 @@ func TestIndexParams_RPCError(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -323,7 +325,7 @@ func TestIndexParams_RPCError(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexParams)
 
 	input := types.IndexParamsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -415,7 +417,7 @@ func (m *mockParamsRPCClient) ValParams(ctx context.Context, height uint64) (*rp
 	return nil, nil
 }
 
-func (m *mockParamsRPCClient) CommitteesData(ctx context.Context, height uint64) ([]*rpc.RpcCommittee, error) {
+func (m *mockParamsRPCClient) CommitteesData(ctx context.Context, height uint64) ([]*rpc.RpcCommitteeData, error) {
 	return nil, nil
 }
 
@@ -427,8 +429,8 @@ func (m *mockParamsRPCClient) RetiredCommittees(ctx context.Context, height uint
 	return nil, nil
 }
 
-func (m *mockParamsRPCClient) Poll(ctx context.Context) (map[string]*rpc.RpcPollResult, error) {
-	return nil, nil
+func (m *mockParamsRPCClient) Poll(ctx context.Context) (rpc.RpcPoll, error) {
+	return rpc.RpcPoll{}, nil
 }
 
 func (m *mockParamsRPCClient) DexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*rpc.RpcDexBatch, error) {
@@ -436,6 +438,26 @@ func (m *mockParamsRPCClient) DexBatchByHeight(ctx context.Context, height uint6
 }
 
 func (m *mockParamsRPCClient) NextDexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (m *mockParamsRPCClient) FeeParams(ctx context.Context, height uint64) (*rpc.FeeParams, error) {
+	return nil, nil
+}
+
+func (m *mockParamsRPCClient) ConParams(ctx context.Context, height uint64) (*rpc.ConsensusParams, error) {
+	return nil, nil
+}
+
+func (m *mockParamsRPCClient) GovParams(ctx context.Context, height uint64) (*rpc.GovParams, error) {
+	return nil, nil
+}
+
+func (m *mockParamsRPCClient) CommitteeData(ctx context.Context, chainID, height uint64) (*rpc.RpcCommitteeData, error) {
+	return nil, nil
+}
+
+func (m *mockParamsRPCClient) State(ctx context.Context) (*rpc.StateResponse, error) {
 	return nil, nil
 }
 
@@ -450,5 +472,108 @@ func (m *mockParamsChainStore) ChainKey() string     { return m.chainID }
 
 func (m *mockParamsChainStore) InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error {
 	m.insertedParams = append(m.insertedParams, params)
+	return nil
+}
+
+func (m *mockParamsChainStore) GetEventsByTypeAndHeight(ctx context.Context, height uint64, eventTypes ...string) ([]*indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockParamsChainStore) InitializeDB(ctx context.Context) error {
+	return nil
+}
+
+// Implement remaining required Store interface methods as no-ops for testing
+func (m *mockParamsChainStore) InsertAccountsStaging(ctx context.Context, accounts []*indexermodels.Account) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertBlocksStaging(ctx context.Context, block *indexermodels.Block) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertTransactionsStaging(ctx context.Context, txs []*indexermodels.Transaction) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertBlockSummariesStaging(ctx context.Context, summary *indexermodels.BlockSummary) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertEventsStaging(ctx context.Context, events []*indexermodels.Event) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertDexPricesStaging(ctx context.Context, prices []*indexermodels.DexPrice) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Pool) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.Order) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodels.DexOrder) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertDexDepositsStaging(ctx context.Context, deposits []*indexermodels.DexDeposit) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertGenesis(ctx context.Context, height uint64, data string, fetchedAt time.Time) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertValidatorSigningInfoStaging(ctx context.Context, signingInfos []*indexermodels.ValidatorSigningInfo) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error {
+	return nil
+}
+func (m *mockParamsChainStore) InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error {
+	return nil
+}
+func (m *mockParamsChainStore) GetBlock(ctx context.Context, height uint64) (*indexermodels.Block, error) {
+	return nil, nil
+}
+func (m *mockParamsChainStore) GetBlockSummary(ctx context.Context, height uint64) (*indexermodels.BlockSummary, error) {
+	return nil, nil
+}
+func (m *mockParamsChainStore) HasBlock(ctx context.Context, height uint64) (bool, error) {
+	return false, nil
+}
+func (m *mockParamsChainStore) GetGenesisData(ctx context.Context, height uint64) (string, error) {
+	return "", nil
+}
+func (m *mockParamsChainStore) HasGenesis(ctx context.Context, height uint64) (bool, error) {
+	return false, nil
+}
+func (m *mockParamsChainStore) DeleteBlock(ctx context.Context, height uint64) error { return nil }
+func (m *mockParamsChainStore) DeleteTransactions(ctx context.Context, height uint64) error {
+	return nil
+}
+func (m *mockParamsChainStore) Exec(ctx context.Context, query string, args ...any) error { return nil }
+func (m *mockParamsChainStore) Select(ctx context.Context, dest interface{}, query string, args ...any) error {
+	return nil
+}
+func (m *mockParamsChainStore) Close() error { return nil }
+func (m *mockParamsChainStore) DescribeTable(ctx context.Context, tableName string) ([]chainstore.Column, error) {
+	return nil, nil
+}
+func (m *mockParamsChainStore) GetTableSchema(ctx context.Context, tableName string) ([]chainstore.Column, error) {
+	return nil, nil
+}
+func (m *mockParamsChainStore) GetTableDataPaginated(ctx context.Context, tableName string, limit, offset int, fromHeight, toHeight *uint64) ([]map[string]interface{}, int64, bool, error) {
+	return nil, 0, false, nil
+}
+func (m *mockParamsChainStore) PromoteEntity(ctx context.Context, entity entities.Entity, height uint64) error {
+	return nil
+}
+func (m *mockParamsChainStore) CleanEntityStaging(ctx context.Context, entity entities.Entity, height uint64) error {
 	return nil
 }

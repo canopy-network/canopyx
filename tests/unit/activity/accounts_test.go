@@ -86,6 +86,66 @@ func (m *mockAccountsRPCClient) Pools(ctx context.Context) ([]*rpc.RpcPool, erro
 	return nil, nil
 }
 
+func (m *mockAccountsRPCClient) AllParams(ctx context.Context, height uint64) (*rpc.RpcAllParams, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) FeeParams(ctx context.Context, height uint64) (*rpc.FeeParams, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) ConParams(ctx context.Context, height uint64) (*rpc.ConsensusParams, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) ValParams(ctx context.Context, height uint64) (*rpc.ValidatorParams, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) GovParams(ctx context.Context, height uint64) (*rpc.GovParams, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) Validators(ctx context.Context, height uint64) ([]*rpc.RpcValidator, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) NonSigners(ctx context.Context, height uint64) ([]*rpc.RpcNonSigner, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) CommitteeData(ctx context.Context, chainID, height uint64) (*rpc.RpcCommitteeData, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) CommitteesData(ctx context.Context, height uint64) ([]*rpc.RpcCommitteeData, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) SubsidizedCommittees(ctx context.Context, height uint64) ([]uint64, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) RetiredCommittees(ctx context.Context, height uint64) ([]uint64, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) Poll(ctx context.Context) (rpc.RpcPoll, error) {
+	return rpc.RpcPoll{}, nil
+}
+
+func (m *mockAccountsRPCClient) State(ctx context.Context) (*rpc.StateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) DexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) NextDexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
 // Mock Chain Store for accounts tests
 type mockAccountsChainStore struct {
 	mock.Mock
@@ -190,6 +250,66 @@ func (m *mockAccountsChainStore) InsertOrdersStaging(ctx context.Context, orders
 
 func (m *mockAccountsChainStore) GetOrderCreatedHeight(_ context.Context, orderID string) uint64 {
 	return 0
+}
+
+func (m *mockAccountsChainStore) GetEventsByTypeAndHeight(ctx context.Context, height uint64, eventTypes ...string) ([]*indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsChainStore) InitializeDB(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) Select(ctx context.Context, dest interface{}, query string, args ...any) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) GetTableSchema(ctx context.Context, tableName string) ([]chainstore.Column, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsChainStore) GetTableDataPaginated(ctx context.Context, tableName string, limit, offset int, fromHeight, toHeight *uint64) ([]map[string]interface{}, int64, bool, error) {
+	return nil, 0, false, nil
+}
+
+func (m *mockAccountsChainStore) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodels.DexOrder) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertDexDepositsStaging(ctx context.Context, deposits []*indexermodels.DexDeposit) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertValidatorSigningInfoStaging(ctx context.Context, signingInfos []*indexermodels.ValidatorSigningInfo) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error {
+	return nil
+}
+
+func (m *mockAccountsChainStore) InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error {
+	return nil
 }
 
 func (m *mockAccountsChainStore) QueryBlocks(ctx context.Context, height uint64, limit int, desc bool) ([]indexermodels.Block, error) {
@@ -312,7 +432,7 @@ func (m *mockAccountsChainStore) InsertTransactionsStaging(ctx context.Context, 
 	return nil
 }
 
-func (m *mockAccountsChainStore) InsertBlockSummariesStaging(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
+func (m *mockAccountsChainStore) InsertBlockSummariesStaging(ctx context.Context, summary *indexermodels.BlockSummary) error {
 	return nil
 }
 
@@ -340,14 +460,6 @@ func (m *mockAccountsChainStore) InsertPoolsStaging(ctx context.Context, pools [
 	return nil
 }
 
-func (m *mockAccountsChainStore) GetDexVolume24h(ctx context.Context) ([]chainstore.DexVolumeStats, error) {
-	return nil, nil
-}
-
-func (m *mockAccountsChainStore) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]chainstore.OrderBookLevel, error) {
-	return nil, nil
-}
-
 func (m *mockAccountsChainStore) Close() error {
 	return nil
 }
@@ -359,7 +471,7 @@ func TestIndexAccounts_Success(t *testing.T) {
 	// Setup mock admin store
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -412,7 +524,7 @@ func TestIndexAccounts_Success(t *testing.T) {
 
 	// Execute activity
 	input := types.IndexAccountsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now(),
 	}
@@ -437,7 +549,7 @@ func TestIndexAccounts_NoChanges(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -473,7 +585,7 @@ func TestIndexAccounts_NoChanges(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexAccounts)
 
 	input := types.IndexAccountsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now(),
 	}
@@ -527,7 +639,7 @@ func TestIndexAccounts_HeightOne(t *testing.T) {
 	// This is a simplification - in real code, it queries the database
 	// For unit testing, we'll test the comparison logic
 	input := types.IndexAccountsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    1,
 		BlockTime: time.Now(),
 	}
@@ -545,7 +657,7 @@ func TestIndexAccounts_HeightOne(t *testing.T) {
 	// Compare and collect changed accounts
 	changedAccounts := make([]*indexermodels.Account, 0)
 	for _, curr := range height1Accounts {
-		prevAmount, existed := prevMap[curr.Address]
+		prevAmount, _ := prevMap[curr.Address]
 
 		if curr.Amount != prevAmount {
 			changedAccounts = append(changedAccounts, &indexermodels.Account{
@@ -572,7 +684,7 @@ func TestIndexAccounts_RPCFailure(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -605,7 +717,7 @@ func TestIndexAccounts_RPCFailure(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexAccounts)
 
 	input := types.IndexAccountsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now(),
 	}
@@ -637,7 +749,7 @@ func TestIndexAccounts_LargeDataset(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -690,7 +802,7 @@ func TestIndexAccounts_LargeDataset(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexAccounts)
 
 	input := types.IndexAccountsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now(),
 	}

@@ -88,6 +88,66 @@ func (m *mockGenesisRPCClient) Pools(ctx context.Context) ([]*rpc.RpcPool, error
 	return nil, nil
 }
 
+func (m *mockGenesisRPCClient) AllParams(ctx context.Context, height uint64) (*rpc.RpcAllParams, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) FeeParams(ctx context.Context, height uint64) (*rpc.FeeParams, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) ConParams(ctx context.Context, height uint64) (*rpc.ConsensusParams, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) ValParams(ctx context.Context, height uint64) (*rpc.ValidatorParams, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) GovParams(ctx context.Context, height uint64) (*rpc.GovParams, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) Validators(ctx context.Context, height uint64) ([]*rpc.RpcValidator, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) NonSigners(ctx context.Context, height uint64) ([]*rpc.RpcNonSigner, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) CommitteeData(ctx context.Context, chainID, height uint64) (*rpc.RpcCommitteeData, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) CommitteesData(ctx context.Context, height uint64) ([]*rpc.RpcCommitteeData, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) SubsidizedCommittees(ctx context.Context, height uint64) ([]uint64, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) RetiredCommittees(ctx context.Context, height uint64) ([]uint64, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) Poll(ctx context.Context) (rpc.RpcPoll, error) {
+	return rpc.RpcPoll{}, nil
+}
+
+func (m *mockGenesisRPCClient) State(ctx context.Context) (*rpc.StateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) DexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisRPCClient) NextDexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
 // Mock ChainDB for genesis tests
 type mockGenesisChainDB struct {
 	mock.Mock
@@ -251,7 +311,7 @@ func (m *mockGenesisChainDB) InsertTransactionsStaging(ctx context.Context, txs 
 	return nil
 }
 
-func (m *mockGenesisChainDB) InsertBlockSummariesStaging(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
+func (m *mockGenesisChainDB) InsertBlockSummariesStaging(ctx context.Context, summary *indexermodels.BlockSummary) error {
 	return nil
 }
 
@@ -279,15 +339,67 @@ func (m *mockGenesisChainDB) InsertPoolsStaging(ctx context.Context, pools []*in
 	return nil
 }
 
-func (m *mockGenesisChainDB) GetDexVolume24h(ctx context.Context) ([]chainstore.DexVolumeStats, error) {
-	return nil, nil
-}
-
-func (m *mockGenesisChainDB) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]chainstore.OrderBookLevel, error) {
-	return nil, nil
-}
-
 func (m *mockGenesisChainDB) Close() error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, eventTypes ...string) ([]*indexermodels.Event, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) InitializeDB(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) Select(ctx context.Context, dest interface{}, query string, args ...any) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) GetTableSchema(ctx context.Context, tableName string) ([]chainstore.Column, error) {
+	return nil, nil
+}
+
+func (m *mockGenesisChainDB) GetTableDataPaginated(ctx context.Context, tableName string, limit, offset int, fromHeight, toHeight *uint64) ([]map[string]interface{}, int64, bool, error) {
+	return nil, 0, false, nil
+}
+
+func (m *mockGenesisChainDB) InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodels.DexOrder) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertDexDepositsStaging(ctx context.Context, deposits []*indexermodels.DexDeposit) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error {
+	return nil
+}
+
+func (m *mockGenesisChainDB) InsertValidatorSigningInfoStaging(ctx context.Context, signingInfos []*indexermodels.ValidatorSigningInfo) error {
 	return nil
 }
 
@@ -379,7 +491,7 @@ func TestEnsureGenesisCached_RPCFailure(t *testing.T) {
 	// Setup mock admin store
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -413,7 +525,7 @@ func TestEnsureGenesisCached_RPCFailure(t *testing.T) {
 	env.RegisterActivity(activityCtx.EnsureGenesisCached)
 
 	input := types.EnsureGenesisCachedInput{
-		ChainID: "chain-A",
+		ChainID: 1,
 	}
 
 	future, err := env.ExecuteActivity(activityCtx.EnsureGenesisCached, input)
@@ -515,7 +627,7 @@ func TestEnsureGenesisCached_InvalidChain(t *testing.T) {
 	env.RegisterActivity(activityCtx.EnsureGenesisCached)
 
 	input := types.EnsureGenesisCachedInput{
-		ChainID: "invalid-chain",
+		ChainID: 999,
 	}
 
 	future, err := env.ExecuteActivity(activityCtx.EnsureGenesisCached, input)

@@ -24,7 +24,7 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 			CreatedAt:    time.Now(),
 			UpdatedAt:    time.Now(),
@@ -54,7 +54,7 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 
 	env.RegisterActivity(activityCtx.IndexTransactions)
 	future, err := env.ExecuteActivity(activityCtx.IndexTransactions, types.IndexTransactionsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    10,
 		BlockTime: time.Now().UTC(),
 	})
@@ -72,7 +72,7 @@ func TestFetchBlockFromRPC(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -92,7 +92,7 @@ func TestFetchBlockFromRPC(t *testing.T) {
 	// Call the activity directly (not through Temporal test framework)
 	// This avoids serialization issues with interface{} types
 	input := types.IndexBlockInput{
-		ChainID: "chain-A",
+		ChainID: 1,
 		Height:  42,
 	}
 
@@ -111,7 +111,7 @@ func TestSaveBlock(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -129,7 +129,7 @@ func TestSaveBlock(t *testing.T) {
 	// Call the activity directly (not through Temporal test framework)
 	block := &indexermodels.Block{Height: 42, Hash: "xyz789"}
 	input := types.SaveBlockInput{
-		ChainID: "chain-A",
+		ChainID: 1,
 		Height:  42,
 		Block:   block, // Now using concrete type *indexermodels.Block
 	}
@@ -149,7 +149,7 @@ func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -171,7 +171,7 @@ func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 
 	input := types.IndexBlockInput{
-		ChainID: "chain-A",
+		ChainID: 1,
 		Height:  42,
 	}
 
@@ -192,7 +192,7 @@ func TestSaveBlockSummary(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -211,7 +211,7 @@ func TestSaveBlockSummary(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 
 	input := types.SaveBlockSummaryInput{
-		ChainID: "chain-A",
+		ChainID: 1,
 		Height:  42,
 		Summaries: types.BlockSummaries{
 			NumTxs: 7,
@@ -233,7 +233,7 @@ func TestSaveBlockSummary(t *testing.T) {
 
 func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	adminStore := &fakeAdminStore{chain: &admin.Chain{ChainID: "chain-A", RPCEndpoints: []string{"http://localhost"}}}
+	adminStore := &fakeAdminStore{chain: &admin.Chain{ChainID: 1, RPCEndpoints: []string{"http://localhost"}}}
 	chainStore := &fakeChainStore{chainID: "chain-A", databaseName: "chain_a", hasBlock: true}
 	chainsMap := xsync.NewMap[string, chainstore.Store]()
 	chainsMap.Store("chain-A", chainStore)
@@ -250,7 +250,7 @@ func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
 
 	var output types.PrepareIndexBlockOutput
-	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: "chain-A", Height: 10})
+	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: 1, Height: 10})
 	require.NoError(t, err)
 	require.NoError(t, future.Get(&output))
 	require.True(t, output.Skip)
@@ -261,7 +261,7 @@ func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
 
 func TestPrepareIndexBlockDeletesOnReindex(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	adminStore := &fakeAdminStore{chain: &admin.Chain{ChainID: "chain-A", RPCEndpoints: []string{"http://localhost"}}}
+	adminStore := &fakeAdminStore{chain: &admin.Chain{ChainID: 1, RPCEndpoints: []string{"http://localhost"}}}
 	chainStore := &fakeChainStore{chainID: "chain-A", databaseName: "chain_a", hasBlock: true}
 	chainsMap := xsync.NewMap[string, chainstore.Store]()
 	chainsMap.Store("chain-A", chainStore)
@@ -278,7 +278,7 @@ func TestPrepareIndexBlockDeletesOnReindex(t *testing.T) {
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
 
 	var output types.PrepareIndexBlockOutput
-	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: "chain-A", Height: 42, Reindex: true})
+	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: 1, Height: 42, Reindex: true})
 	require.NoError(t, err)
 	require.NoError(t, future.Get(&output))
 	require.False(t, output.Skip)
@@ -293,12 +293,11 @@ type fakeAdminStore struct {
 	recordedHeight  uint64
 }
 
-func (f *fakeAdminStore) GetChain(context.Context, string) (*admin.Chain, error) {
+func (f *fakeAdminStore) GetChain(context.Context, uint64) (*admin.Chain, error) {
 	return f.chain, nil
 }
 
-func (f *fakeAdminStore) RecordIndexed(_ context.Context, chainID string, height uint64, indexingTimeMs float64, indexingDetail string) error {
-	f.recordedChainID = chainID
+func (f *fakeAdminStore) RecordIndexed(_ context.Context, chainID uint64, height uint64, blockTime time.Time, indexingTimeMs float64, indexingDetail string) error {
 	f.recordedHeight = height
 	return nil
 }
@@ -310,16 +309,20 @@ func (f *fakeAdminStore) ListChain(context.Context) ([]admin.Chain, error) {
 	return []admin.Chain{*f.chain}, nil
 }
 
-func (f *fakeAdminStore) LastIndexed(context.Context, string) (uint64, error) {
+func (f *fakeAdminStore) LastIndexed(context.Context, uint64) (uint64, error) {
 	return 0, nil
 }
 
-func (f *fakeAdminStore) FindGaps(context.Context, string) ([]adminstore.Gap, error) {
+func (f *fakeAdminStore) FindGaps(context.Context, uint64) ([]adminstore.Gap, error) {
 	return nil, nil
 }
 
-func (f *fakeAdminStore) UpdateRPCHealth(context.Context, string, string, string) error {
+func (f *fakeAdminStore) UpdateRPCHealth(context.Context, uint64, string, string) error {
 	return nil
+}
+
+func (f *fakeAdminStore) IndexProgressHistory(context.Context, uint64, int, int) ([]admin.ProgressPoint, error) {
+	return nil, nil
 }
 
 type fakeChainStore struct {
@@ -355,16 +358,6 @@ func (f *fakeChainStore) InsertBlock(_ context.Context, block *indexermodels.Blo
 func (f *fakeChainStore) InsertTransactions(_ context.Context, txs []*indexermodels.Transaction) error {
 	f.insertTransactionCalls++
 	f.lastTxs = txs
-	return nil
-}
-
-func (f *fakeChainStore) InsertBlockSummary(_ context.Context, height uint64, _ time.Time, numTxs uint32, txCountsByType map[string]uint32) error {
-	f.insertBlockSummaryCalls++
-	f.lastBlockSummary = &indexermodels.BlockSummary{
-		Height:         height,
-		NumTxs:         numTxs,
-		TxCountsByType: txCountsByType,
-	}
 	return nil
 }
 
@@ -468,9 +461,9 @@ func (f *fakeChainStore) InsertTransactionsStaging(_ context.Context, txs []*ind
 	return nil
 }
 
-func (f *fakeChainStore) InsertBlockSummariesStaging(_ context.Context, height uint64, ts time.Time, numTxs uint32, counts map[string]uint32) error {
+func (f *fakeChainStore) InsertBlockSummariesStaging(_ context.Context, summary *indexermodels.BlockSummary) error {
 	f.insertBlockSummariesStagingCalls++
-	f.lastBlockSummary = &indexermodels.BlockSummary{Height: height, HeightTime: ts, NumTxs: numTxs, TxCountsByType: counts}
+	f.lastBlockSummary = summary
 	return nil
 }
 
@@ -535,10 +528,6 @@ func (*fakeChainStore) QueryDexPrices(context.Context, uint64, int, bool, uint64
 	return nil, nil
 }
 
-func (*fakeChainStore) GetDexVolume24h(context.Context) ([]chainstore.DexVolumeStats, error) {
-	return nil, nil
-}
-
 func (f *fakeChainStore) GetGenesisData(_ context.Context, _ uint64) (string, error) {
 	return f.genesisJSON, nil
 }
@@ -562,12 +551,68 @@ func (f *fakeChainStore) GetAccountCreatedHeight(_ context.Context, address stri
 	return f.accountCreatedHeights[address]
 }
 
-func (*fakeChainStore) GetOrderBookDepth(context.Context, uint64, int) ([]chainstore.OrderBookLevel, error) {
+func (*fakeChainStore) GetOrderCreatedHeight(context.Context, string) uint64 {
+	return 0
+}
+
+func (*fakeChainStore) GetEventsByTypeAndHeight(context.Context, uint64, ...string) ([]*indexermodels.Event, error) {
 	return nil, nil
 }
 
-func (*fakeChainStore) GetOrderCreatedHeight(context.Context, string) uint64 {
-	return 0
+func (*fakeChainStore) InitializeDB(context.Context) error {
+	return nil
+}
+
+func (*fakeChainStore) Select(context.Context, interface{}, string, ...any) error {
+	return nil
+}
+
+func (*fakeChainStore) GetTableSchema(context.Context, string) ([]chainstore.Column, error) {
+	return nil, nil
+}
+
+func (*fakeChainStore) GetTableDataPaginated(context.Context, string, int, int, *uint64, *uint64) ([]map[string]interface{}, int64, bool, error) {
+	return nil, 0, false, nil
+}
+
+func (*fakeChainStore) InsertDexOrdersStaging(context.Context, []*indexermodels.DexOrder) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertDexDepositsStaging(context.Context, []*indexermodels.DexDeposit) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertDexWithdrawalsStaging(context.Context, []*indexermodels.DexWithdrawal) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertDexPoolPointsByHolderStaging(context.Context, []*indexermodels.DexPoolPointsByHolder) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertParamsStaging(context.Context, *indexermodels.Params) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertValidatorsStaging(context.Context, []*indexermodels.Validator) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertValidatorSigningInfoStaging(context.Context, []*indexermodels.ValidatorSigningInfo) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertCommitteesStaging(context.Context, []*indexermodels.Committee) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertCommitteeValidatorsStaging(context.Context, []*indexermodels.CommitteeValidator) error {
+	return nil
+}
+
+func (*fakeChainStore) InsertPollSnapshotsStaging(context.Context, []*indexermodels.PollSnapshot) error {
+	return nil
 }
 
 type fakeRPCFactory struct {
@@ -624,5 +669,65 @@ func (f *fakeRPCClient) PoolByID(context.Context, uint64) (*rpc.RpcPool, error) 
 }
 
 func (f *fakeRPCClient) Pools(context.Context) ([]*rpc.RpcPool, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) AllParams(context.Context, uint64) (*rpc.RpcAllParams, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) FeeParams(context.Context, uint64) (*rpc.FeeParams, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) ConParams(context.Context, uint64) (*rpc.ConsensusParams, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) ValParams(context.Context, uint64) (*rpc.ValidatorParams, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) GovParams(context.Context, uint64) (*rpc.GovParams, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) Validators(context.Context, uint64) ([]*rpc.RpcValidator, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) NonSigners(context.Context, uint64) ([]*rpc.RpcNonSigner, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) CommitteeData(context.Context, uint64, uint64) (*rpc.RpcCommitteeData, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) CommitteesData(context.Context, uint64) ([]*rpc.RpcCommitteeData, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) SubsidizedCommittees(context.Context, uint64) ([]uint64, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) RetiredCommittees(context.Context, uint64) ([]uint64, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) Poll(context.Context) (rpc.RpcPoll, error) {
+	return rpc.RpcPoll{}, nil
+}
+
+func (f *fakeRPCClient) State(context.Context) (*rpc.StateResponse, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) DexBatchByHeight(context.Context, uint64, uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) NextDexBatchByHeight(context.Context, uint64, uint64) (*rpc.RpcDexBatch, error) {
 	return nil, nil
 }

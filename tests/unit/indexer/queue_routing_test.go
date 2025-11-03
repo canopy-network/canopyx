@@ -24,7 +24,7 @@ func TestQueueRouting_LiveBlock(t *testing.T) {
 		IndexerHistoricalQueue: "index:%s:historical",
 	}
 
-	expectedQueue := client.GetIndexerLiveQueue("test-chain")
+	expectedQueue := client.GetIndexerLiveQueue(1)
 	assert.Equal(t, "index:test-chain:live", expectedQueue,
 		"Live block should route to live queue")
 }
@@ -45,7 +45,7 @@ func TestQueueRouting_HistoricalBlock(t *testing.T) {
 		IndexerHistoricalQueue: "index:%s:historical",
 	}
 
-	expectedQueue := client.GetIndexerHistoricalQueue("test-chain")
+	expectedQueue := client.GetIndexerHistoricalQueue(1)
 	assert.Equal(t, "index:test-chain:historical", expectedQueue,
 		"Historical block should route to historical queue")
 }
@@ -190,7 +190,7 @@ func TestQueueRouting_FutureBlock(t *testing.T) {
 		IndexerHistoricalQueue: "index:%s:historical",
 	}
 
-	expectedQueue := client.GetIndexerLiveQueue("test-chain")
+	expectedQueue := client.GetIndexerLiveQueue(1)
 	assert.Equal(t, "index:test-chain:live", expectedQueue,
 		"Future block should route to live queue")
 }

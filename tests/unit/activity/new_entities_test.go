@@ -35,7 +35,7 @@ func TestIndexCommittees_Success_CommitteesChanged(t *testing.T) {
 	mockRPC := &mockNewEntitiesRPCClient{}
 
 	// Current committees at height 100
-	currentCommittees := []*rpc.RpcCommittee{
+	currentCommittees := []*rpc.RpcCommitteeData{
 		{
 			ChainID:                1,
 			LastRootHeightUpdated:  95,
@@ -51,7 +51,7 @@ func TestIndexCommittees_Success_CommitteesChanged(t *testing.T) {
 	}
 
 	// Previous committees at height 99
-	previousCommittees := []*rpc.RpcCommittee{
+	previousCommittees := []*rpc.RpcCommitteeData{
 		{
 			ChainID:                1,
 			LastRootHeightUpdated:  90, // Changed
@@ -86,7 +86,7 @@ func TestIndexCommittees_Success_CommitteesChanged(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexCommittees)
 
 	input := types.IndexCommitteesInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -128,7 +128,7 @@ func TestIndexCommittees_GenesisBlock(t *testing.T) {
 
 	mockRPC := &mockNewEntitiesRPCClient{}
 
-	genesisCommittees := []*rpc.RpcCommittee{
+	genesisCommittees := []*rpc.RpcCommitteeData{
 		{
 			ChainID:                1,
 			LastRootHeightUpdated:  0,
@@ -160,7 +160,7 @@ func TestIndexCommittees_GenesisBlock(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexCommittees)
 
 	input := types.IndexCommitteesInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    1,
 		BlockTime: time.Now().UTC(),
 	}
@@ -260,7 +260,7 @@ func TestIndexPoll_Success_WithProposals(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexPoll)
 
 	input := types.IndexPollInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -323,7 +323,7 @@ func TestIndexPoll_EmptyPoll(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexPoll)
 
 	input := types.IndexPollInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -420,7 +420,7 @@ func TestIndexDexBatch_Success_WithOrders(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexDexBatch)
 
 	input := types.IndexDexBatchInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		Committee: 1,
 		BlockTime: time.Now().UTC(),
@@ -474,7 +474,7 @@ func TestIndexDexBatch_NoBatch(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexDexBatch)
 
 	input := types.IndexDexBatchInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		Committee: 1,
 		BlockTime: time.Now().UTC(),
@@ -553,7 +553,7 @@ func TestIndexDexPoolPoints_Success(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexDexPoolPoints)
 
 	input := types.IndexDexPoolPointsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -616,7 +616,7 @@ func TestIndexDexPoolPoints_EmptyPools(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexDexPoolPoints)
 
 	input := types.IndexDexPoolPointsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -705,12 +705,16 @@ func (m *mockNewEntitiesRPCClient) ValParams(ctx context.Context, height uint64)
 	return nil, nil
 }
 
-func (m *mockNewEntitiesRPCClient) CommitteesData(ctx context.Context, height uint64) ([]*rpc.RpcCommittee, error) {
+func (m *mockNewEntitiesRPCClient) CommitteeData(ctx context.Context, chainID, height uint64) (*rpc.RpcCommitteeData, error) {
+	return nil, nil
+}
+
+func (m *mockNewEntitiesRPCClient) CommitteesData(ctx context.Context, height uint64) ([]*rpc.RpcCommitteeData, error) {
 	args := m.Called(ctx, height)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*rpc.RpcCommittee), args.Error(1)
+	return args.Get(0).([]*rpc.RpcCommitteeData), args.Error(1)
 }
 
 func (m *mockNewEntitiesRPCClient) SubsidizedCommittees(ctx context.Context, height uint64) ([]uint64, error) {

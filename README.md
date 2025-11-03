@@ -62,7 +62,7 @@ ClickHouse (production tables)
 
 ## Quick Start
 
-See **[DEV.md](docs/dev.md)** for complete setup instructions, prerequisites, and development workflows.
+See **[dev.md](docs/dev.md)** for complete setup instructions, prerequisites, and development workflows.
 
 ## Documentation
 

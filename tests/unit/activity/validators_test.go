@@ -24,7 +24,7 @@ func TestIndexValidators_Success_ValidatorsChanged(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -111,7 +111,7 @@ func TestIndexValidators_Success_ValidatorsChanged(t *testing.T) {
 	mockRPC.On("Validators", mock.Anything, uint64(99)).Return(previousValidators, nil)
 	mockRPC.On("NonSigners", mock.Anything, uint64(100)).Return(currentNonSigners, nil)
 	mockRPC.On("NonSigners", mock.Anything, uint64(99)).Return(previousNonSigners, nil)
-	mockRPC.On("ValParams", mock.Anything, uint64(100)).Return(&rpc.RpcValidatorParams{
+	mockRPC.On("ValParams", mock.Anything, uint64(100)).Return(&rpc.ValidatorParams{
 		NonSignWindow: 10000,
 	}, nil)
 
@@ -134,7 +134,7 @@ func TestIndexValidators_Success_ValidatorsChanged(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexValidators)
 
 	input := types.IndexValidatorsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -181,7 +181,7 @@ func TestIndexValidators_GenesisBlock(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -226,7 +226,7 @@ func TestIndexValidators_GenesisBlock(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexValidators)
 
 	input := types.IndexValidatorsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    1,
 		BlockTime: time.Now().UTC(),
 	}
@@ -250,7 +250,7 @@ func TestIndexValidators_NoChanges(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -301,7 +301,7 @@ func TestIndexValidators_NoChanges(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexValidators)
 
 	input := types.IndexValidatorsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -327,7 +327,7 @@ func TestIndexValidators_RPCError(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -356,7 +356,7 @@ func TestIndexValidators_RPCError(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexValidators)
 
 	input := types.IndexValidatorsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -384,7 +384,7 @@ func TestIndexValidators_NonSignersOptional(t *testing.T) {
 
 	adminStore := &fakeAdminStore{
 		chain: &admin.Chain{
-			ChainID:      "chain-A",
+			ChainID:      1,
 			RPCEndpoints: []string{"http://rpc.local"},
 		},
 	}
@@ -431,7 +431,7 @@ func TestIndexValidators_NonSignersOptional(t *testing.T) {
 	env.RegisterActivity(activityCtx.IndexValidators)
 
 	input := types.IndexValidatorsInput{
-		ChainID:   "chain-A",
+		ChainID:   1,
 		Height:    100,
 		BlockTime: time.Now().UTC(),
 	}
@@ -520,15 +520,15 @@ func (m *mockValidatorsRPCClient) NonSigners(ctx context.Context, height uint64)
 	return args.Get(0).([]*rpc.RpcNonSigner), args.Error(1)
 }
 
-func (m *mockValidatorsRPCClient) ValParams(ctx context.Context, height uint64) (*rpc.RpcValidatorParams, error) {
+func (m *mockValidatorsRPCClient) ValParams(ctx context.Context, height uint64) (*rpc.ValidatorParams, error) {
 	args := m.Called(ctx, height)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*rpc.RpcValidatorParams), args.Error(1)
+	return args.Get(0).(*rpc.ValidatorParams), args.Error(1)
 }
 
-func (m *mockValidatorsRPCClient) CommitteesData(ctx context.Context, height uint64) ([]*rpc.RpcCommittee, error) {
+func (m *mockValidatorsRPCClient) CommitteesData(ctx context.Context, height uint64) ([]*rpc.RpcCommitteeData, error) {
 	return nil, nil
 }
 

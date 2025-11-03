@@ -52,7 +52,7 @@ func TestGapScanWorkflow_SingleSmallGap(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -118,7 +118,7 @@ func TestGapScanWorkflow_MultipleSmallGaps(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -182,7 +182,7 @@ func TestGapScanWorkflow_LargeGap(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -242,7 +242,7 @@ func TestGapScanWorkflow_NoGaps(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -309,7 +309,7 @@ func TestGapScanWorkflow_SchedulerAlreadyRunning(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -372,7 +372,7 @@ func TestGapScanWorkflow_MultipleGapsLargeTotal(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -447,7 +447,7 @@ func TestGapScanWorkflow_ErrorHandling(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -507,7 +507,7 @@ func TestGapScanWorkflow_GetLatestHeadError(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -568,7 +568,7 @@ func TestGapScanWorkflow_EdgeCase_ExactlyThreshold(t *testing.T) {
 
 	// Execute GapScan workflow
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -629,7 +629,7 @@ func TestGapScanWorkflow_PerformanceLargeNumberOfGaps(t *testing.T) {
 
 	start := time.Now()
 	env.ExecuteWorkflow(wfCtx.GapScanWorkflow, workflow.GapScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 	elapsed := time.Since(start)
 

@@ -678,12 +678,4 @@ func (*testChainStore) InsertOrdersStaging(context.Context, []*indexermodels.Ord
 	return nil
 }
 
-func (*testChainStore) GetDexVolume24h(context.Context) ([]chainstore.DexVolumeStats, error) {
-	return nil, nil
-}
-
-func (*testChainStore) GetOrderBookDepth(context.Context, uint64, int) ([]chainstore.OrderBookLevel, error) {
-	return nil, nil
-}
-
 func (*testChainStore) Close() error { return nil }

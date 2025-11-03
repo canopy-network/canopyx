@@ -271,14 +271,6 @@ func (m *MockChainStore) InsertPoolsStaging(ctx context.Context, pools []*indexe
 	return nil
 }
 
-func (m *MockChainStore) GetDexVolume24h(ctx context.Context) ([]chainstore.DexVolumeStats, error) {
-	return nil, nil
-}
-
-func (m *MockChainStore) GetOrderBookDepth(ctx context.Context, committee uint64, limit int) ([]chainstore.OrderBookLevel, error) {
-	return nil, nil
-}
-
 func (m *MockChainStore) Close() error {
 	args := m.Called()
 	return args.Error(0)

@@ -53,7 +53,7 @@ func TestSchedulerWorkflow_InitialMainnetCatchup(t *testing.T) {
 	// Note: In a real test, we'd simulate only a subset for performance
 	// For demonstration, we'll test with 10k blocks to verify the pattern
 	testInput := types.SchedulerInput{
-		ChainID:      "mainnet",
+		ChainID:      1,
 		StartHeight:  690001,
 		EndHeight:    700000,
 		LatestHeight: 700000,
@@ -124,7 +124,7 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 
 	// Execute first HeadScan - this should trigger SchedulerWorkflow
 	env.ExecuteWorkflow(wfCtx.HeadScan, workflow.HeadScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -155,7 +155,7 @@ func TestSchedulerWorkflow_RaceConditionPrevention(t *testing.T) {
 
 	// Execute second HeadScan - should detect running scheduler and NOT trigger new one
 	env2.ExecuteWorkflow(wfCtx.HeadScan, workflow.HeadScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env2.IsWorkflowCompleted())
@@ -201,7 +201,7 @@ func TestSchedulerWorkflow_NormalOperation(t *testing.T) {
 
 	// Execute HeadScan for small range (should use direct scheduling)
 	env.ExecuteWorkflow(wfCtx.HeadScan, workflow.HeadScanInput{
-		ChainID: "mainnet",
+		ChainID: 1,
 	})
 
 	require.True(t, env.IsWorkflowCompleted())
@@ -254,7 +254,7 @@ func TestSchedulerWorkflow_MixedPriorityDistribution(t *testing.T) {
 
 	// Execute workflow with 10k block range
 	input := types.SchedulerInput{
-		ChainID:      "mainnet",
+		ChainID:      1,
 		StartHeight:  90001,
 		EndHeight:    100000,
 		LatestHeight: 100000,
@@ -331,7 +331,7 @@ func TestSchedulerWorkflow_ContinueAsNewChain(t *testing.T) {
 
 	// For testing, we'll simulate with smaller threshold
 	input := types.SchedulerInput{
-		ChainID:      "mainnet",
+		ChainID:      1,
 		StartHeight:  1,
 		EndHeight:    50000,
 		LatestHeight: 50000,
@@ -442,7 +442,7 @@ func TestSchedulerWorkflow_RateLimiting(t *testing.T) {
 
 	// Execute with 1000 blocks to test rate limiting
 	input := types.SchedulerInput{
-		ChainID:      "mainnet",
+		ChainID:      1,
 		StartHeight:  1,
 		EndHeight:    1000,
 		LatestHeight: 1000,
@@ -500,7 +500,7 @@ func TestSchedulerWorkflow_ErrorHandling(t *testing.T) {
 	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	input := types.SchedulerInput{
-		ChainID:      "mainnet",
+		ChainID:      1,
 		StartHeight:  1,
 		EndHeight:    10,
 		LatestHeight: 100,
@@ -551,7 +551,7 @@ func BenchmarkSchedulerWorkflow_LargeScale(b *testing.B) {
 		env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 		input := types.SchedulerInput{
-			ChainID:      "mainnet",
+			ChainID:      1,
 			StartHeight:  uint64(100000*i + 1),
 			EndHeight:    uint64(100000 * (i + 1)),
 			LatestHeight: uint64(100000 * (i + 1)),
