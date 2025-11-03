@@ -31,7 +31,13 @@ type Store interface {
 	InsertDexDepositsStaging(ctx context.Context, deposits []*indexermodels.DexDeposit) error
 	InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error
 	InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error
+	InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error
 	InsertGenesis(ctx context.Context, height uint64, data string, fetchedAt time.Time) error
+	InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error
+	InsertValidatorSigningInfoStaging(ctx context.Context, signingInfos []*indexermodels.ValidatorSigningInfo) error
+	InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error
+	InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error
+	InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
 
 	// --- Query entities
 

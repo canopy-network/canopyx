@@ -112,8 +112,37 @@ const (
 	// Staging table: dex_pool_points_by_holder_staging
 	DexPoolPointsByHolder Entity = "dex_pool_points_by_holder"
 
+	// Params represents the chain parameters entity.
+	// Production table: params
+	// Staging table: params_staging
+	Params Entity = "params"
+
+	// Validators represents the validator entity.
+	// Production table: validators
+	// Staging table: validators_staging
+	Validators Entity = "validators"
+
+	// ValidatorSigningInfo represents the validator signing info entity.
+	// Production table: validator_signing_info
+	// Staging table: validator_signing_info_staging
+	ValidatorSigningInfo Entity = "validator_signing_info"
+
+	// Committees represents the committee data entity.
+	// Production table: committees
+	// Staging table: committees_staging
+	Committees Entity = "committees"
+
+	// CommitteeValidators represents the committee-validator junction table entity.
+	// Production table: committee_validators
+	// Staging table: committee_validators_staging
+	CommitteeValidators Entity = "committee_validators"
+
+	// PollSnapshots represents the governance poll snapshots entity.
+	// Production table: poll_snapshots
+	// Staging table: poll_snapshots_staging
+	PollSnapshots Entity = "poll_snapshots"
+
 	// Future entities (uncomment and add to allEntities when implementing):
-	// Validators Entity = "validators"
 	// Logs Entity = "logs"
 )
 
@@ -135,6 +164,12 @@ var allEntities = []Entity{
 	DexDeposits,
 	DexWithdrawals,
 	DexPoolPointsByHolder,
+	Params,
+	Validators,
+	ValidatorSigningInfo,
+	Committees,
+	CommitteeValidators,
+	PollSnapshots,
 }
 
 // entitySet is a pre-computed map for O(1) validation lookups.

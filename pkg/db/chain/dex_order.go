@@ -38,8 +38,8 @@ func (db *DB) initDexOrders(ctx context.Context) error {
 	}
 
 	// Create staging table
-	stageQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexOrdersStagingTableName)
-	if err := db.Exec(ctx, stageQuery); err != nil {
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexOrdersStagingTableName)
+	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexOrdersStagingTableName, err)
 	}
 
@@ -52,11 +52,11 @@ func (db *DB) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodel
 		return nil
 	}
 
-	query := `INSERT INTO dex_orders_staging (
+	query := fmt.Sprintf(`INSERT INTO "%s".dex_orders_staging (
 		order_id, height, height_time, committee, address,
 		amount_for_sale, requested_amount, state, success,
 		sold_amount, bought_amount, local_origin, locked_height
-	) VALUES`
+	) VALUES`, db.Name)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

@@ -25,7 +25,7 @@ func (db *AdminDB) initIndexProgress(ctx context.Context) error {
 	// 1) Base table: index_progress
 	ddlBase := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."index_progress" (
-			chain_id String,
+			chain_id UInt64,
 			height UInt64,
 			indexed_at DateTime64(6),
 			indexing_time Float64,
@@ -41,7 +41,7 @@ func (db *AdminDB) initIndexProgress(ctx context.Context) error {
 	// 2) Aggregate table (stores aggregate STATE), requires ORDER BY
 	ddlAgg := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."index_progress_agg" (
-			chain_id String,
+			chain_id UInt64,
 			max_height AggregateFunction(max, UInt64)
 		) ENGINE = AggregatingMergeTree()
 		ORDER BY (chain_id)
@@ -138,7 +138,7 @@ func (db *AdminDB) LastIndexed(ctx context.Context, chainID uint64) (uint64, err
 // and does NOT include the trailing gap to 'up to'. The caller should add a tail gap separately.
 func (db *AdminDB) FindGaps(ctx context.Context, chainID uint64) ([]Gap, error) {
 	query := fmt.Sprintf(`
-		SELECT assumeNotNull(prev_h) + 1 AS from_h, h - 1 AS to_h
+		SELECT CAST(assumeNotNull(prev_h) + 1 AS UInt64) AS from_h, CAST(h - 1 AS UInt64) AS to_h
 		FROM (
 		  SELECT
 		    height AS h,

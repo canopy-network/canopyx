@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -37,15 +38,29 @@ func New(ctx context.Context, logger *zap.Logger, dbName string) (client Client,
 		// First, connect without specifying a database to create it
 		debugEnabled := logger != nil && logger.Core().Enabled(zap.DebugLevel)
 
+		// Connection pool settings (configurable via environment variables for testing)
+		maxOpenConns := utils.EnvInt("CLICKHOUSE_MAX_OPEN_CONNS", 75)
+		maxIdleConns := utils.EnvInt("CLICKHOUSE_MAX_IDLE_CONNS", 75)
+
+		// Parse ConnMaxLifetime from environment variable
+		connMaxLifetime := time.Duration(0)
+		if lifetimeStr := os.Getenv("CLICKHOUSE_CONN_MAX_LIFETIME"); lifetimeStr != "" {
+			if d, err := time.ParseDuration(lifetimeStr); err == nil {
+				connMaxLifetime = d
+			}
+		}
+
 		options := &clickhouse.Options{
 			Addr: []string{extractHost(dsn)},
 			Auth: clickhouse.Auth{
 				Database: "default", // Connect to default database first
+				Username: "default",
+				Password: "",
 			},
 			DialTimeout:     5 * time.Second,
-			MaxOpenConns:    75, // Max open connections per indexer (increased for 12+ indexers)
-			MaxIdleConns:    75, // Keep connections alive for reuse
-			ConnMaxLifetime: 0,  // Connections never expire (default: 0)
+			MaxOpenConns:    maxOpenConns,    // Configurable for testing
+			MaxIdleConns:    maxIdleConns,    // Configurable for testing
+			ConnMaxLifetime: connMaxLifetime, // Configurable for testing
 			Compression: &clickhouse.Compression{
 				Method: clickhouse.CompressionLZ4,
 			},

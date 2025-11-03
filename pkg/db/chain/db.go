@@ -20,7 +20,7 @@ type DB struct {
 
 // New creates and initializes a chain-specific ClickHouse database instance.
 func New(ctx context.Context, logger *zap.Logger, chainID uint64) (*DB, error) {
-	chainIDStr := fmt.Sprintf("%d", chainID)
+	chainIDStr := fmt.Sprintf("chain_%d", chainID)
 	dbName := clickhouse.SanitizeName(chainIDStr)
 
 	client, err := clickhouse.New(ctx, logger.With(
@@ -144,6 +144,51 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 
 	db.Logger.Debug("Initialize dex_pool_points_created_height view", zap.String("name", db.Name))
 	if err := db.initDexPoolPointsCreatedHeightView(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize validators model", zap.String("name", db.Name))
+	if err := db.initValidators(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize validator_created_height view", zap.String("name", db.Name))
+	if err := db.initValidatorCreatedHeightView(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize validator_signing_info model", zap.String("name", db.Name))
+	if err := db.initValidatorSigningInfo(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize params model", zap.String("name", db.Name))
+	if err := db.initParams(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize params_change_height materialized view", zap.String("name", db.Name))
+	if err := db.initParamsChangeHeightView(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize committees model", zap.String("name", db.Name))
+	if err := db.initCommittees(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize committee_created_height materialized view", zap.String("name", db.Name))
+	if err := db.initCommitteeCreatedHeightView(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize committee_validators junction table", zap.String("name", db.Name))
+	if err := db.initCommitteeValidators(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize poll_snapshots model", zap.String("name", db.Name))
+	if err := db.initPollSnapshots(ctx); err != nil {
 		return err
 	}
 

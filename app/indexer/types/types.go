@@ -234,3 +234,42 @@ type IndexPoolsOutput struct {
 	NumPools   uint32  `json:"numPools"`   // Number of pools indexed
 	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
 }
+
+// IndexParamsInput contains the parameters for indexing chain parameters.
+type IndexParamsInput struct {
+	ChainID   uint64    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
+// IndexParamsOutput contains the result of indexing params along with execution duration.
+type IndexParamsOutput struct {
+	ParamsChanged bool    `json:"paramsChanged"` // True if params changed from previous height
+	DurationMs    float64 `json:"durationMs"`    // Execution time in milliseconds
+}
+
+// IndexCommitteesInput contains the parameters for indexing committee data.
+type IndexCommitteesInput struct {
+	ChainID   uint64    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
+// IndexCommitteesOutput contains the result of indexing committees along with execution duration.
+type IndexCommitteesOutput struct {
+	NumCommittees uint32  `json:"numCommittees"` // Number of committees that changed
+	DurationMs    float64 `json:"durationMs"`    // Execution time in milliseconds
+}
+
+// IndexPollInput contains the parameters for indexing governance poll data.
+type IndexPollInput struct {
+	ChainID   uint64    `json:"chainId"`
+	Height    uint64    `json:"height"`
+	BlockTime time.Time `json:"blockTime"` // Block timestamp for populating height_time
+}
+
+// IndexPollOutput contains the result of indexing poll data along with execution duration.
+type IndexPollOutput struct {
+	NumProposals uint32  `json:"numProposals"` // Number of proposals in the poll
+	DurationMs   float64 `json:"durationMs"`   // Execution time in milliseconds
+}

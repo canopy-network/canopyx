@@ -12,7 +12,7 @@ import (
 
 // initBlocks initializes the blocks table.
 func (db *DB) initBlocks(ctx context.Context) error {
-	queryTemplate := `
+	productionQuery := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			height UInt64,
 			hash String,
@@ -22,15 +22,23 @@ func (db *DB) initBlocks(ctx context.Context) error {
 			size Int32
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height)
-	`
-
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.BlocksProductionTableName)
+	`, db.Name, indexermodels.BlocksProductionTableName)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.BlocksProductionTableName, err)
 	}
 
-	stageQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.BlocksStagingTableName)
-	if err := db.Exec(ctx, stageQuery); err != nil {
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+			height UInt64,
+			hash String,
+			time DateTime64(6),
+			parent_hash String,
+			proposer_address String,
+			size Int32
+		) ENGINE = MergeTree()
+		ORDER BY (height)
+	`, db.Name, indexermodels.BlocksStagingTableName)
+	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.BlocksStagingTableName, err)
 	}
 

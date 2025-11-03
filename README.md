@@ -1,237 +1,132 @@
-# CanopyX — All‑in‑One README (Overview • Architecture • Dev • Tilt • CI)
+# CanopyX
 
-> **What this is:** a single, self‑contained doc.  
-> It covers how the system works, how to run it locally (with Tilt for infra), how to develop the web app, and how CI/Docker builds are wired.
+Blockchain indexer for Canopy protocol. Indexes blocks, transactions, and chain state into ClickHouse for fast querying.
 
----
+## What It Is
 
-## 1) What is CanopyX?
+CanopyX is a distributed indexer that processes Canopy blockchain data using Temporal workflows. It captures blocks, transactions, events, and state changes (accounts, validators, committees, pools, orders, parameters) into ClickHouse for efficient temporal and analytical queries.
 
-CanopyX indexes blockchain data per chain into ClickHouse, exposes APIs to operate and query it, and uses Temporal for reliable workflows. It’s split into focused binaries:
+The system automatically tracks multiple chains, detects gaps, and maintains data consistency through atomic two-phase commits.
 
-- **admin** — Admin API + admin UI (Next.js, built statically for prod; dev server in local mode).
-- **indexer** — Per‑chain Temporal worker that pulls blocks/txs and writes to ClickHouse.
-- **controller** — Spawns/manages one **indexer** deployment per chain (e.g., in Kubernetes).
-- **reporter** — Periodic stats aggregation (hour/day/24h tx counts).
-- **query** — Public/query API for charts and dashboards.
+## What It Does
 
-**Datastore:** ClickHouse (go‑clickhouse via `github.com/uptrace/go-clickhouse/ch`).  
-**Workflow engine:** Temporal.
+- **Indexes blockchain data** - Blocks, transactions, events, and all state changes
+- **Manages multiple chains** - Each chain gets isolated Temporal queue and indexer deployment
+- **Optimizes storage** - Snapshot-on-change pattern reduces storage by 60-80%
+- **Ensures consistency** - Two-phase commit guarantees atomic writes per block
+- **Fills gaps automatically** - Detects and re-indexes missing blocks
+- **Supports temporal queries** - Query any state at any historical height
 
----
+## How It Works
 
-## 2) Repository Layout
+### Components
+
+**Admin Service** - Manages chains and provides admin UI (Next.js). Runs Temporal workflows for head scanning and gap detection.
+
+**Indexer Worker** - Temporal worker that processes blocks for a specific chain. Each chain gets dedicated worker deployment.
+
+**Controller** - Manages indexer deployments in Kubernetes (one deployment per chain).
+
+### Data Flow
 
 ```
-cmd/
-  admin/        # entrypoint for Admin service
-  indexer/      # entrypoint for Indexer worker
-  controller/   # entrypoint for Controller (K8s provider)
-  query/        # entrypoint for Query service
-  reporter/     # entrypoint for Reporter worker
+Canopy Node (RPC)
+    ↓ Fetch block + state at height H and H-1
+Temporal Workflow (per block)
+    ↓ Compare H vs H-1, detect changes
+ClickHouse (staging tables)
+    ↓ Promote on success
+ClickHouse (production tables)
+```
 
-app/
-  admin/        # admin app composition (server, routes, workflows)
-  indexer/      # indexer app composition
-  controller/   # controller app composition
-  query/        # query app composition
-  reporter/     # reporter app composition
+### Indexing Process
+
+1. Admin schedule workflow scans chain head for new blocks
+2. Index workflow triggered for each block height
+3. Fetch block data and current state (H) from RPC
+4. Fetch previous state (H-1) from RPC
+5. Compare states and detect changes (snapshot-on-change)
+6. Insert changed entities to staging tables
+7. Promote staging to production (atomic commit)
+8. Clear staging tables
+
+### Key Patterns
+
+**Snapshot-on-Change** - Only insert database rows when entity state changes between heights. Applies to accounts, validators, committees, pools, orders, and parameters.
+
+**RPC(H) vs RPC(H-1)** - Always fetch current and previous state from RPC, never from database. Enables stateless execution and gap filling.
+
+**Two-Phase Commit** - Write to staging tables, then atomically promote to production. Ensures all-or-nothing per block.
+
+**ReplacingMergeTree** - ClickHouse engine deduplicates by (entity_id, height), enabling efficient temporal queries.
+
+## Quick Start
+
+See **[DEV.md](docs/dev.md)** for complete setup instructions, prerequisites, and development workflows.
+
+## Documentation
+
+- **[docs/dev.md](docs/dev.md)** - Development setup, Make/Tilt/Kind guide, workflows
+- **[docs/models.md](docs/models.md)** - Database models, entities, schema organization
+- **[docs/rpc.md](docs/rpc.md)** - RPC client, height parameters, patterns
+
+## Project Structure
+
+```
+cmd/                # Service entrypoints
+  admin/            # Admin service + UI
+  indexer/          # Indexer worker
+  controller/       # Kubernetes controller
+
+app/                # Service composition
+  admin/            # Admin routes, workflows, activities
+  indexer/          # Indexer workflows, activities
+  controller/       # Controller logic
 
 pkg/
-  db/               # ClickHouse client + models + helpers (uptrace go-clickhouse)
-  indexer/          # indexer activities/workflows/types
-  reporter/         # reporter activities/workflows
-  rpc/              # RPC client (HTTP), block/tx fetchers
-  temporal/         # Temporal client + logging adapter
-  logging/          # zap config
-  utils/            # misc helpers
+  db/               # Database layer
+    admin/          # Chain management database
+    chain/          # Per-chain data database
+    models/         # Go structs with ClickHouse tags
+    entities/       # Type-safe query builders
+  rpc/              # Canopy RPC client
+  indexer/          # Indexer types and interfaces
+  temporal/         # Temporal client wrapper
 
-web/admin/          # Next.js admin (static build for prod; dev server for local)
+web/admin/          # Next.js admin UI
 ```
 
----
+## Key Concepts
 
-## 3) Core Architecture
+**Temporal Queries** - Query state at any height by selecting rows where `height <= target_height` ordered by height descending.
 
-### 3.1 Temporal & Workers
+**Staging Tables** - All writes go to `*_staging` tables first, then atomically promoted to production on success.
 
-- **Task queues**
-  - `manager` — lightweight admin workflows (gap/head scans, etc.).
-  - `index:<chainID>` — per‑chain index queue (isolates heavy catch‑ups so active chains aren’t starved).
-  - `reporter` — scheduled/adhoc report jobs.
+**Snapshot-on-Change** - State entities only create new rows when values change, drastically reducing storage.
 
-- **Workers**
-  - **admin worker** (in `admin` binary) registers admin workflows/activities for housekeeping (head/gap scans, ensuring schedules exist, etc.).
-  - **indexer worker** (in `indexer` binary) runs per‑chain index workflows / activities:
-    - `IndexBlock` — fetch block + txs (single RPC roundtrip when possible) and write to ClickHouse in one shot.
-  - **reporter worker** (in `reporter` binary) computes tx metrics (hourly/daily/24h).
+**Height Parameter** - All RPC methods accept `height` parameter for historical queries and gap filling.
 
-### 3.2 Controller (Kubernetes Provider)
+**Entity System** - Type-safe query builders in `pkg/db/entities/` for complex temporal queries.
 
-- Ensures there is **one Deployment per chain** (named `indexer-<chainID>`), with `TASK_QUEUE=index:<chainID>` and env for Temporal + ClickHouse.
-- Supports **pause** (scale to zero) and **delete** (remove deployment + HPA).
-- Uses a `Provider` interface; the `kubernetes` implementation uses official client‑go APIs.
+## Architecture Notes
 
----
+### Why Temporal?
 
-## 4) Data Model (ClickHouse)
+- Reliable execution with automatic retries
+- Workflow durability across restarts
+- Per-chain isolation via task queues
+- Built-in observability
 
-We use **model‑driven DDL** with `go-clickhouse` struct tags.
+### Why ClickHouse?
 
-Databases:
-1. Indexer: `canopyx_indexer` (default)
-   1. `chains`
-   2. `index_progress`
-   3. `index_progress_agg` (materialized view)
-2. Reports: `canopyx_reports` (default)
-   1. @TBD 
-3. Per-Chain: `<chainID>`
-   1. `blocks`
-   2. `txs`
-   3. `txs_raw`
+- Excellent compression (10x+ vs PostgreSQL)
+- Fast temporal queries (ORDER BY height)
+- ReplacingMergeTree for automatic deduplication
+- Column-oriented storage for analytics
 
----
+### Why Snapshot-on-Change?
 
-## 5) Local Development
-
-### 5.1 Prereqs
-
-- Go 1.22+ (or the toolchain pinned by the repo).
-- Node **22** + `pnpm` (the Makefile can bootstrap via `corepack`).
-- Docker Desktop (or Docker Engine).
-- **Tilt** (https://tilt.dev) for local infra (ClickHouse and Temporal).
-
-### 5.2 Start Infra with Tilt
-
-We use Tilt to bring up **ClickHouse** and **Temporal** quickly. If your repo already contains a `Tiltfile`, run:
-
-```bash
-tilt up
-```
-
-### 5.3 Build & Run apps
-
-The **Makefile** exposes common tasks:
-
-```bash
-# one‑time
-make tools         # installs pnpm, golangci-lint, goimports
-
-# deps
-make deps          # go mod tidy + pnpm install for web/admin
-
-# code quality
-make fmt           # go fmt + goimports
-make lint          # golangci-lint run
-
-# build
-make build-web     # Next static export
-make build-go      # all Go binaries
-make build         # both
-
-# dev web
-make dev-web       # NEXT_PUBLIC_API_BASE=http://localhost:3000 PORT=3003 pnpm dev
-
-# docker images
-make docker-all    # builds admin/indexer/controller/query/reporter images (no push)
-```
-
-**Ports (convention):**  
-- `3000` admin API + static UI in prod mode  
-- `3001` query API  
-- `3002` controller API (Kubernetes Only for now)
-- `3003` Next.js dev server (admin UI in development)  
-- `7233` Temporal (via Tilt)  
-- `8080` Temporal Admin UI (via Tilt)  
-- `8123/9000` ClickHouse HTTP/native (via Tilt)
-
-### 5.4 Running the Admin UI (Dev vs. Prod)
-
-- **Dev UX** (hot reload):
-  1. Run admin backend (from repo root): `go run ./cmd/admin`
-  2. Run Next dev server: `make dev-web`  
-     This sets `NEXT_PUBLIC_API_BASE=http://localhost:3000` and serves UI at `http://localhost:3003`.
-
-- **Prod/statically built** (UI served by admin backend):
-  1. `make build-web`
-  2. `go run ./cmd/admin` (serves the static export from `web/admin/out`).
-
-> The UI fetches the API from `NEXT_PUBLIC_API_BASE`; in static prod, it’s a same‑origin (admin server). In dev, it points to `http://localhost:3000` while the UI runs on `http://localhost:3003`.
-
-### 5.5 Minimal Env Vars
-
-| Var | Example | Notes |
-|-----|---------|-------|
-| `ADMIN_TOKEN` | `devtoken` | For admin Bearer endpoints. |
-
-@TODO: add more env vars.
-
----
-
-## 6) API Highlights
-
-- `POST /api/chains` — register/update a chain (idempotent); header `Authorization: Bearer $ADMIN_TOKEN`  
-  ```json
-  {"chain_id":"canopy-mainnet","chain_name":"Canopy Mainnet","rpc_endpoints":["https://node1.canoliq.org/rpc"]}
-  ```
-
-- `GET /api/chains` — list chains (uses `FINAL` internally; shows `paused/deleted` flags).
-
-- `PATCH /api/chains/status` — bulk pause/resume/delete (and can update RPC endpoints). Example body:
-  ```json
-  [
-    {"chain_id":"local","paused":true},
-    {"chain_id":"canopy-mainnet","deleted":true},
-    {"chain_id":"dev","rpc_endpoints":["http://127.0.0.1:50002"]}
-  ]
-  ```
-
-- `GET /api/chains/{id}/progress` — `{ "last": <uint> }` last indexed height (with aggregate fallback).
-
-- `GET /api/chains/status?ids=a,b,c` — returns an object keyed by chain id with `last_indexed` and `head`:
-  ```json
-  {"local":{"last_indexed":2973,"head":2979}}
-  ```
-
----
-
-## 7) Docker Images
-
-Five Dockerfiles exist: `Dockerfile.admin`, `Dockerfile.indexer`, `Dockerfile.controller`, `Dockerfile.query`, `Dockerfile.reporter`.
-
-Build all (no push):
-
-```bash
-make docker-all              # builds canopyx/*:latest
-# or tag:
-make docker-admin TAG=v0.1.0
-```
-
----
-
-## 10) Roadmap Hints
-
-- Add more entities to the indexer.
-- Add the remaining services to Tilt as `local_resource` with file deps for hot reload.
-- Wire the **controller** to your cluster (namespace, image/tag, env), and scale per chain.
-
----
-
-## 11) Handy Commands
-
-```bash
-# Spin up infra
-tilt up
-
-# Run admin (backend, serves static in prod)
-go run ./cmd/admin
-
-# Run indexer to handle `canopy-mainnet` task queue
-CHAIN_ID=canopy-mainnet go run ./cmd/indexer
-
-# Run Next dev (hot reload, API proxied to :3000)
-make dev-web
-
-# Register a chain via Makefile helper
-make register-chain ADMIN_TOKEN=devtoken API=http://localhost:3000
-```
+- 60-80% storage reduction
+- Faster queries (fewer rows)
+- Clear change history
+- State changes are rare (most blocks don't change most entities)

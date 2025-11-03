@@ -33,8 +33,8 @@ func (db *DB) initDexPoolPointsByHolder(ctx context.Context) error {
 	}
 
 	// Create staging table
-	stageQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPoolPointsByHolderStagingTableName)
-	if err := db.Exec(ctx, stageQuery); err != nil {
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPoolPointsByHolderStagingTableName)
+	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexPoolPointsByHolderStagingTableName, err)
 	}
 

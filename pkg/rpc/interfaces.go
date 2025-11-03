@@ -22,6 +22,18 @@ type Client interface {
 	Pools(ctx context.Context) ([]*RpcPool, error)
 	DexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*RpcDexBatch, error)
 	NextDexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*RpcDexBatch, error)
+	AllParams(ctx context.Context, height uint64) (*RpcAllParams, error)
+	FeeParams(ctx context.Context, height uint64) (*FeeParams, error)
+	ConParams(ctx context.Context, height uint64) (*ConsensusParams, error)
+	ValParams(ctx context.Context, height uint64) (*ValidatorParams, error)
+	GovParams(ctx context.Context, height uint64) (*GovParams, error)
+	Validators(ctx context.Context, height uint64) ([]*RpcValidator, error)
+	NonSigners(ctx context.Context, height uint64) ([]*RpcNonSigner, error)
+	CommitteeData(ctx context.Context, chainID uint64, height uint64) (*RpcCommitteeData, error)
+	CommitteesData(ctx context.Context, height uint64) ([]*RpcCommitteeData, error)
+	SubsidizedCommittees(ctx context.Context, height uint64) ([]uint64, error)
+	RetiredCommittees(ctx context.Context, height uint64) ([]uint64, error)
+	Poll(ctx context.Context) (RpcPoll, error)
 }
 
 // Factory produces RPC clients for a given set of endpoints.

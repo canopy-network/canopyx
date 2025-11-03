@@ -35,8 +35,8 @@ func (db *DB) initOrders(ctx context.Context) error {
 	}
 
 	// Create staging table
-	stageQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.OrdersStagingTableName)
-	if err := db.Exec(ctx, stageQuery); err != nil {
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.OrdersStagingTableName)
+	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.OrdersStagingTableName, err)
 	}
 
@@ -49,7 +49,7 @@ func (db *DB) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.O
 		return nil
 	}
 
-	query := `INSERT INTO orders_staging (order_id, height, height_time, committee, amount_for_sale, requested_amount, seller_address, buyer_address, deadline, status) VALUES`
+	query := fmt.Sprintf(`INSERT INTO "%s".orders_staging (order_id, height, height_time, committee, amount_for_sale, requested_amount, seller_address, buyer_address, deadline, status) VALUES`, db.Name)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err

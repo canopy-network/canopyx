@@ -26,9 +26,17 @@ func (db *DB) initBlockSummaries(ctx context.Context) error {
 		return fmt.Errorf("create %s: %w", indexermodels.BlockSummariesProductionTableName, err)
 	}
 
-	// Create staging table
-	stageQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.BlockSummariesStagingTableName)
-	if err := db.Exec(ctx, stageQuery); err != nil {
+	// Create staging table with MergeTree instead of ReplacingMergeTree
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+			height UInt64,
+			height_time DateTime64(6),
+			num_txs UInt32 DEFAULT 0,
+			tx_counts_by_type Map(LowCardinality(String), UInt32)
+		) ENGINE = MergeTree()
+		ORDER BY (height)
+	`, db.Name, indexermodels.BlockSummariesStagingTableName)
+	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.BlockSummariesStagingTableName, err)
 	}
 

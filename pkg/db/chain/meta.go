@@ -103,10 +103,11 @@ func (db *DB) GetTableDataPaginated(ctx context.Context, tableName string, limit
 
 	// Count total
 	countQuery := fmt.Sprintf(`SELECT count(*) FROM "%s"."%s" %s`, db.Name, tableName, whereClause)
-	var total int64
-	if err := db.Db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	var totalCount uint64
+	if err := db.Db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
 		return nil, 0, false, fmt.Errorf("count rows: %w", err)
 	}
+	total := int64(totalCount)
 
 	// Query data
 	dataQuery := fmt.Sprintf(`

@@ -39,8 +39,8 @@ func (db *DB) initEvents(ctx context.Context) error {
 	}
 
 	// Create staging table
-	stageQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsStagingTableName)
-	if err := db.Exec(ctx, stageQuery); err != nil {
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsStagingTableName)
+	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.EventsStagingTableName, err)
 	}
 

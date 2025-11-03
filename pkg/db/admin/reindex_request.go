@@ -22,7 +22,7 @@ type ReindexWorkflowInfo struct {
 func (db *AdminDB) initReindexRequests(ctx context.Context) error {
 	query := `
 		CREATE TABLE IF NOT EXISTS reindex_requests (
-			chain_id String,
+			chain_id UInt64,
 			height UInt64,
 			requested_by String,
 			status String DEFAULT 'queued',
@@ -99,7 +99,7 @@ func (db *AdminDB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainI
 }
 
 // ListReindexRequests returns the most recent reindex requests for a chain.
-func (db *AdminDB) ListReindexRequests(ctx context.Context, chainID string, limit int) ([]admin.ReindexRequest, error) {
+func (db *AdminDB) ListReindexRequests(ctx context.Context, chainID uint64, limit int) ([]admin.ReindexRequest, error) {
 	if limit <= 0 {
 		limit = 10
 	}
