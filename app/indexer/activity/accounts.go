@@ -2,13 +2,11 @@ package activity
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
-	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.uber.org/zap"
@@ -140,7 +138,8 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 
 // getGenesisAccounts reads accounts from the genesis cache in the database.
 // This is used when indexing height 1 to compare RPC(1) vs Genesis(0).
-
+// Currently unused but kept for potential future use.
+/*
 func (c *Context) getGenesisAccounts(ctx context.Context, chainDb chainstore.Store) ([]*rpc.Account, error) {
 	// Query genesis table for height 0
 	genesisData, err := chainDb.GetGenesisData(ctx, 0)
@@ -156,3 +155,4 @@ func (c *Context) getGenesisAccounts(ctx context.Context, chainDb chainstore.Sto
 
 	return genesis.Accounts, nil
 }
+*/

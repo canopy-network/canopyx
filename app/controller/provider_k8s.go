@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -609,8 +608,6 @@ func (p *K8sProvider) ensureHPA(ctx context.Context, name string, labels map[str
 }
 
 // ---- utils ------------------------------------------------------------------
-
-var dns1123 = regexp.MustCompile(`[^a-z0-9\-]+`)
 
 // mustEnv panics if the given env var is not set.
 func mustEnv(key string) string {

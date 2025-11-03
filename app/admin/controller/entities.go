@@ -11,14 +11,24 @@ import (
 // entityRouteMapping maps entity names to their API route paths.
 // Multi-word routes use dashes (e.g., block-summaries, dex-prices).
 var entityRouteMapping = map[string]string{
-	"blocks":          "blocks",
-	"block_summaries": "block-summaries",
-	"txs":             "transactions",
-	"accounts":        "accounts",
-	"events":          "events",
-	"pools":           "pools",
-	"orders":          "orders",
-	"dex_prices":      "dex-prices",
+	"blocks":                    "blocks",
+	"block_summaries":           "block-summaries",
+	"txs":                       "transactions",
+	"accounts":                  "accounts",
+	"events":                    "events",
+	"pools":                     "pools",
+	"orders":                    "orders",
+	"dex_prices":                "dex-prices",
+	"dex_orders":                "dex-orders",
+	"dex_deposits":              "dex-deposits",
+	"dex_withdrawals":           "dex-withdrawals",
+	"dex_pool_points_by_holder": "dex-pool-points",
+	"params":                    "params",
+	"validators":                "validators",
+	"validator_signing_info":    "validator-signing-info",
+	"committees":                "committees",
+	"committee_validators":      "committee-validators",
+	"poll_snapshots":            "poll-snapshots",
 }
 
 // HandleEntities returns list of all available entities.

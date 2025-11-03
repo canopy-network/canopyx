@@ -140,7 +140,7 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, event
 	if err != nil {
 		return nil, fmt.Errorf("query events by type at height %d: %w", height, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	events := make([]*indexermodels.Event, 0)
 	for rows.Next() {

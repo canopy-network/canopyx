@@ -207,11 +207,14 @@ func generateEvent(height uint64, eventIndex int) *indexermodels.Event {
 }
 
 // generateBlockSummary creates test BlockSummary data.
-func generateBlockSummary(height uint64, numTxs uint32) map[string]uint32 {
-	return map[string]uint32{
-		"send":  numTxs / 2,
-		"stake": numTxs / 4,
-		"vote":  numTxs / 4,
+func generateBlockSummary(height uint64, blockTime time.Time, numTxs uint32) *indexermodels.BlockSummary {
+	return &indexermodels.BlockSummary{
+		Height:      height,
+		HeightTime:  blockTime,
+		NumTxs:      numTxs,
+		NumTxsSend:  numTxs / 2,
+		NumTxsStake: numTxs / 4,
+		NumTxsVote:  numTxs / 4,
 	}
 }
 

@@ -29,15 +29,85 @@ type ChainIdInput struct {
 	ChainID uint64 `json:"chainId"`
 }
 
-// BlockSummaries - Any summary of a block that is needed for indexing.
+// BlockSummaries - Comprehensive summary of all indexed entities for a block.
+// This struct aggregates counts from all 16 indexed entity types (90+ fields total).
+// Maps are used during workflow aggregation for dynamic type counting, then converted
+// to individual fields when persisting to the database model.
 type BlockSummaries struct {
-	NumTxs            uint32            `json:"numTxs"`
-	TxCountsByType    map[string]uint32 `json:"txCountsByType"` // Count per type: {"send": 5, "delegate": 2}
+	// ========== Transactions (24 fields) ==========
+	NumTxs         uint32            `json:"numTxs"`
+	TxCountsByType map[string]uint32 `json:"txCountsByType"` // Dynamic counts by message type
+
+	// ========== Accounts (2 fields) ==========
+	NumAccounts    uint32 `json:"numAccounts"`    // Number of accounts that changed
+	NumAccountsNew uint32 `json:"numAccountsNew"` // Number of new accounts created
+
+	// ========== Events (10 fields) ==========
 	NumEvents         uint32            `json:"numEvents"`
-	EventCountsByType map[string]uint32 `json:"eventCountsByType"` // Count per type: {"reward": 100, "dex-swap": 5}
-	NumPools          uint32            `json:"numPools"`          // Number of pools indexed
-	NumOrders         uint32            `json:"numOrders"`         // Number of orders indexed
-	NumPrices         uint32            `json:"numPrices"`         // Number of DEX prices indexed
+	EventCountsByType map[string]uint32 `json:"eventCountsByType"` // Dynamic counts by event type
+
+	// ========== Orders (6 fields) ==========
+	NumOrders          uint32 `json:"numOrders"`          // Total number of orders
+	NumOrdersNew       uint32 `json:"numOrdersNew"`       // Number of new orders
+	NumOrdersOpen      uint32 `json:"numOrdersOpen"`      // Number of open orders
+	NumOrdersFilled    uint32 `json:"numOrdersFilled"`    // Number of filled orders
+	NumOrdersCancelled uint32 `json:"numOrdersCancelled"` // Number of cancelled orders
+	NumOrdersExpired   uint32 `json:"numOrdersExpired"`   // Number of expired orders
+
+	// ========== Pools (2 fields) ==========
+	NumPools    uint32 `json:"numPools"`    // Total number of pools
+	NumPoolsNew uint32 `json:"numPoolsNew"` // Number of new pools created
+
+	// ========== DexPrices (1 field) ==========
+	NumDexPrices uint32 `json:"numDexPrices"` // Number of DEX price records
+
+	// ========== DexOrders (6 fields) ==========
+	NumDexOrders         uint32 `json:"numDexOrders"`         // Total number of DEX orders
+	NumDexOrdersFuture   uint32 `json:"numDexOrdersFuture"`   // Number of future DEX orders
+	NumDexOrdersLocked   uint32 `json:"numDexOrdersLocked"`   // Number of locked DEX orders
+	NumDexOrdersComplete uint32 `json:"numDexOrdersComplete"` // Number of complete DEX orders
+	NumDexOrdersSuccess  uint32 `json:"numDexOrdersSuccess"`  // Number of successful DEX orders
+	NumDexOrdersFailed   uint32 `json:"numDexOrdersFailed"`   // Number of failed DEX orders
+
+	// ========== DexDeposits (3 fields) ==========
+	NumDexDeposits         uint32 `json:"numDexDeposits"`         // Total number of DEX deposits
+	NumDexDepositsPending  uint32 `json:"numDexDepositsPending"`  // Number of pending DEX deposits
+	NumDexDepositsComplete uint32 `json:"numDexDepositsComplete"` // Number of complete DEX deposits
+
+	// ========== DexWithdrawals (3 fields) ==========
+	NumDexWithdrawals         uint32 `json:"numDexWithdrawals"`         // Total number of DEX withdrawals
+	NumDexWithdrawalsPending  uint32 `json:"numDexWithdrawalsPending"`  // Number of pending DEX withdrawals
+	NumDexWithdrawalsComplete uint32 `json:"numDexWithdrawalsComplete"` // Number of complete DEX withdrawals
+
+	// ========== DexPoolPointsByHolder (2 fields) ==========
+	NumDexPoolPointsHolders    uint32 `json:"numDexPoolPointsHolders"`    // Total number of pool point holders
+	NumDexPoolPointsHoldersNew uint32 `json:"numDexPoolPointsHoldersNew"` // Number of new pool point holders
+
+	// ========== Params (1 field) ==========
+	ParamsChanged bool `json:"paramsChanged"` // Whether chain parameters changed at this height
+
+	// ========== Validators (5 fields) ==========
+	NumValidators          uint32 `json:"numValidators"`          // Total number of validators
+	NumValidatorsNew       uint32 `json:"numValidatorsNew"`       // Number of new validators
+	NumValidatorsActive    uint32 `json:"numValidatorsActive"`    // Number of active validators
+	NumValidatorsPaused    uint32 `json:"numValidatorsPaused"`    // Number of paused validators
+	NumValidatorsUnstaking uint32 `json:"numValidatorsUnstaking"` // Number of unstaking validators
+
+	// ========== ValidatorSigningInfo (2 fields) ==========
+	NumValidatorSigningInfo    uint32 `json:"numValidatorSigningInfo"`    // Total number of signing info records
+	NumValidatorSigningInfoNew uint32 `json:"numValidatorSigningInfoNew"` // Number of new signing info records
+
+	// ========== Committees (4 fields) ==========
+	NumCommittees           uint32 `json:"numCommittees"`           // Total number of committees
+	NumCommitteesNew        uint32 `json:"numCommitteesNew"`        // Number of new committees
+	NumCommitteesSubsidized uint32 `json:"numCommitteesSubsidized"` // Number of subsidized committees
+	NumCommitteesRetired    uint32 `json:"numCommitteesRetired"`    // Number of retired committees
+
+	// ========== CommitteeValidators (1 field) ==========
+	NumCommitteeValidators uint32 `json:"numCommitteeValidators"` // Number of committee-validator relationships
+
+	// ========== PollSnapshots (1 field) ==========
+	NumPollSnapshots uint32 `json:"numPollSnapshots"` // Number of poll snapshot records
 }
 
 type IndexBlockInput struct {

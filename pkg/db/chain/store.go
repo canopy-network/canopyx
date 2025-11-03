@@ -22,7 +22,7 @@ type Store interface {
 	InsertAccountsStaging(ctx context.Context, accounts []*indexermodels.Account) error
 	InsertBlocksStaging(ctx context.Context, block *indexermodels.Block) error
 	InsertTransactionsStaging(ctx context.Context, txs []*indexermodels.Transaction) error
-	InsertBlockSummariesStaging(ctx context.Context, height uint64, blockTime time.Time, numTxs uint32, txCountsByType map[string]uint32) error
+	InsertBlockSummariesStaging(ctx context.Context, summary *indexermodels.BlockSummary) error
 	InsertEventsStaging(ctx context.Context, events []*indexermodels.Event) error
 	InsertDexPricesStaging(ctx context.Context, prices []*indexermodels.DexPrice) error
 	InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Pool) error

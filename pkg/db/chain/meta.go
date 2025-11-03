@@ -68,7 +68,7 @@ func (db *DB) GetTableSchema(ctx context.Context, tableName string) ([]Column, e
 	if err != nil {
 		return nil, fmt.Errorf("query system.columns: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var columns []Column
 	for rows.Next() {
@@ -130,7 +130,7 @@ func (db *DB) GetTableDataPaginated(ctx context.Context, tableName string, limit
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("query data: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Fetch column names and create type map
 	columnNames := rows.Columns()

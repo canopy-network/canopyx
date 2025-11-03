@@ -96,13 +96,19 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	// All activities run concurrently for maximum throughput
 	// Each activity writes to its own staging table to avoid conflicts
 	var (
-		saveBlockOut types.IndexBlockOutput
-		txOut        types.IndexTransactionsOutput
-		accountsOut  types.IndexAccountsOutput
-		eventsOut    types.IndexEventsOutput
-		poolsOut     types.IndexPoolsOutput
-		ordersOut    types.IndexOrdersOutput
-		pricesOut    types.IndexDexPricesOutput
+		saveBlockOut     types.IndexBlockOutput
+		txOut            types.IndexTransactionsOutput
+		accountsOut      types.IndexAccountsOutput
+		eventsOut        types.IndexEventsOutput
+		poolsOut         types.IndexPoolsOutput
+		ordersOut        types.IndexOrdersOutput
+		pricesOut        types.IndexDexPricesOutput
+		paramsOut        types.IndexParamsOutput
+		validatorsOut    types.IndexValidatorsOutput
+		committeesOut    types.IndexCommitteesOutput
+		pollOut          types.IndexPollOutput
+		dexBatchOut      types.IndexDexBatchOutput
+		dexPoolPointsOut types.IndexDexPoolPointsOutput
 	)
 
 	// Create futures for all parallel operations
@@ -141,6 +147,37 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		Height:    in.Height,
 		BlockTime: fetchOut.Block.Time,
 	}
+	indexParamsInput := types.IndexParamsInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
+	indexValidatorsInput := types.IndexValidatorsInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
+	indexCommitteesInput := types.IndexCommitteesInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
+	indexPollInput := types.IndexPollInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
+	indexDexBatchInput := types.IndexDexBatchInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+		Committee: in.ChainID, // Use root chain as committee
+	}
+	indexDexPoolPointsInput := types.IndexDexPoolPointsInput{
+		ChainID:   in.ChainID,
+		Height:    in.Height,
+		BlockTime: fetchOut.Block.Time,
+	}
 
 	saveBlockFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlock, saveBlockInput)
 	txFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexTxInput)
@@ -149,6 +186,12 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	poolsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexPools, indexPoolsInput)
 	ordersFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexOrders, indexOrdersInput)
 	pricesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexPrices, indexPricesInput)
+	paramsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexParams, indexParamsInput)
+	validatorsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexValidators, indexValidatorsInput)
+	committeesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexCommittees, indexCommitteesInput)
+	pollFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexPoll, indexPollInput)
+	dexBatchFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexBatch, indexDexBatchInput)
+	dexPoolPointsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexPoolPoints, indexDexPoolPointsInput)
 
 	// Wait for all parallel operations to complete
 	if err := saveBlockFuture.Get(ctx, &saveBlockOut); err != nil {
@@ -186,15 +229,106 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	}
 	timings["index_dex_prices_ms"] = pricesOut.DurationMs
 
-	// Collect all summaries for aggregation
+	if err := paramsFuture.Get(ctx, &paramsOut); err != nil {
+		return err
+	}
+	timings["index_params_ms"] = paramsOut.DurationMs
+
+	if err := validatorsFuture.Get(ctx, &validatorsOut); err != nil {
+		return err
+	}
+	timings["index_validators_ms"] = validatorsOut.DurationMs
+
+	if err := committeesFuture.Get(ctx, &committeesOut); err != nil {
+		return err
+	}
+	timings["index_committees_ms"] = committeesOut.DurationMs
+
+	if err := pollFuture.Get(ctx, &pollOut); err != nil {
+		return err
+	}
+	timings["index_poll_ms"] = pollOut.DurationMs
+
+	if err := dexBatchFuture.Get(ctx, &dexBatchOut); err != nil {
+		return err
+	}
+	timings["index_dex_batch_ms"] = dexBatchOut.DurationMs
+
+	if err := dexPoolPointsFuture.Get(ctx, &dexPoolPointsOut); err != nil {
+		return err
+	}
+	timings["index_dex_pool_points_ms"] = dexPoolPointsOut.DurationMs
+
+	// Collect all summaries for aggregation from all 16 indexed entities
+	// Note: Some detailed breakdowns (e.g., NumOrdersNew, NumOrdersOpen) are not yet
+	// returned by activity outputs and will remain zero until those activities are enhanced.
 	summaries := types.BlockSummaries{
-		NumTxs:            txOut.NumTxs,
-		TxCountsByType:    txOut.TxCountsByType,
+		// Transactions (includes type breakdown from activity)
+		NumTxs:         txOut.NumTxs,
+		TxCountsByType: txOut.TxCountsByType, // Maps to individual fields in SaveBlockSummary
+
+		// Accounts (currently only total count available)
+		NumAccounts:    accountsOut.NumAccounts,
+		NumAccountsNew: 0, // TODO: Enhance IndexAccounts activity to return this
+
+		// Events (includes type breakdown from activity)
 		NumEvents:         eventsOut.NumEvents,
-		EventCountsByType: eventsOut.EventCountsByType,
-		NumPools:          poolsOut.NumPools,
-		NumOrders:         ordersOut.NumOrders,
-		NumPrices:         pricesOut.NumPrices,
+		EventCountsByType: eventsOut.EventCountsByType, // Maps to individual fields in SaveBlockSummary
+
+		// Orders (currently only total count available)
+		NumOrders:          ordersOut.NumOrders,
+		NumOrdersNew:       0, // TODO: Enhance IndexOrders activity to return detailed breakdowns
+		NumOrdersOpen:      0,
+		NumOrdersFilled:    0,
+		NumOrdersCancelled: 0,
+		NumOrdersExpired:   0,
+
+		// Pools (currently only total count available)
+		NumPools:    poolsOut.NumPools,
+		NumPoolsNew: 0, // TODO: Enhance IndexPools activity to return this
+
+		// DexPrices
+		NumDexPrices: pricesOut.NumPrices,
+
+		// DexOrders, DexDeposits, DexWithdrawals from IndexDexBatch
+		NumDexOrders:              dexBatchOut.NumOrders,
+		NumDexOrdersFuture:        0, // TODO: Enhance IndexDexBatch to return detailed status breakdowns
+		NumDexOrdersLocked:        0,
+		NumDexOrdersComplete:      0,
+		NumDexOrdersSuccess:       0,
+		NumDexOrdersFailed:        0,
+		NumDexDeposits:            dexBatchOut.NumDeposits,
+		NumDexDepositsPending:     0, // TODO: Enhance IndexDexBatch to return status breakdowns
+		NumDexDepositsComplete:    0,
+		NumDexWithdrawals:         dexBatchOut.NumWithdrawals,
+		NumDexWithdrawalsPending:  0, // TODO: Enhance IndexDexBatch to return status breakdowns
+		NumDexWithdrawalsComplete: 0,
+
+		// DexPoolPointsByHolder
+		NumDexPoolPointsHolders:    dexPoolPointsOut.NumHolders,
+		NumDexPoolPointsHoldersNew: 0, // TODO: Enhance IndexDexPoolPoints to return this
+
+		// Params
+		ParamsChanged: paramsOut.ParamsChanged,
+
+		// Validators and ValidatorSigningInfo
+		NumValidators:              validatorsOut.NumValidators,
+		NumValidatorsNew:           0, // TODO: Enhance IndexValidators to return detailed breakdowns
+		NumValidatorsActive:        0,
+		NumValidatorsPaused:        0,
+		NumValidatorsUnstaking:     0,
+		NumValidatorSigningInfo:    validatorsOut.NumSigningInfos,
+		NumValidatorSigningInfoNew: 0, // TODO: Enhance IndexValidators to return this
+
+		// Committees and CommitteeValidators
+		NumCommittees:           committeesOut.NumCommittees,
+		NumCommitteesNew:        0, // TODO: Enhance IndexCommittees to return detailed breakdowns
+		NumCommitteesSubsidized: 0,
+		NumCommitteesRetired:    0,
+		NumCommitteeValidators:  0, // TODO: Enhance IndexCommittees to return this
+
+		// PollSnapshots
+		NumPollSnapshots: pollOut.NumProposals, // Poll snapshots correspond to proposals
 	}
 
 	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries
@@ -212,7 +346,26 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 
 	// Phase 3: Promote all entities in parallel from staging to production
 	// This follows the two-phase commit pattern for data consistency
-	promoteEntities := []string{"blocks", "txs", "block_summaries", "accounts", "events", "pools", "orders", "dex_prices"}
+	promoteEntities := []string{
+		"blocks",
+		"txs",
+		"block_summaries",
+		"accounts",
+		"events",
+		"pools",
+		"orders",
+		"dex_prices",
+		"params",
+		"validators",
+		"validator_signing_info",
+		"committees",
+		"committee_validators",
+		"poll_snapshots",
+		"dex_orders",
+		"dex_deposits",
+		"dex_withdrawals",
+		"dex_pool_points_by_holder",
+	}
 	promoteFutures := make([]workflow.Future, 0, len(promoteEntities))
 
 	for _, entity := range promoteEntities {

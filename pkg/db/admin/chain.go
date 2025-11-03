@@ -187,7 +187,7 @@ func (db *AdminDB) GetChain(ctx context.Context, id uint64) (*admin.Chain, error
 	)
 	if err != nil {
 		// normalize "no rows" into a friendly error
-		return nil, fmt.Errorf("chain %s not found: %w", id, err)
+		return nil, fmt.Errorf("chain %d not found: %w", id, err)
 	}
 
 	return &c, nil

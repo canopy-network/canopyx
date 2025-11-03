@@ -177,7 +177,7 @@ func (db *AdminDB) GetAllChainIndexProgress(ctx context.Context) (map[string]uin
 
 	rows, err := db.Db.Query(ctx, query)
 	if err == nil {
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var chainID uint64
 			var lastIdx uint64
@@ -202,7 +202,7 @@ func (db *AdminDB) GetAllChainIndexProgress(ctx context.Context) (map[string]uin
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var chainID uint64

@@ -31,7 +31,7 @@ func (db *AdminDB) UpdateRPCHealth(ctx context.Context, chainID uint64, status, 
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
 	if err := db.insertChain(ctx, current); err != nil {
-		return fmt.Errorf("insert rpc health update for chain %s: %w", chainID, err)
+		return fmt.Errorf("insert rpc health update for chain %d: %w", chainID, err)
 	}
 
 	// After updating RPC health, recompute overall health
@@ -63,7 +63,7 @@ func (db *AdminDB) UpdateQueueHealth(ctx context.Context, chainID uint64, status
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
 	if err := db.insertChain(ctx, current); err != nil {
-		return fmt.Errorf("insert queue health update for chain %s: %w", chainID, err)
+		return fmt.Errorf("insert queue health update for chain %d: %w", chainID, err)
 	}
 
 	// After updating queue health, recompute overall health
@@ -95,7 +95,7 @@ func (db *AdminDB) UpdateDeploymentHealth(ctx context.Context, chainID uint64, s
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
 	if err := db.insertChain(ctx, current); err != nil {
-		return fmt.Errorf("insert deployment health update for chain %s: %w", chainID, err)
+		return fmt.Errorf("insert deployment health update for chain %d: %w", chainID, err)
 	}
 
 	// After updating deployment health, recompute overall health
@@ -135,7 +135,7 @@ func (db *AdminDB) updateOverallHealth(ctx context.Context, chainID uint64) erro
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
 	if err := db.insertChain(ctx, current); err != nil {
-		return fmt.Errorf("insert overall health update for chain %s: %w", chainID, err)
+		return fmt.Errorf("insert overall health update for chain %d: %w", chainID, err)
 	}
 
 	return nil

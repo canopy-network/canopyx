@@ -161,9 +161,9 @@ func TestChainStore_InsertBlockSummariesStaging(t *testing.T) {
 	defer cancel()
 
 	blockTime := time.Now().UTC()
-	txCounts := generateBlockSummary(100, 10)
+	summary := generateBlockSummary(100, blockTime, 10)
 
-	err := chainDB.InsertBlockSummariesStaging(ctx, 100, blockTime, 10, txCounts)
+	err := chainDB.InsertBlockSummariesStaging(ctx, summary)
 	require.NoError(t, err)
 
 	// Verify block summary is in staging
@@ -671,16 +671,16 @@ func TestChainStore_GetBlockSummary(t *testing.T) {
 	defer cancel()
 
 	blockTime := time.Now().UTC()
-	txCounts := generateBlockSummary(100, 10)
-	err := chainDB.InsertBlockSummariesStaging(ctx, 100, blockTime, 10, txCounts)
+	summary := generateBlockSummary(100, blockTime, 10)
+	err := chainDB.InsertBlockSummariesStaging(ctx, summary)
 	require.NoError(t, err)
 	err = chainDB.PromoteEntity(ctx, entities.BlockSummaries, 100)
 	require.NoError(t, err)
 
-	summary, err := chainDB.GetBlockSummary(ctx, 100)
+	retrievedSummary, err := chainDB.GetBlockSummary(ctx, 100)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(100), summary.Height)
-	assert.Equal(t, uint32(10), summary.NumTxs)
+	assert.Equal(t, uint64(100), retrievedSummary.Height)
+	assert.Equal(t, uint32(10), retrievedSummary.NumTxs)
 }
 
 // TestChainStore_GetGenesisData tests retrieving genesis data.
