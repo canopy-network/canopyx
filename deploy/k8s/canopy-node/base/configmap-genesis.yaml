@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: canopy-node-genesis
+data:
+  genesis.json: |
+    {
+      "time": "2025-10-19 22:49:40",
+      "accounts": [
+        {
+          "address": "31c019699f5eac8edf96db5de102c222b3f04ee6",
+          "amount": 1000000
+        }
+      ],
+      "nonSigners": null,
+      "validators": [
+        {
+          "address": "31c019699f5eac8edf96db5de102c222b3f04ee6",
+          "publicKey": "85ecd385d99b690a344f79ea2c438024d203e6d9f3e7a13eac13835ce8b11b36ac7f7f1bd3c1b04ec077199a225f6005",
+          "committees": [
+            1
+          ],
+          "netAddress": "tcp://localhost",
+          "stakedAmount": 1000000000000,
+          "maxPausedHeight": 0,
+          "unstakingHeight": 0,
+          "output": "31c019699f5eac8edf96db5de102c222b3f04ee6",
+          "delegate": false,
+          "compound": true
+        }
+      ],
+      "params": {
+        "consensus": {
+          "blockSize": 1000000,
+          "protocolVersion": "1/0",
+          "rootChainID": 1
+        },
+        "validator": {
+          "unstakingBlocks": 2,
+          "maxPauseBlocks": 4380,
+          "doubleSignSlashPercentage": 10,
+          "nonSignSlashPercentage": 1,
+          "maxNonSign": 3,
+          "nonSignWindow": 5,
+          "maxCommittees": 15,
+          "maxCommitteeSize": 100,
+          "earlyWithdrawalPenalty": 20,
+          "delegateUnstakingBlocks": 2,
+          "minimumOrderSize": 1000000000,
+          "stakePercentForSubsidizedCommittee": 33,
+          "maxSlashPerCommittee": 15,
+          "delegateRewardPercentage": 10,
+          "buyDeadlineBlocks": 60,
+          "lockOrderFeeMultiplier": 2
+        },
+        "fee": {
+          "sendFee": 10000,
+          "stakeFee": 10000,
+          "editStakeFee": 10000,
+          "unstakeFee": 10000,
+          "pauseFee": 10000,
+          "unpauseFee": 10000,
+          "changeParameterFee": 10000,
+          "daoTransferFee": 10000,
+          "certificateResultsFee": 0,
+          "subsidyFee": 10000,
+          "createOrderFee": 10000,
+          "editOrderFee": 10000,
+          "deleteOrderFee": 10000,
+          "dexLimitOrderFee": 0,
+          "dexLiquidityDeposit": 0,
+          "dexLiquidityWithdraw": 0
+        },
+        "governance": {
+          "daoRewardPercentage": 5
+        }
+      },
+      "supply": null
+    }

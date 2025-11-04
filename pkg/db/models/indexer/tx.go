@@ -1,130 +1,60 @@
 package indexer
 
 import (
-	"context"
-	"fmt"
 	"time"
-
-	"github.com/uptrace/go-clickhouse/ch"
 )
 
-// ---------------------------
-// Models
-// ---------------------------
+const TxsProductionTableName = "txs"
+const TxsStagingTableName = "txs_staging"
 
-// Transaction (core, small, query‑friendly)
+// Transaction stores ALL transaction data in a single table.
+// Common queryable fields are typed columns.
+// Type-specific fields are stored in the compressed 'msg' JSON field.
+// ClickHouse's columnar storage ensures list queries only read the columns they need.
 type Transaction struct {
-	ch.CHModel `ch:"table:txs,engine:MergeTree(),order_by:(height,tx_hash)"`
+	// Primary key
+	Height uint64 `ch:"height" json:"height"`
+	TxHash string `ch:"tx_hash" json:"tx_hash"`
 
-	// Position
-	Height uint64 `ch:"height"`
-	TxHash string `ch:"tx_hash"`
+	// Time fields for queries
+	Time       time.Time `ch:"time" json:"time"`               // Transaction timestamp
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for range queries
 
-	// Time
-	Time time.Time `ch:"time,type:DateTime64(6)"`
+	// Common filterable fields
+	MessageType  string  `ch:"message_type" json:"message_type"`           // LowCardinality(String) for efficient filtering
+	Signer       string  `ch:"signer" json:"signer"`                       // Transaction signer address
+	Counterparty *string `ch:"counterparty" json:"counterparty,omitempty"` // Recipient/validator/pool/contract address
+	Amount       *uint64 `ch:"amount" json:"amount,omitempty"`             // Amount transferred/staked/delegated (null for votes, etc.)
+	Fee          uint64  `ch:"fee" json:"fee"`                             // Transaction fee
 
-	// Classification
-	MessageType string `ch:"message_type,lc"` // LowCardinality(String)
+	// ===== NEW EXTRACTED FIELDS (for efficient querying) =====
 
-	// Counterparty It’s the “other address involved in the tx,” i.e., who the signer interacted with:
-	// 1. send: the recipient (toAddress / recipient)
-	// 2. delegate/undelegate/stake etc.: typically a validator address (if/when present)
-	// 3. contract calls or system txs: may be unknown → nil
-	Counterparty *string `ch:"counterparty"` // nullable
+	// Validator-related (stake, unstake, editStake)
+	ValidatorAddress *string  `ch:"validator_address" json:"validator_address,omitempty"`
+	Commission       *float64 `ch:"commission" json:"commission,omitempty"`
 
-	// Actor
-	Signer string `ch:"signer"`
+	// DEX-related (dexLimitOrder, dexLiquidityDeposit, dexLiquidityWithdraw)
+	ChainID      *uint64 `ch:"chain_id" json:"chain_id,omitempty"`
+	SellAmount   *uint64 `ch:"sell_amount" json:"sell_amount,omitempty"`
+	BuyAmount    *uint64 `ch:"buy_amount" json:"buy_amount,omitempty"`
+	LiquidityAmt *uint64 `ch:"liquidity_amount" json:"liquidity_amount,omitempty"`
 
-	// Value / fees (nullable)
-	Amount        *uint64 `ch:"amount"`
-	Fee           uint64  `ch:"fee"`
-	CreatedHeight uint64  `ch:"created_height"`
-}
+	// Order-related (createOrder, editOrder, deleteOrder)
+	OrderID *string  `ch:"order_id" json:"order_id,omitempty"`
+	Price   *float64 `ch:"price" json:"price,omitempty"`
 
-// TransactionRaw (heavy fields; TTL 30 days)
-type TransactionRaw struct {
-	ch.CHModel `ch:"table:txs_raw"`
+	// Governance-related (changeParameter)
+	ParamKey   *string `ch:"param_key" json:"param_key,omitempty"`
+	ParamValue *string `ch:"param_value" json:"param_value,omitempty"`
 
-	Height    uint64  `ch:"height"`
-	TxHash    string  `ch:"tx_hash"`
-	MsgRaw    *string `ch:"msg_raw"` // compact JSON for unknown/varied payloads
-	PublicKey *string `ch:"public_key"`
-	Signature *string `ch:"signature"`
-}
+	// Other
+	CommitteeID *uint64 `ch:"committee_id" json:"committee_id,omitempty"` // For: subsidy
+	Recipient   *string `ch:"recipient" json:"recipient,omitempty"`       // For: daoTransfer
 
-// ---------------------------
-// Initializers
-// ---------------------------
+	// Full message as compressed JSON (ALL type-specific fields)
+	Msg string `ch:"msg" json:"msg"` // Complete message data with ZSTD compression
 
-// InitTransactions creates the core table via builder, and the raw table with TTL via DDL.
-// dbName must be the ClickHouse database (since ExecContext needs a fully qualified name).
-func InitTransactions(ctx context.Context, db *ch.DB, dbName string) error {
-	// Core fact table (builder)
-	if _, err := db.NewCreateTable().
-		Model((*Transaction)(nil)).
-		IfNotExists().
-		Engine("MergeTree").
-		// the tag already has order_by:(height,tx_hash); being explicit keeps it obvious:
-		Order("height,tx_hash").
-		Exec(ctx); err != nil {
-		return err
-	}
-
-	// Raw sidecar with TTL (use DDL to express TTL cleanly)
-	ddlRaw := fmt.Sprintf(`
-CREATE TABLE IF NOT EXISTS "%[1]s"."txs_raw" (
-  height    UInt64,
-  tx_hash   String,
-  msg_raw   Nullable(String),
-  public_key Nullable(String),
-  signature  Nullable(String),
-  created_at DateTime DEFAULT now()
-) ENGINE = MergeTree
-ORDER BY (height, tx_hash)
-TTL created_at + INTERVAL 30 DAY DELETE
-`, dbName)
-
-	if _, err := db.ExecContext(ctx, ddlRaw); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// ---------------------------
-// Insert helpers
-// ---------------------------
-
-// InsertTransactions inserts one or many Transaction rows efficiently.
-// TODO: we may want to insert in parallel
-func InsertTransactions(ctx context.Context, db *ch.DB, transactions []*Transaction, rawTransactions []*TransactionRaw) error {
-	txErr := InsertTransactionsCore(ctx, db, transactions...)
-	if txErr != nil {
-		return txErr
-	}
-
-	rawTxErr := InsertTransactionsRaw(ctx, db, rawTransactions...)
-	if rawTxErr != nil {
-		return rawTxErr
-	}
-
-	return nil
-}
-
-// InsertTransactionsCore inserts one or many Transaction rows efficiently.
-func InsertTransactionsCore(ctx context.Context, db *ch.DB, rows ...*Transaction) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	_, err := db.NewInsert().Model(&rows).Exec(ctx)
-	return err
-}
-
-// InsertTransactionsRaw inserts one or many TransactionRaw rows.
-func InsertTransactionsRaw(ctx context.Context, db *ch.DB, rows ...*TransactionRaw) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	_, err := db.NewInsert().Model(&rows).Exec(ctx)
-	return err
+	// Signature fields (compressed, permanent audit trail)
+	PublicKey *string `ch:"public_key" json:"public_key,omitempty"` // Compressed with ZSTD
+	Signature *string `ch:"signature" json:"signature,omitempty"`   // Compressed with ZSTD
 }

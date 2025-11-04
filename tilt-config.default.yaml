@@ -1,0 +1,349 @@
+# CanopyX Tilt Configuration
+# Copy this file to tilt-config.yaml and customize for your local environment
+#
+# This file controls which components run and their resource allocation.
+# Designed to allow developers to run minimal setups on laptops while
+# also supporting production-like testing when needed.
+
+# ==============================================================================
+# PROFILE SELECTION
+# ==============================================================================
+# Options: "minimal", "development", "production"
+#
+# minimal:     Only essential components (no monitoring, no canopy node)
+#              Best for: Laptop development, UI work, API testing
+#              Resources: ~4GB RAM, 2 CPU cores
+#
+# development: Full stack with minimal replicas (default)
+#              Best for: Full-stack development, workflow testing
+#              Resources: ~8GB RAM, 4 CPU cores
+#
+# production:  Production-like setup with replication and monitoring
+#              Best for: Performance testing, benchmarking, demo
+#              Resources: ~16GB RAM, 8+ CPU cores
+profile: development
+
+# ==============================================================================
+# COMPONENT TOGGLES
+# ==============================================================================
+# Enable/disable OPTIONAL components to save resources
+# Note: ClickHouse and Temporal are ALWAYS required and cannot be disabled
+#       (they're configured via resource limits below instead)
+components:
+  # --- Optional Monitoring ---
+  monitoring: false       # Prometheus + Grafana (adds ~1GB RAM)
+                          # Enable this for: performance testing, debugging, demos
+                          # Disable for: normal development, laptop environments
+
+  # --- Optional Blockchain Nodes ---
+  canopy: "off"           # Canopy blockchain node deployment mode
+                          # Options: "off" | "single" | "dual"
+                          #
+                          # "off"    - No Canopy nodes (use remote RPC endpoints)
+                          # "single" - Single legacy node (adds ~2GB RAM, +1 CPU)
+                          #            Use for: basic blockchain testing, single chain development
+                          # "dual"   - Dual nodes for DEX testing (adds ~4GB RAM, +2 CPU)
+                          #            Use for: DEX/liquidity pools, cross-chain operations
+                          #            Deploys: Node 1 (Chain ID 1) + Node 2 (Chain ID 2)
+                          #
+                          # Requires: paths.canopy_source must exist
+
+  # --- Optional Services (you can disable these if not needed) ---
+  admin: true             # Admin API server
+                          # Disable if: only running indexer, testing without API
+
+  controller: true        # Controller (manages indexer deployments)
+                          # Disable if: running standalone indexer, testing without auto-scaling
+
+  admin_web: true         # Next.js admin UI
+                          # Disable if: only using API directly, not working on UI
+
+# NOTE: Indexer is always required (managed by controller when enabled, or deployed manually)
+
+# ==============================================================================
+# PATHS
+# ==============================================================================
+# Configure paths to external repositories
+paths:
+  # Path to Canopy blockchain source code (if using local node)
+  # The Canopy node will only be deployed if:
+  #   1. components.canopy is set to "single" or "dual"
+  #   2. This path exists and contains a valid Canopy repository
+  #
+  # Examples:
+  #   canopy_source: "../canopy"              # Sibling directory (default)
+  #   canopy_source: "/home/user/go/src/canopy"  # Absolute path
+  #   canopy_source: "~/projects/canopy"      # Home directory
+  canopy_source: "../canopy"
+
+# ==============================================================================
+# RESOURCE LIMITS BY PROFILE
+# ==============================================================================
+# These settings control replica counts and resource limits
+# You generally don't need to edit these unless you have specific requirements
+resources:
+  minimal:
+    clickhouse:
+      cpu_limit: "1000m"
+      memory_limit: "2Gi"
+      cpu_request: "500m"
+      memory_request: "1Gi"
+
+    temporal:
+      history_replicas: 1
+      cassandra_replicas: 1
+      cassandra_heap_size: "4G"
+      cassandra_memory_limit: "6G"
+      elasticsearch_replicas: 1
+      elasticsearch_memory_limit: "1Gi"
+      elasticsearch_cpu_limit: "1000m"
+
+    canopyx:
+      admin_cpu_limit: "500m"
+      admin_memory_limit: "512Mi"
+      controller_cpu_limit: "500m"
+      controller_memory_limit: "512Mi"
+      admin_web_cpu_limit: "200m"
+      admin_web_memory_limit: "512Mi"  # Higher for Next.js dev mode with hot reload
+
+    indexer:
+      min_replicas: 1
+      max_replicas: 2
+
+    monitoring:
+      enabled: false  # Force disable monitoring in minimal mode
+      prometheus_cpu_limit: "500m"
+      prometheus_memory_limit: "512Mi"
+      grafana_cpu_limit: "200m"
+      grafana_memory_limit: "256Mi"
+
+  development:
+    clickhouse:
+      cpu_limit: "2000m"
+      memory_limit: "4Gi"
+      cpu_request: "1000m"
+      memory_request: "2Gi"
+
+    temporal:
+      history_replicas: 1
+      cassandra_replicas: 1
+      cassandra_heap_size: "8G"
+      cassandra_memory_limit: "12G"
+      elasticsearch_replicas: 1
+      elasticsearch_memory_limit: "2Gi"
+      elasticsearch_cpu_limit: "2000m"
+
+    canopyx:
+      admin_cpu_limit: "1000m"
+      admin_memory_limit: "1Gi"
+      controller_cpu_limit: "1000m"
+      controller_memory_limit: "1Gi"
+      admin_web_cpu_limit: "500m"
+      admin_web_memory_limit: "512Mi"
+
+    indexer:
+      min_replicas: 1
+      max_replicas: 3
+
+    monitoring:
+      prometheus:
+        retention: "2d"
+        scrape_interval: "15s"
+        cpu_limit: "1000m"
+        memory_limit: "1Gi"
+      grafana:
+        enabled: true
+        cpu_limit: "500m"
+        memory_limit: "512Mi"
+      prometheus_cpu_limit: "1000m"
+      prometheus_memory_limit: "1Gi"
+      grafana_cpu_limit: "500m"
+      grafana_memory_limit: "512Mi"
+
+  production:
+    clickhouse:
+      cpu_limit: "4000m"
+      memory_limit: "8Gi"
+      cpu_request: "2000m"
+      memory_request: "4Gi"
+
+    temporal:
+      history_replicas: 3
+      cassandra_replicas: 3
+      cassandra_heap_size: "16G"
+      cassandra_memory_limit: "24G"
+      elasticsearch_replicas: 3
+      elasticsearch_memory_limit: "4Gi"
+      elasticsearch_cpu_limit: "4000m"
+
+    canopyx:
+      admin_cpu_limit: "2000m"
+      admin_memory_limit: "2Gi"
+      controller_cpu_limit: "2000m"
+      controller_memory_limit: "2Gi"
+      admin_web_cpu_limit: "1000m"
+      admin_web_memory_limit: "1Gi"
+
+    indexer:
+      min_replicas: 3
+      max_replicas: 12
+
+    monitoring:
+      prometheus:
+        retention: "7d"
+        scrape_interval: "10s"
+        cpu_limit: "2000m"
+        memory_limit: "2Gi"
+      grafana:
+        enabled: true
+        cpu_limit: "1000m"
+        memory_limit: "1Gi"
+      prometheus_cpu_limit: "2000m"
+      prometheus_memory_limit: "2Gi"
+      grafana_cpu_limit: "1000m"
+      grafana_memory_limit: "1Gi"
+
+# ==============================================================================
+# PORT FORWARDING
+# ==============================================================================
+# Configure local ports for accessing services
+# Change these if you have conflicts with other services
+ports:
+  # ClickHouse
+  clickhouse_web: 8081       # HyperDX web UI
+  clickhouse_server: 8123    # ClickHouse HTTP
+  clickhouse_native: 9000    # ClickHouse native protocol
+
+  # Temporal
+  temporal_web: 8080         # Temporal web UI
+  temporal_frontend: 7233    # Temporal gRPC
+  temporal_worker: 7239      # Temporal worker
+
+  # Monitoring (only if components.monitoring = true)
+  prometheus: 9090           # Prometheus UI
+  grafana: 3100              # Grafana UI
+
+  # CanopyX Services
+  admin: 3000                # Admin API
+  admin_web: 3003            # Admin web UI
+
+  # Canopy Nodes (only if components.canopy = "single" or "dual")
+  canopy_wallet: 50000       # Wallet RPC
+  canopy_explorer: 50001     # Explorer API
+  canopy_rpc: 50002          # JSON-RPC
+  canopy_admin_rpc: 50003    # Admin RPC
+  canopy_p2p: 9001           # P2P port
+  canopy_debug: 6060         # pprof debug
+  canopy_metrics: 9090       # Prometheus metrics
+
+# ==============================================================================
+# MONITORING CONFIGURATION
+# ==============================================================================
+# Only applies if components.monitoring = true
+monitoring:
+  # Dashboards to load into Grafana
+  # These files should exist in deploy/k8s/grafana/base/dashboards/
+  dashboards:
+    - deploy/k8s/grafana/base/dashboards/canopyx-overview.json
+    # Add more dashboards here as you create them:
+    # - deploy/k8s/grafana/base/dashboards/temporal-detailed.json
+    # - deploy/k8s/grafana/base/dashboards/clickhouse-performance.json
+
+  # Prometheus scrape targets
+  # Add custom scrape configs if you have additional services
+  extra_scrape_configs: []
+    # Example:
+    # - job_name: 'my-custom-service'
+    #   static_configs:
+    #     - targets: ['my-service:9090']
+
+# ==============================================================================
+# CHAIN REGISTRATION
+# ==============================================================================
+# Auto-register external Canopy chains on startup
+# The local node (if enabled) is registered separately via dev.auto_register_chain
+chains: []
+  # Uncomment and modify to connect to external Canopy networks:
+  #
+  # - chain_name: "Canopy Mainnet"
+  #   rpc_endpoints: ["https://node1.canopy.us.nodefleet.net/rpc"]
+  #   min_replicas: 1
+  #   max_replicas: 2
+  #   image: "localhost:5001/canopyx-indexer:dev"  # Optional, defaults to dev.indexer_tag
+  #
+  # - chain_name: "Canopy Canary"
+  #   rpc_endpoints: ["https://node2.canopy.us.nodefleet.net/rpc"]
+  #   min_replicas: 1
+  #   max_replicas: 2
+  #   image: "localhost:5001/canopyx-indexer:dev"  # Optional, defaults to dev.indexer_tag
+
+# ==============================================================================
+# ENVIRONMENT VARIABLE OVERRIDES
+# ==============================================================================
+# Override default environment variables for admin and controller
+# Useful for debugging and development tuning
+env:
+  admin:
+    # LOG_LEVEL: "debug"           # Logging level: debug, info, warn, error
+    # CHDEBUG: "1"                 # ClickHouse debug: 0=off, 1=failed queries, 2=all queries
+    # ADMIN_TOKEN: "devtoken"      # Admin API authentication token
+
+  controller:
+    # LOG_LEVEL: "debug"           # Logging level: debug, info, warn, error
+    # CHDEBUG: "1"                 # ClickHouse debug: 0=off, 1=failed queries, 2=all queries
+    # INDEXER_CPU: "2000m"         # CPU limit for spawned indexer pods
+    # INDEXER_MEM: "2Gi"           # Memory limit for spawned indexer pods
+    # INDEXER_HPA_MIN: "1"         # Minimum indexer replicas (HPA)
+    # INDEXER_HPA_MAX: "3"         # Maximum indexer replicas (HPA)
+    # INDEXER_HPA_CPU_TARGET: "80" # CPU target percentage for HPA scaling
+
+# ==============================================================================
+# DEVELOPMENT SETTINGS
+# ==============================================================================
+dev:
+  # Auto-rebuild on code changes
+  auto_rebuild: true
+
+  # Automatically register local Canopy chain(s) (if canopy is "single" or "dual")
+  auto_register_chain: true
+
+  # Indexer image tag
+  indexer_tag: "localhost:5001/canopyx-indexer:dev"
+
+  # Trigger mode for indexer builds
+  # Options: "auto" (rebuild on changes), "manual" (rebuild on button press)
+  indexer_build_mode: "auto"
+
+# ==============================================================================
+# EXAMPLE CONFIGURATIONS
+# ==============================================================================
+#
+# Laptop Developer (minimal resources):
+#   profile: minimal
+#   components:
+#     monitoring: false
+#     canopy: "off"
+#
+# Full-Stack Developer (normal development):
+#   profile: development
+#   components:
+#     monitoring: false  # Enable only when debugging
+#     canopy: "single"   # If testing against local node
+#
+# DEX/Pools Developer:
+#   profile: development
+#   components:
+#     monitoring: false
+#     canopy: "dual"     # For cross-chain DEX testing
+#
+# Performance Testing / Benchmarking:
+#   profile: production
+#   components:
+#     monitoring: true   # MUST be enabled for benchmarking
+#     canopy: "single"   # If testing local node performance
+#
+# Demo / Presentation:
+#   profile: production
+#   components:
+#     monitoring: true   # Show off the dashboards!
+#     canopy: "dual"     # Show dual-chain DEX features

@@ -4,15 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/canopy-network/canopyx/app/admin/activity"
 	"github.com/canopy-network/canopyx/app/admin/types"
-	"github.com/canopy-network/canopyx/app/admin/workflow"
-	"github.com/canopy-network/canopyx/pkg/db"
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	"github.com/canopy-network/canopyx/pkg/logging"
-	reporteractivity "github.com/canopy-network/canopyx/pkg/reporter/activity"
-	reporterworkflow "github.com/canopy-network/canopyx/pkg/reporter/workflow"
+	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/temporal"
-	"go.temporal.io/sdk/worker"
+	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.uber.org/zap"
 )
 
@@ -23,19 +20,11 @@ func Initialize(ctx context.Context) *types.App {
 		panic(err)
 	}
 
-	indexerDb, reportsDb, basicDbsErr := db.NewBasicDbs(ctx, logger)
-	if basicDbsErr != nil {
-		logger.Fatal("Unable to initialize basic databases", zap.Error(basicDbsErr))
-	}
+	indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
 
-	indexerDbInitErr := indexerDb.InitializeDB(ctx)
-	if indexerDbInitErr != nil {
-		logger.Fatal("Unable to initialize indexer database", zap.Error(indexerDbInitErr))
-	}
-
-	reportsDbInitErr := reportsDb.InitializeDB(ctx)
-	if reportsDbInitErr != nil {
-		logger.Fatal("Unable to initialize reports database", zap.Error(reportsDbInitErr))
+	indexerDb, err := adminstore.New(ctx, logger, indexerDbName)
+	if err != nil {
+		logger.Fatal("Unable to initialize indexer database", zap.Error(err))
 	}
 
 	chainsDb, chainsDbErr := indexerDb.EnsureChainsDbs(ctx)
@@ -48,58 +37,45 @@ func Initialize(ctx context.Context) *types.App {
 		logger.Fatal("Unable to establish temporal connection", zap.Error(err))
 	}
 
-	// This will listen to workflows/activities for the ManagerQueue (head, gap, etc.)
-	managerTemporalWorker := worker.New(temporalClient.TClient, temporalClient.ManagerQueue, worker.Options{
-		MaxConcurrentWorkflowTaskPollers: 10,
-		MaxConcurrentActivityTaskPollers: 10,
-		WorkerStopTimeout:                1 * time.Minute,
-	})
-
-	adminActivityContext := &activity.Context{
-		IndexerDB:      indexerDb,
-		ReportsDB:      reportsDb,
-		ChainsDB:       chainsDb,
-		TemporalClient: temporalClient,
+	// Ensure the Temporal namespace exists (Helm chart doesn't auto-create it)
+	// Use 7 days retention to match the Helm values configuration
+	err = temporalClient.EnsureNamespace(ctx, 7*24*time.Hour)
+	if err != nil {
+		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
 	}
-	adminWorkflowContext := &workflow.Context{
-		ActivityContext: adminActivityContext,
-		TemporalClient:  temporalClient,
-	}
+	logger.Info("Temporal namespace ready", zap.String("namespace", temporalClient.Namespace))
 
-	// All the manager workflows
-	managerTemporalWorker.RegisterWorkflow(adminWorkflowContext.HeadScan)
-	managerTemporalWorker.RegisterWorkflow(adminWorkflowContext.GapScanWorkflow)
-	// All the manager activities
-	managerTemporalWorker.RegisterActivity(adminActivityContext.GetLastIndexed)
-	managerTemporalWorker.RegisterActivity(adminActivityContext.GetLatestHead)
-	managerTemporalWorker.RegisterActivity(adminActivityContext.StartIndexWorkflow)
-	managerTemporalWorker.RegisterActivity(adminActivityContext.FindGaps)
+	// Initialize Redis client for real-time WebSocket events (optional)
+	var redisClient *redis.Client
+	if utils.Env("REDIS_ENABLED", "false") == "true" {
+		redisClient, err = redis.NewClient(ctx, logger)
+		if err != nil {
+			logger.Warn("Failed to initialize Redis client - WebSocket real-time events will be disabled",
+				zap.Error(err))
+			redisClient = nil
+		} else {
+			logger.Info("Redis client initialized for WebSocket real-time events")
+		}
+	} else {
+		logger.Info("Redis disabled - WebSocket real-time events will not be available")
+	}
 
 	app := &types.App{
 		// Database initialization
 		AdminDB:  indexerDb,
-		ReportDB: reportsDb,
 		ChainsDB: chainsDb,
 
 		// Temporal initialization
 		TemporalClient: temporalClient,
 
+		// Redis initialization
+		RedisClient: redisClient,
+
 		// Logger initialization
 		Logger: logger,
 
-		// Context initialization
-		AdminWorkflowContext: adminWorkflowContext,
-		ReporterWorkflowContext: &reporterworkflow.Context{
-			ActivityContext: &reporteractivity.Context{
-				IndexerDB:      indexerDb,
-				ReportsDB:      reportsDb,
-				ChainsDB:       chainsDb,
-				TemporalClient: temporalClient,
-			},
-		},
-
-		// Worker initialization
-		Worker: managerTemporalWorker,
+		// Queue stats cache initialization (30s TTL to reduce Temporal API rate limiting)
+		QueueStatsCache: types.NewQueueStatsCache(),
 	}
 
 	err = app.ReconcileSchedules(ctx)

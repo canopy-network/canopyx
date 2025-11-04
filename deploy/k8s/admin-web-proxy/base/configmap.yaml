@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: admin-web-proxy-config
+  labels:
+    app: admin-web-proxy
+data:
+  nginx.conf: |
+    events {
+      worker_connections 1024;
+    }
+
+    http {
+      # WebSocket upgrade support
+      map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+      }
+
+      # Upstream services
+      upstream admin_web {
+        server canopyx-admin-web.default.svc.cluster.local:3003;
+      }
+
+      upstream admin_api {
+        server canopyx-admin.default.svc.cluster.local:3000;
+      }
+
+      server {
+        listen 80;
+        server_name _;
+
+        # Admin API WebSocket endpoint (migrated from query service)
+        location /api/admin/ws {
+          proxy_pass http://admin_api/api/ws;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+
+          # WebSocket timeout settings
+          proxy_read_timeout 86400s;
+          proxy_send_timeout 86400s;
+        }
+
+        # Admin API
+        location /api/admin/ {
+          proxy_pass http://admin_api/api/;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # Admin API (legacy /api/* routes)
+        location /api/ {
+          proxy_pass http://admin_api/api/;
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # All other requests - Admin Web (Next.js)
+        # Includes support for Next.js HMR WebSocket (/_next/webpack-hmr)
+        location / {
+          proxy_pass http://admin_web;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+
+          # WebSocket timeout settings for HMR
+          proxy_read_timeout 86400s;
+          proxy_send_timeout 86400s;
+        }
+      }
+    }

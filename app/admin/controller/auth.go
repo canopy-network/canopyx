@@ -103,3 +103,23 @@ func (c *Controller) IssueSession(w http.ResponseWriter, username string) {
 		MaxAge: int(ttl.Seconds()),
 	})
 }
+
+// currentUser returns the username associated with the request when available.
+// API tokens are treated as admin-equivalent and return "api-token".
+func (c *Controller) currentUser(r *http.Request) string {
+	// Check API token first (admin-equivalent)
+	if c.ValidateToken(r) {
+		return "api-token"
+	}
+	// Check session cookie
+	if cookie, err := r.Cookie("cx_session"); err == nil {
+		if tok, err := jwt.Parse(cookie.Value, func(t *jwt.Token) (any, error) { return c.JWTSecret, nil }); err == nil && tok.Valid {
+			if claims, ok := tok.Claims.(jwt.MapClaims); ok {
+				if sub, _ := claims["sub"].(string); sub != "" {
+					return sub
+				}
+			}
+		}
+	}
+	return "unknown"
+}

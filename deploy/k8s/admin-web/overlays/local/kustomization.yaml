@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Override for local development:
+# - Set NODE_ENV=development for hot reload
+# - Relax health checks for Next.js dev mode compilation time
+patches:
+  - path: deployment-patch.yaml

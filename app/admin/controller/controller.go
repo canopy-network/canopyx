@@ -48,15 +48,17 @@ func WithCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 
-		// Allow your Next dev origin
-		// TODO: make this configurable? or somehow calculated from ADDR
-		if origin == "http://localhost:3003" {
+		// Development: Echo back the origin to allow credentials with any origin
+		// TODO: Restrict this in production to specific domains
+		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Session")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
+		w.Header().Set("Vary", "Origin")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", http.MethodGet+", "+http.MethodPost+", "+http.MethodPut+", "+http.MethodPatch+", "+http.MethodDelete+", "+http.MethodOptions)
 
 		// Fast-path the preflight
 		if r.Method == http.MethodOptions {
@@ -72,12 +74,16 @@ func WithCORS(next http.Handler) http.Handler {
 func (c *Controller) NewRouter() (*mux.Router, error) {
 	r := mux.NewRouter()
 
-	// basic it's ok, could even be a public endpoint
+	// basically it's ok, could even be a public endpoint
 	r.Handle("/api/health", http.HandlerFunc(c.HandleHealth)).Methods(http.MethodGet)
+
+	// Admin API - Login/Logout (normalized to /api prefix)
+	r.HandleFunc("/api/auth/login", c.HandleAdminLogin).Methods(http.MethodPost)
+	r.HandleFunc("/api/auth/logout", c.HandleAdminLogout).Methods(http.MethodPost)
 
 	// API (crud?)
 	r.Handle("/api/chains", c.RequireAuth(http.HandlerFunc(c.HandleChainsList))).Methods(http.MethodGet)
-	r.Handle("/api/chains", c.RequireAdmin(http.HandlerFunc(c.HandleChainsUpsert))).Methods(http.MethodPost)
+	r.Handle("/api/chains", c.RequireAuth(http.HandlerFunc(c.HandleChainsUpsert))).Methods(http.MethodPost)
 	// GET/PATCH bulk status
 	r.Handle("/api/chains/status", c.RequireAuth(http.HandlerFunc(c.HandleChainStatus))).Methods(http.MethodGet)
 	r.Handle("/api/chains/status", c.RequireAuth(http.HandlerFunc(c.HandlePatchChainsStatus))).Methods(http.MethodPatch)
@@ -85,11 +91,23 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.Handle("/api/chains/{id}", c.RequireAuth(http.HandlerFunc(c.HandleChainDetail))).Methods(http.MethodGet)
 	r.Handle("/api/chains/{id}/progress", c.RequireAuth(http.HandlerFunc(c.HandleProgress))).Methods(http.MethodGet)
 	r.Handle("/api/chains/{id}/gaps", c.RequireAuth(http.HandlerFunc(c.HandleGaps))).Methods(http.MethodGet)
+	r.Handle("/api/chains/{id}/progress-history", c.RequireAuth(http.HandlerFunc(c.HandleIndexProgressHistory))).Methods(http.MethodGet)
 	r.Handle("/api/chains/{id}", c.RequireAuth(http.HandlerFunc(c.HandleChainPatch))).Methods(http.MethodPatch)
+	r.Handle("/api/chains/{id}", c.RequireAuth(http.HandlerFunc(c.HandleChainDelete))).Methods(http.MethodDelete)
+	r.Handle("/api/chains/{id}/headscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerHeadScan))).Methods(http.MethodPost)
+	r.Handle("/api/chains/{id}/gapscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerGapScan))).Methods(http.MethodPost)
+	r.Handle("/api/chains/{id}/reindex", c.RequireAuth(http.HandlerFunc(c.HandleReindex))).Methods(http.MethodPost)
 
-	if err := c.LoadAdminUI(r); err != nil {
-		return nil, err
-	}
+	// Schema introspection endpoints (migrated from query service)
+	r.Handle("/api/entities", c.RequireAuth(http.HandlerFunc(c.HandleEntities))).Methods(http.MethodGet)
+	r.Handle("/api/chains/{id}/schema", c.RequireAuth(http.HandlerFunc(c.HandleSchema))).Methods(http.MethodGet)
+
+	// Generic entity query endpoints
+	r.Handle("/api/chains/{id}/entity/{entity}", c.RequireAuth(http.HandlerFunc(c.HandleEntityQuery))).Methods(http.MethodGet)
+	r.Handle("/api/chains/{id}/entity/{entity}/{id_value}", c.RequireAuth(http.HandlerFunc(c.HandleEntityGet))).Methods(http.MethodGet)
+
+	// WebSocket endpoint for real-time events (migrated from query service)
+	r.HandleFunc("/api/ws", c.HandleWebSocket).Methods(http.MethodGet)
 
 	return r, nil
 }

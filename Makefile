@@ -55,7 +55,9 @@ help:
 	@echo "  make build-web          - build Next.js admin (static export)"
 	@echo "  make build-go           - build all Go binaries"
 	@echo "  make build              - full build (web + go)"
-	@echo "  make test               - run go tests"
+	@echo "  make test               - run all tests (unit + integration)"
+	@echo "  make test-unit          - run unit tests only (fast, no Docker)"
+	@echo "  make test-integration   - run integration tests (requires Docker)"
 	@echo "  make clean              - remove build artifacts"
 	@echo "  make upgrade-admin      - bump core admin deps (Next/ESLint/etc.)"
 	@echo ""
@@ -63,10 +65,9 @@ help:
 	@echo "  make register-chain     - register a chain via admin API (requires ADMIN_TOKEN)"
 	@echo ""
 	@echo "  make docker-admin       - build admin docker image"
+	@echo "  make docker-admin-web   - build admin web docker image"
 	@echo "  make docker-indexer     - build indexer docker image"
 	@echo "  make docker-controller  - build controller docker image"
-	@echo "  make docker-query       - build query docker image"
-	@echo "  make docker-reporter    - build reporter docker image"
 	@echo "  make docker-all         - build all docker images (tag=$(TAG), prefix=$(IMAGE_PREFIX))"
 	@echo ""
 	@echo "  make kind-up            - ensure local registry + kind cluster, wire together"
@@ -85,6 +86,9 @@ help:
 	@echo "  make metrics-server-install - install metrics-server (kind-friendly flags)"
 	@echo "  make metrics-server-status  - show metrics-server API/pod status, sample metrics"
 	@echo "  make metrics-server-uninstall - uninstall metrics-server"
+	@echo ""
+	@echo "  make canopy-reset-data  - delete Canopy node data (fresh start on next tilt-up)"
+	@echo "  make canopy-scale-down  - scale Canopy node to 0 replicas (preserves data)"
 	@echo ""
 	@echo "  make tilt-up            - start Tilt (interactive HUD)"
 	@echo "  make tilt-up-stream     - start Tilt (stream logs, no HUD)"
@@ -168,7 +172,7 @@ fmt-fix: check-golangci
 .PHONY: lint
 lint: check-golangci
 	@golangci-lint cache clean
-	@golangci-lint run
+	@golangci-lint run ./app/... ./cmd/... ./pkg/... --tests=false
 
 .PHONY: lint-fix
 lint-fix: check-golangci
@@ -188,8 +192,6 @@ build-go:
 	@$(GO) build -trimpath -o bin/admin     ./cmd/admin
 	@$(GO) build -trimpath -o bin/controller ./cmd/controller
 	@$(GO) build -trimpath -o bin/indexer   ./cmd/indexer
-	@$(GO) build -trimpath -o bin/reporter  ./cmd/reporter
-	@$(GO) build -trimpath -o bin/query     ./cmd/query
 
 .PHONY: build
 build: build-web build-go
@@ -199,8 +201,35 @@ build: build-web build-go
 # Test & Clean
 # ----------------------------
 .PHONY: test
-test:
-	@$(GO) test ./...
+test: test-unit test-integration
+
+.PHONY: test-unit
+test-unit:
+	@mkdir -p .gocache
+	@if [ "$(CLEAN_CACHE)" = "1" ]; then \
+		rm -rf .gocache; \
+		$(GO) clean -testcache; \
+	fi
+	@echo ">> Running unit tests..."
+	@if [ -n "$(RUN)" ]; then \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -run '$(RUN)' $(if $(TEST_PKG),$(TEST_PKG),./tests/unit/...); \
+	else \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test $(if $(TEST_PKG),$(TEST_PKG),./tests/unit/...); \
+	fi
+
+.PHONY: test-integration
+test-integration:
+	@mkdir -p .gocache
+	@if [ "$(CLEAN_CACHE)" = "1" ]; then \
+		rm -rf .gocache; \
+		$(GO) clean -testcache; \
+	fi
+	@echo ">> Running integration tests (requires Docker)..."
+	@if [ -n "$(RUN)" ]; then \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -v -race -run '$(RUN)' ./tests/integration/...; \
+	else \
+		GOCACHE=$(CURDIR)/.gocache $(GO) test -v -race ./tests/integration/...; \
+	fi
 
 .PHONY: clean
 clean:
@@ -255,6 +284,14 @@ docker-admin:
 		--build-arg NEXT_PUBLIC_API_BASE=http://localhost:3000 \
 		-t $(IMAGE_PREFIX)/admin:$(TAG) .
 
+.PHONY: docker-admin-web
+docker-admin-web:
+	$(DOCKER) build \
+		-f web/admin/Dockerfile \
+		--build-arg NEXT_PUBLIC_API_BASE=http://localhost:3000 \
+		-t $(IMAGE_PREFIX)/admin-web:$(TAG) \
+		./web/admin
+
 .PHONY: docker-indexer
 docker-indexer:
 	$(DOCKER) build \
@@ -267,20 +304,8 @@ docker-controller:
 		-f Dockerfile.controller \
 		-t $(IMAGE_PREFIX)/controller:$(TAG) .
 
-.PHONY: docker-query
-docker-query:
-	$(DOCKER) build \
-		-f Dockerfile.query \
-		-t $(IMAGE_PREFIX)/query:$(TAG) .
-
-.PHONY: docker-reporter
-docker-reporter:
-	$(DOCKER) build \
-		-f Dockerfile.reporter \
-		-t $(IMAGE_PREFIX)/reporter:$(TAG) .
-
 .PHONY: docker-all
-docker-all: docker-admin docker-indexer docker-controller docker-query docker-reporter
+docker-all: docker-admin docker-admin-web docker-indexer docker-controller
 	@echo "✅ All Docker images built with tag $(TAG)"
 
 # ----------------------------
@@ -322,8 +347,7 @@ kind-ensure-registry:
 		echo ">> Registry already running, skipping"; \
 	fi
 
-# --- Kind tuned kubelet config (3 nodes: 1 cp + 2 workers) ---
-# --- Kind tuned kubelet config (3 nodes) + containerd certs.d for local registry ---
+# --- Kind tuned kubelet config (single node) + containerd certs.d for local registry ---
 define KIND_TUNED_CFG
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -336,26 +360,6 @@ containerdConfigPatches:
 
 nodes:
 - role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: KubeletConfiguration
-    imageGCHighThresholdPercent: 70
-    imageGCLowThresholdPercent: 50
-    evictionHard:
-      nodefs.available: "5%"
-      nodefs.inodesFree: "5%"
-
-- role: worker
-  kubeadmConfigPatches:
-  - |
-    kind: KubeletConfiguration
-    imageGCHighThresholdPercent: 70
-    imageGCLowThresholdPercent: 50
-    evictionHard:
-      nodefs.available: "5%"
-      nodefs.inodesFree: "5%"
-
-- role: worker
   kubeadmConfigPatches:
   - |
     kind: KubeletConfiguration
@@ -543,6 +547,155 @@ kind-purge: ## ⚠️ Aggressive cleanup: prune ALL unused Docker data (includes
 	@docker images 'kindest/node' -q | xargs -r docker rmi -f || true
 	@echo ">> Done. You can now recreate with 'make tilt-up' or 'make kind-up'."
 
+
+# ----------------------------
+# Canopy Local Node Management
+# ----------------------------
+
+.PHONY: canopy-reset-data canopy-scale-down
+
+# Reset Canopy node data by deleting the PVC
+# The PVC will be automatically recreated on next tilt-up with fresh data
+canopy-reset-data: ## Delete Canopy node data (PVC) - fresh start on next tilt-up
+	@echo ">> This will delete the Canopy node's blockchain data."
+	@echo ">> The data will be reset to genesis on next tilt-up."
+	@if [ "$(FORCE)" != "1" ]; then \
+		read -r -p "Proceed? [y/N] " ans; case $$ans in [yY]*) ;; *) echo "aborted."; exit 1;; esac; \
+	fi
+	@echo ">> Scaling down Canopy node..."
+	@kubectl scale deployment canopy-node --replicas=0 2>/dev/null || true
+	@echo ">> Waiting for pod to terminate..."
+	@kubectl wait --for=delete pod -l app=canopy-node --timeout=60s 2>/dev/null || true
+	@echo ">> Deleting PVC canopy-node-data..."
+	@kubectl delete pvc canopy-node-data --ignore-not-found
+	@echo ">> Done. Run 'tilt up' to recreate with fresh data."
+
+# Scale down Canopy node without deleting data (useful for maintenance)
+canopy-scale-down: ## Scale Canopy node to 0 replicas (preserves data)
+	@echo ">> Scaling down Canopy node to 0 replicas..."
+	@kubectl scale deployment canopy-node --replicas=0 2>/dev/null || echo "Canopy node not found (maybe not deployed?)"
+	@echo ">> Done. Data is preserved. Scale back up with 'kubectl scale deployment canopy-node --replicas=1'"
+
+# ----------------------------
+# Canopy transaction generators
+# ----------------------------
+
+CANOPY_TX_DATA_DIR        ?= $(PWD)/tmp/canopy-local-data
+CANOPY_TX_CLI             ?= canopy
+CANOPY_TX_PASSWORD        ?= test
+CANOPY_TX_NICKNAME        ?= test
+CANOPY_TX_SIGNER          ?= $(CANOPY_TX_NICKNAME)
+CANOPY_TX_STAKE_SIGNER    ?= $(CANOPY_TX_SIGNER)
+CANOPY_TX_RECEIVER        ?= a5d1e3bb22cf77a5d85b03e367f31270407056bb
+CANOPY_TX_OUTPUT          ?= 29d19c74ac51b199cc070181886bea5cad3f88c3
+CANOPY_TX_CHAIN_ID        ?= 1
+CANOPY_TX_FEE             ?= 10000
+CANOPY_TX_SIMULATE        ?= true
+CANOPY_TX_SEND_AMOUNT     ?= 100000
+CANOPY_TX_STAKE_AMOUNT    ?= 1000000000
+CANOPY_TX_EDIT_STAKE_AMT  ?= $(CANOPY_TX_STAKE_AMOUNT)
+CANOPY_TX_SUBSIDY_AMOUNT  ?= 500000000
+CANOPY_TX_DAO_AMOUNT      ?= 250000000
+CANOPY_TX_SELL_AMOUNT     ?= 100000
+CANOPY_TX_RECEIVE_AMOUNT  ?= 50000
+CANOPY_TX_COMMITTEES      ?= 1
+CANOPY_TX_NET_ADDR        ?= tcp://localhost:9001
+CANOPY_TX_SUBSIDY_OPCODE  ?= reward
+CANOPY_TX_ORDER_ID        ?= 0000000000000000000000000000000000000000000000000000000000000001
+CANOPY_TX_LOCK_RECEIVE    ?= $(CANOPY_TX_OUTPUT)
+CANOPY_TX_CREATE_DATA     ?=
+CANOPY_TX_DELEGATE        ?= false
+CANOPY_TX_EARLY_WITHDRAWAL ?= false
+CANOPY_TX_PARAM_SPACE     ?= cons
+CANOPY_TX_PARAM_KEY       ?= protocolVersion
+CANOPY_TX_PARAM_VALUE     ?= 1/0
+CANOPY_TX_PARAM_START     ?= 1
+CANOPY_TX_PARAM_END       ?= 100
+CANOPY_TX_POLL_FILE       ?= fixtures/canopy/sample_poll.json
+
+CANOPY_TX_RUN = $(CANOPY_TX_CLI) --data-dir $(CANOPY_TX_DATA_DIR) --nickname $(CANOPY_TX_NICKNAME) --password $(CANOPY_TX_PASSWORD) admin
+CANOPY_TX_DELEGATE_FLAG = $(if $(filter true,$(CANOPY_TX_DELEGATE)),--delegate,)
+CANOPY_TX_EARLY_FLAG    = $(if $(filter true,$(CANOPY_TX_EARLY_WITHDRAWAL)),--early-withdrawal,)
+
+.PHONY: canopy-tx-prepare-data canopy-tx-check-cli canopy-tx-env
+
+canopy-tx-prepare-data:
+	@python3 scripts/canopy_prepare_data.py --output $(CANOPY_TX_DATA_DIR)
+
+canopy-tx-check-cli:
+	@command -v $(CANOPY_TX_CLI) >/dev/null 2>&1 || (echo "canopy CLI not found: set CANOPY_TX_CLI to the canopy binary path"; exit 1)
+
+canopy-tx-env:
+	@echo "CLI:        $(CANOPY_TX_CLI)"
+	@echo "Data Dir:   $(CANOPY_TX_DATA_DIR)"
+	@echo "Signer:     $(CANOPY_TX_SIGNER)"
+	@echo "Receiver:   $(CANOPY_TX_RECEIVER)"
+	@echo "Simulate:   $(CANOPY_TX_SIMULATE)"
+
+.PHONY: canopy-tx-send canopy-tx-stake canopy-tx-edit-stake canopy-tx-unstake canopy-tx-pause \
+	canopy-tx-unpause canopy-tx-change-param canopy-tx-dao-transfer canopy-tx-subsidy \
+	canopy-tx-create-order canopy-tx-edit-order canopy-tx-delete-order canopy-tx-lock-order \
+	canopy-tx-close-order canopy-tx-start-poll canopy-tx-approve-poll canopy-tx-reject-poll \
+	canopy-tx-sim-basic canopy-tx-sim-all
+
+canopy-tx-send: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-send $(CANOPY_TX_SIGNER) $(CANOPY_TX_RECEIVER) $(CANOPY_TX_SEND_AMOUNT) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-stake: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-stake $(CANOPY_TX_SIGNER) $(CANOPY_TX_NET_ADDR) $(CANOPY_TX_STAKE_AMOUNT) $(CANOPY_TX_COMMITTEES) $(CANOPY_TX_OUTPUT) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE) $(CANOPY_TX_DELEGATE_FLAG) $(CANOPY_TX_EARLY_FLAG)
+
+canopy-tx-edit-stake: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-edit-stake $(CANOPY_TX_SIGNER) $(CANOPY_TX_NET_ADDR) $(CANOPY_TX_EDIT_STAKE_AMT) $(CANOPY_TX_COMMITTEES) $(CANOPY_TX_OUTPUT) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE) $(CANOPY_TX_DELEGATE_FLAG) $(CANOPY_TX_EARLY_FLAG)
+
+canopy-tx-unstake: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-unstake $(CANOPY_TX_SIGNER) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-pause: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-pause $(CANOPY_TX_SIGNER) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-unpause: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-unpause $(CANOPY_TX_SIGNER) $(CANOPY_TX_STAKE_SIGNER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-change-param: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-change-param $(CANOPY_TX_SIGNER) $(CANOPY_TX_PARAM_SPACE) $(CANOPY_TX_PARAM_KEY) $(CANOPY_TX_PARAM_VALUE) $(CANOPY_TX_PARAM_START) $(CANOPY_TX_PARAM_END) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-dao-transfer: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-dao-transfer $(CANOPY_TX_SIGNER) $(CANOPY_TX_DAO_AMOUNT) $(CANOPY_TX_PARAM_START) $(CANOPY_TX_PARAM_END) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-subsidy: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-subsidy $(CANOPY_TX_SIGNER) $(CANOPY_TX_SUBSIDY_AMOUNT) $(CANOPY_TX_CHAIN_ID) $(CANOPY_TX_SUBSIDY_OPCODE) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-create-order: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-create-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_SELL_AMOUNT) $(CANOPY_TX_RECEIVE_AMOUNT) $(CANOPY_TX_CHAIN_ID) $(CANOPY_TX_RECEIVER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE) $(if $(CANOPY_TX_CREATE_DATA),--data=$(CANOPY_TX_CREATE_DATA),)
+
+canopy-tx-edit-order: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-edit-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_SELL_AMOUNT) $(CANOPY_TX_RECEIVE_AMOUNT) $(CANOPY_TX_ORDER_ID) $(CANOPY_TX_CHAIN_ID) $(CANOPY_TX_RECEIVER) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-delete-order: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-delete-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_ORDER_ID) $(CANOPY_TX_CHAIN_ID) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-lock-order: canopy-tx-prepare-data canopy-tx-check-cli
+	@test -n "$(CANOPY_TX_ORDER_ID)" || (echo "Set CANOPY_TX_ORDER_ID before running tx-lock-order"; exit 1)
+	$(CANOPY_TX_RUN) tx-lock-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_LOCK_RECEIVE) $(CANOPY_TX_ORDER_ID) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-close-order: canopy-tx-prepare-data canopy-tx-check-cli
+	@test -n "$(CANOPY_TX_ORDER_ID)" || (echo "Set CANOPY_TX_ORDER_ID before running tx-close-order"; exit 1)
+	$(CANOPY_TX_RUN) tx-close-order $(CANOPY_TX_SIGNER) $(CANOPY_TX_ORDER_ID) --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-start-poll: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) tx-start-poll $(CANOPY_TX_SIGNER) "$$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' $(CANOPY_TX_POLL_FILE))" --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-approve-poll: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) approve-tx-vote-poll $(CANOPY_TX_SIGNER) "$$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' $(CANOPY_TX_POLL_FILE))" --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+canopy-tx-reject-poll: canopy-tx-prepare-data canopy-tx-check-cli
+	$(CANOPY_TX_RUN) reject-tx-vote-poll $(CANOPY_TX_SIGNER) "$$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))))' $(CANOPY_TX_POLL_FILE))" --fee=$(CANOPY_TX_FEE) --simulate=$(CANOPY_TX_SIMULATE)
+
+CANOPY_TX_BASIC_TARGETS = canopy-tx-send canopy-tx-stake canopy-tx-edit-stake canopy-tx-unstake canopy-tx-pause canopy-tx-unpause canopy-tx-change-param canopy-tx-dao-transfer canopy-tx-subsidy canopy-tx-create-order canopy-tx-edit-order canopy-tx-delete-order canopy-tx-start-poll canopy-tx-approve-poll canopy-tx-reject-poll
+
+canopy-tx-sim-basic: $(CANOPY_TX_BASIC_TARGETS)
+
+canopy-tx-sim-all: canopy-tx-sim-basic canopy-tx-lock-order canopy-tx-close-order
 
 # ----------------------------
 # Tilt

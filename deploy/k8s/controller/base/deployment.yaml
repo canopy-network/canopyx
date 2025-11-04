@@ -30,8 +30,8 @@ spec:
             - { name: INDEXER_HPA_MIN, value: "1" }
             - { name: INDEXER_HPA_MAX, value: "3" }
             - { name: INDEXER_HPA_CPU_TARGET, value: "80" }
-            - { name: INDEXER_CPU, value: "1000m" }
-            - { name: INDEXER_MEM, value: "256Mi" }
+            - { name: INDEXER_CPU, value: "2000m" }
+            - { name: INDEXER_MEM, value: "2Gi" }
             - { name: TEMPORAL_TASK_QUEUE_PREFIX, value: "index:" }
             - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.default.svc.cluster.local:7233" }
             - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
@@ -42,6 +42,11 @@ spec:
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
             - { name: REPORTS_DB, value: "canopyx_reports" }
+            # Redis (real-time event notifications)
+            - { name: REDIS_HOST, value: "redis-master.default.svc.cluster.local" }
+            - { name: REDIS_PORT, value: "6379" }
+            - { name: REDIS_PASSWORD, value: "canopy-redis-dev" }
+            - { name: REDIS_DB, value: "0" }
             # Kind of Provider:
             # Switch this to fake if you want to locally run the indexer or run it manually controller act
             - { name: PROVIDER, value: "k8s" }
@@ -49,3 +54,20 @@ spec:
           ports:
             - name: http
               containerPort: 3002
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3002
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3002
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3

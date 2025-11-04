@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
-
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // HeadBlock represents the response from the /v1/query/height endpoint.
@@ -74,32 +71,21 @@ type BlockByHeight struct {
 	} `json:"meta"`
 }
 
-// ToBlockModel converts a BlockByHeight to a BlockModel.
-func (bbh *BlockByHeight) ToBlockModel() *indexer.Block {
-	return &indexer.Block{
-		Height:          bbh.BlockHeader.Height,
-		Hash:            bbh.BlockHeader.Hash,
-		Time:            time.UnixMicro(bbh.BlockHeader.Time),
-		LastBlockHash:   bbh.BlockHeader.LastBlockHash,
-		ProposerAddress: bbh.BlockHeader.ProposerAddress,
-		Size:            bbh.Meta.Size,
-	}
-}
-
 // ChainHead returns the height of the chain head.
 func (c *HTTPClient) ChainHead(ctx context.Context) (uint64, error) {
 	var resp HeadBlock
-	err := c.doJSON(ctx, http.MethodPost, headPath, map[string]any{}, &resp)
+	err := c.doJSON(ctx, http.MethodPost, headPath, EmptyRequest{}, &resp)
 	if err == nil && resp.Height > 0 {
 		return resp.Height, nil
 	}
 	return uint64(0), fmt.Errorf("cannot probe head %v", err)
 }
 
-// BlockByHeight returns the block at the given height.
-func (c *HTTPClient) BlockByHeight(ctx context.Context, h uint64) (*indexer.Block, error) {
+// BlockByHeight returns the raw RPC block at the given height.
+// Callers should convert to indexer models using ToBlockModel() if needed.
+func (c *HTTPClient) BlockByHeight(ctx context.Context, h uint64) (*BlockByHeight, error) {
 	var out BlockByHeight
-	if err := c.doJSON(ctx, http.MethodPost, blockByHeightPath, map[string]any{"height": h}, &out); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, blockByHeightPath, QueryByHeightRequest{Height: h}, &out); err != nil {
 		return nil, err
 	}
 
@@ -113,5 +99,5 @@ func (c *HTTPClient) BlockByHeight(ctx context.Context, h uint64) (*indexer.Bloc
 		return nil, errors.New("block size is zero (means that probably is not ready yet to be indexed)")
 	}
 
-	return out.ToBlockModel(), nil
+	return &out, nil
 }

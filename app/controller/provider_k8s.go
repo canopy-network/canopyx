@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,6 +95,8 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 		{Name: "TEMPORAL_NAMESPACE", Value: mustEnv("TEMPORAL_NAMESPACE")},
 
 		{Name: "CLICKHOUSE_ADDR", Value: mustEnv("CLICKHOUSE_ADDR")},
+
+		{Name: "REDIS_HOST", Value: mustEnv("REDIS_HOST")},
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "LOG_LEVEL", Value: v})
@@ -108,6 +109,22 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 	}
 	if v := os.Getenv("REPORTS_DB"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "REPORTS_DB", Value: v})
+	}
+	if v := os.Getenv("REDIS_PORT"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "REDIS_PORT", Value: v})
+	}
+	// REDIS_PASSWORD: Read from Kubernetes secret for security
+	env = append(env, corev1.EnvVar{
+		Name: "REDIS_PASSWORD",
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "redis"},
+				Key:                  "redis-password",
+			},
+		},
+	})
+	if v := os.Getenv("REDIS_DB"); v != "" {
+		env = append(env, corev1.EnvVar{Name: "REDIS_DB", Value: v})
 	}
 
 	// Optional CPU/Memory
@@ -166,7 +183,12 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 // EnsureChain ensures a Kubernetes Deployment exists for the specified chain, updating or creating it as necessary.
 func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 	start := time.Now()
-	name := deploymentName(c.ID)
+	chainIDUint, parseErr := strconv.ParseUint(c.ID, 10, 64)
+	if parseErr != nil {
+		p.Logger.Error("invalid chain ID format", zap.String("chain_id", c.ID), zap.Error(parseErr))
+		return fmt.Errorf("invalid chain ID: %w", parseErr)
+	}
+	name := deploymentName(chainIDUint)
 	labels := map[string]string{
 		"app":        "indexer",
 		"managed-by": "canopyx-controller",
@@ -180,7 +202,11 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		case "CHAIN_ID":
 			env = append(env, corev1.EnvVar{Name: "CHAIN_ID", Value: c.ID})
 		case "TASK_QUEUE":
-			env = append(env, corev1.EnvVar{Name: "TASK_QUEUE", Value: p.tqPrefix + c.ID})
+			queueName := c.TaskQueue
+			if queueName == "" {
+				queueName = p.tqPrefix + c.ID
+			}
+			env = append(env, corev1.EnvVar{Name: "TASK_QUEUE", Value: queueName})
 		default:
 			env = append(env, e)
 		}
@@ -189,13 +215,19 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 
 	replicas := int32(0)
 	if !c.Paused && !c.Deleted {
-		replicas = p.replicas
+		if c.Replicas > 0 {
+			replicas = c.Replicas
+		} else {
+			replicas = p.replicas
+		}
 	}
 
-	image := p.image
-
-	if p.tag != "" {
-		image = fmt.Sprintf("%s:%s", p.image, p.tag)
+	image := strings.TrimSpace(c.Image)
+	if image == "" {
+		image = p.image
+		if p.tag != "" {
+			image = fmt.Sprintf("%s:%s", p.image, p.tag)
+		}
 	}
 
 	desired := &appsv1.Deployment{
@@ -219,9 +251,10 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Name:  "indexer",
-						Image: image,
-						Env:   env,
+						Name:            "indexer",
+						Image:           image,
+						ImagePullPolicy: corev1.PullAlways,
+						Env:             env,
 						Resources: func() corev1.ResourceRequirements {
 							if p.resReq != nil {
 								return *p.resReq
@@ -273,7 +306,7 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 
 	// HPA
 	if p.enableHPA {
-		if err := p.ensureHPA(ctx, name, replicas, labels); err != nil {
+		if err := p.ensureHPA(ctx, name, labels, c); err != nil {
 			p.Logger.Error("hpa ensure failed", zap.String("deployment", name), zap.Error(err))
 			return err
 		}
@@ -295,7 +328,12 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 
 // PauseChain scales down the Kubernetes deployment associated with the given chainID to zero replicas, effectively pausing it.
 func (p *K8sProvider) PauseChain(ctx context.Context, chainID string) error {
-	name := deploymentName(chainID)
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		p.Logger.Error("invalid chain ID format", zap.String("chain_id", chainID), zap.Error(parseErr))
+		return fmt.Errorf("invalid chain ID: %w", parseErr)
+	}
+	name := deploymentName(chainIDUint)
 	p.Logger.Info("pause requested", zap.String("chain_id", chainID), zap.String("deployment", name))
 
 	deploy, err := p.client.AppsV1().Deployments(p.ns).Get(ctx, name, meta.GetOptions{})
@@ -323,7 +361,12 @@ func (p *K8sProvider) PauseChain(ctx context.Context, chainID string) error {
 // DeleteChain removes the Kubernetes resources associated with a specific chain by its chainID.
 // It deletes the deployment and its corresponding horizontal pod autoscaler, if present.
 func (p *K8sProvider) DeleteChain(ctx context.Context, chainID string) error {
-	name := deploymentName(chainID)
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		p.Logger.Error("invalid chain ID format", zap.String("chain_id", chainID), zap.Error(parseErr))
+		return fmt.Errorf("invalid chain ID: %w", parseErr)
+	}
+	name := deploymentName(chainIDUint)
 	p.Logger.Info("delete requested", zap.String("chain_id", chainID), zap.String("deployment", name))
 
 	_ = p.client.AutoscalingV2().HorizontalPodAutoscalers(p.ns).Delete(ctx, name, meta.DeleteOptions{})
@@ -337,6 +380,114 @@ func (p *K8sProvider) DeleteChain(ctx context.Context, chainID string) error {
 	return nil
 }
 
+// GetDeploymentHealth checks the health status of a chain's deployment by inspecting
+// the Kubernetes deployment and pod status.
+func (p *K8sProvider) GetDeploymentHealth(ctx context.Context, chainID string) (status, message string, err error) {
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return "unknown", fmt.Sprintf("invalid chain ID format: %v", parseErr), parseErr
+	}
+	name := deploymentName(chainIDUint)
+
+	// Get the deployment
+	deploy, err := p.client.AppsV1().Deployments(p.ns).Get(ctx, name, meta.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return "unknown", fmt.Sprintf("deployment %s not found", name), nil
+	}
+	if err != nil {
+		return "unknown", fmt.Sprintf("failed to get deployment: %v", err), err
+	}
+
+	// Check if deployment exists but has no replicas specified (should not happen)
+	if deploy.Spec.Replicas == nil {
+		return "degraded", "deployment has no replica spec", nil
+	}
+
+	desiredReplicas := *deploy.Spec.Replicas
+	readyReplicas := deploy.Status.ReadyReplicas
+	availableReplicas := deploy.Status.AvailableReplicas
+	updatedReplicas := deploy.Status.UpdatedReplicas
+	unavailableReplicas := deploy.Status.UnavailableReplicas
+
+	// If desired replicas is 0, this is expected (paused state)
+	if desiredReplicas == 0 {
+		return "healthy", "deployment is paused (0 replicas desired)", nil
+	}
+
+	// Check for various failure conditions
+	conditions := deploy.Status.Conditions
+	for _, condition := range conditions {
+		// Check for Progressing=False which indicates deployment is stuck
+		if condition.Type == appsv1.DeploymentProgressing &&
+			condition.Status == corev1.ConditionFalse &&
+			condition.Reason == "ProgressDeadlineExceeded" {
+			return "failed", fmt.Sprintf("deployment progress deadline exceeded: %s", condition.Message), nil
+		}
+
+		// Check for Available=False which indicates deployment is not available
+		if condition.Type == appsv1.DeploymentAvailable &&
+			condition.Status == corev1.ConditionFalse {
+			return "failed", fmt.Sprintf("deployment not available: %s", condition.Message), nil
+		}
+	}
+
+	// If no pods are ready but some are desired, check pod status for more details
+	if readyReplicas == 0 && desiredReplicas > 0 {
+		// Get pods for this deployment
+		labelSelector := fmt.Sprintf("app=indexer,chain=%s", chainID)
+		pods, err := p.client.CoreV1().Pods(p.ns).List(ctx, meta.ListOptions{
+			LabelSelector: labelSelector,
+		})
+		if err == nil && len(pods.Items) > 0 {
+			// Check for common failure states in pods
+			for _, pod := range pods.Items {
+				for _, containerStatus := range pod.Status.ContainerStatuses {
+					if waiting := containerStatus.State.Waiting; waiting != nil {
+						if waiting.Reason == "CrashLoopBackOff" ||
+							waiting.Reason == "ImagePullBackOff" ||
+							waiting.Reason == "ErrImagePull" {
+							return "failed", fmt.Sprintf("0/%d replicas ready, pod error: %s - %s",
+								desiredReplicas, waiting.Reason, waiting.Message), nil
+						}
+					}
+					if terminated := containerStatus.State.Terminated; terminated != nil {
+						if terminated.ExitCode != 0 {
+							return "failed", fmt.Sprintf("0/%d replicas ready, pod terminated with exit code %d: %s",
+								desiredReplicas, terminated.ExitCode, terminated.Reason), nil
+						}
+					}
+				}
+			}
+		}
+
+		return "failed", fmt.Sprintf("0/%d replicas ready", desiredReplicas), nil
+	}
+
+	// Check if all replicas are ready and updated
+	if readyReplicas == desiredReplicas &&
+		availableReplicas == desiredReplicas &&
+		updatedReplicas == desiredReplicas &&
+		unavailableReplicas == 0 {
+		return "healthy", fmt.Sprintf("%d/%d replicas ready", readyReplicas, desiredReplicas), nil
+	}
+
+	// Partial readiness - degraded state
+	if readyReplicas > 0 && readyReplicas < desiredReplicas {
+		return "degraded", fmt.Sprintf("%d/%d replicas ready (expected %d)",
+			readyReplicas, desiredReplicas, desiredReplicas), nil
+	}
+
+	// Replicas are ready but not all updated (rolling update in progress)
+	if readyReplicas == desiredReplicas && updatedReplicas < desiredReplicas {
+		return "degraded", fmt.Sprintf("%d/%d replicas ready, %d/%d updated (rolling update in progress)",
+			readyReplicas, desiredReplicas, updatedReplicas, desiredReplicas), nil
+	}
+
+	// Default to degraded if we don't have perfect health
+	return "degraded", fmt.Sprintf("replicas: %d ready, %d available, %d updated, %d unavailable (desired: %d)",
+		readyReplicas, availableReplicas, updatedReplicas, unavailableReplicas, desiredReplicas), nil
+}
+
 // Close releases resources or performs cleanup tasks associated with the K8sProvider instance.
 func (p *K8sProvider) Close() error {
 	p.Logger.Info("provider closed")
@@ -344,11 +495,19 @@ func (p *K8sProvider) Close() error {
 }
 
 // ensureHPA ensures that the given HPA exists and is configured as expected.
-func (p *K8sProvider) ensureHPA(ctx context.Context, name string, replicas int32, labels map[string]string) error {
+func (p *K8sProvider) ensureHPA(ctx context.Context, name string, labels map[string]string, c *Chain) error {
 	start := time.Now()
 
-	hpaMin := p.hpaMin
-	hpaMax := p.hpaMax
+	replicas := c.Replicas
+
+	hpaMin := c.MinReplicas
+	if hpaMin < 0 {
+		hpaMin = 0
+	}
+	hpaMax := c.MaxReplicas
+	if hpaMax < hpaMin {
+		hpaMax = hpaMin
+	}
 	if replicas == 0 {
 		hpaMin = 0 // allow paused Deployments without HPA fighting scale-to-zero
 	}
@@ -450,8 +609,6 @@ func (p *K8sProvider) ensureHPA(ctx context.Context, name string, replicas int32
 
 // ---- utils ------------------------------------------------------------------
 
-var dns1123 = regexp.MustCompile(`[^a-z0-9\-]+`)
-
 // mustEnv panics if the given env var is not set.
 func mustEnv(key string) string {
 	v := os.Getenv(key)
@@ -492,15 +649,10 @@ func int32FromEnv(key string, def int32) int32 {
 func int32Ptr(i int32) *int32 { return &i }
 
 // deploymentName generates a DNS-compliant deployment name based on the given chainID, ensuring it meets K8s constraints.
-func deploymentName(chainID string) string {
-	s := strings.ToLower(chainID)
-	s = strings.ReplaceAll(s, "_", "-")
-	s = strings.ReplaceAll(s, ".", "-")
-	s = dns1123.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if len(s) == 0 {
-		s = "chain"
-	}
+func deploymentName(chainID uint64) string {
+	// Convert uint64 to string for DNS name generation
+	s := strconv.FormatUint(chainID, 10)
+	// Numeric strings are already DNS-compliant, no need for complex transformations
 	if !strings.HasPrefix(s, "canopyx-indexer-") {
 		s = "canopyx-indexer-" + s
 	}

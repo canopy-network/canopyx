@@ -2,22 +2,16 @@ package controller
 
 import (
 	"net/http"
-	"path"
-	"path/filepath"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/utils"
+	"github.com/canopy-network/canopyx/app/admin/controller/types"
 	"github.com/go-jose/go-jose/v4/json"
-	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // HandleAdminLogin handles admin login
 func (c *Controller) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
+	var in types.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "bad json"})
@@ -51,34 +45,4 @@ func (c *Controller) HandleAdminLogout(w http.ResponseWriter, _ *http.Request) {
 		Expires:  time.Unix(0, 0),
 	})
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// LoadAdminUI loads the admin UI
-func (c *Controller) LoadAdminUI(r *mux.Router) error {
-	defaultAdminWebPath := path.Join("web", "admin", "out")
-	uiPath := utils.Env("ADMIN_STATIC_DIR", defaultAdminWebPath)
-
-	// Static admin UI (filesystem-based, optional)
-	if uiPath == "" {
-		// do nothing if no path provided
-		return nil
-	}
-
-	absolutePath, err := filepath.Abs(uiPath)
-	if err != nil {
-		return err
-	}
-
-	// Admin API - Login/Logout are only available when the static admin UI is enabled
-	r.HandleFunc("/auth/login", c.HandleAdminLogin).Methods(http.MethodPost)
-	r.HandleFunc("/auth/logout", c.HandleAdminLogout).Methods(http.MethodPost)
-
-	// TODO: add a way to redirect from /admin to /admin/
-	fs := http.FileServer(http.Dir(absolutePath)) // dir should point to the Next.js 'out' folder
-	// Next assets live under /admin/_next/*
-	r.PathPrefix("/_next/").Handler(fs)
-	// App routes (exported files) live under /admin/*
-	r.PathPrefix("/").Handler(fs)
-
-	return nil
 }

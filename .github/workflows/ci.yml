@@ -1,12 +1,28 @@
 name: CI
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      VERSION:
+        description: 'The application version (e.g., v1.0.0)'
+        required: true
+        type: string
+      PUSH:
+        description: 'Should push to Registry?'
+        required: true
+        type: boolean
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  packages: write
+  contents: read
 
 jobs:
   go-lint:
@@ -14,29 +30,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.24.x'
           cache: true
 
       - name: GolangCI-Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.60.3
-          args: --timeout=5m
+          version: v2.1
+          args: ./app/... ./cmd/... ./pkg/... --tests=false --timeout=5m
 
   go-fmt-check:
     name: Go Format Check (gofmt + goimports)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.24.x'
           cache: true
@@ -62,36 +78,77 @@ jobs:
             exit 1
           fi
 
-
   docker-build:
-    name: Docker Build (no push)
+    name: Docker Build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         image:
-          - { name: admin,      file: Dockerfile.admin,      build-args: "" }
-          - { name: indexer,    file: Dockerfile.indexer,    build-args: "" }
-          - { name: controller, file: Dockerfile.controller, build-args: "" }
-          - { name: query,      file: Dockerfile.query,      build-args: "" }
-          - { name: reporter,   file: Dockerfile.reporter,   build-args: "" }
+          - { name: admin,      file: Dockerfile.admin,      context: ".",           build-args: "" }
+          - { name: admin-web,  file: web/admin/Dockerfile,  context: "./web/admin", build-args: "" }
+          - { name: indexer,    file: Dockerfile.indexer,    context: ".",           build-args: "" }
+          - { name: controller, file: Dockerfile.controller, context: ".",           build-args: "" }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Set Application Name and Version
+        id: set-vars
+        run: |
+          if [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event_name }}" == "pull_request" ]; then
+            # Extract version from the ref name
+            VERSION="${GITHUB_REF_NAME##*-}"
+          else
+            # Use inputs from workflow_dispatch event
+            VERSION="${{ inputs.VERSION }}"
+
+            # Ensure VERSION is provided
+            if [ -z "$VERSION" ]; then
+              echo "Error: VERSION must be provided when triggering manually."
+              exit 1
+            fi
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Formatted VERSION: $VERSION"
+
+      - name: Log Parsed Variables
+        run: |
+          echo "Version: $VERSION"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/canopyx/${{ matrix.image.name }}
+          tags: |
+            # set latest tag for default branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=match,pattern=v(.*),group=1,value=${{ env.VERSION }}
 
       - name: Build ${{ matrix.image.name }}
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.image.context }}
           file: ${{ matrix.image.file }}
-          push: false
-          load: false
-          provenance: false
-          tags: canopyx/${{ matrix.image.name }}:ci
+          push: ${{ github.event_name == 'push' && github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' && inputs.PUSH }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ matrix.image.build-args }}
+          load: true
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

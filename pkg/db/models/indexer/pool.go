@@ -1,0 +1,74 @@
+package indexer
+
+import (
+	"math"
+	"time"
+)
+
+const PoolsProductionTableName = "pools"
+const PoolsStagingTableName = "pools_staging"
+
+// Pool ID calculation constants (from Canopy blockchain logic)
+const (
+	MaxChainID          = uint64(math.MaxUint16 / 4)
+	HoldingPoolAddend   = uint64(1 * math.MaxUint16 / 4)
+	LiquidityPoolAddend = uint64(2 * math.MaxUint16 / 4)
+	EscrowPoolAddend    = uint64(4 * math.MaxUint16 / 4)
+)
+
+// Pool stores pool state snapshots at each height.
+// Uses snapshot-on-change pattern: a new row is created only when pool state changes.
+// ReplacingMergeTree deduplicates by (pool_id, height), keeping the latest state.
+//
+// Query patterns:
+//   - Latest state: SELECT * FROM pools FINAL WHERE pool_id = ? ORDER BY height DESC LIMIT 1
+//   - Historical state: SELECT * FROM pools FINAL WHERE pool_id = ? AND height <= ? ORDER BY height DESC LIMIT 1
+//   - All pools at height: SELECT * FROM pools FINAL WHERE height <= ? GROUP BY pool_id HAVING height = max(height)
+type Pool struct {
+	// Primary key - composite key for deduplication
+	PoolID uint64 `ch:"pool_id" json:"pool_id"`
+	Height uint64 `ch:"height" json:"height"`
+
+	// Chain identifier for multi-chain support
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
+	// Pool state fields
+	Amount      uint64 `ch:"amount" json:"amount"`             // Total amount in pool
+	TotalPoints uint64 `ch:"total_points" json:"total_points"` // Total pool points
+	LPCount     uint32 `ch:"lp_count" json:"lp_count"`         // Number of liquidity providers
+
+	// Time fields for range queries
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp
+
+	// Calculated pool IDs for different pool types
+	// These IDs are calculated using: Addend + ChainID
+	LiquidityPoolID uint64 `ch:"liquidity_pool_id" json:"liquidity_pool_id"` // LiquidityPoolAddend + ChainID
+	HoldingPoolID   uint64 `ch:"holding_pool_id" json:"holding_pool_id"`     // HoldingPoolAddend + ChainID
+	EscrowPoolID    uint64 `ch:"escrow_pool_id" json:"escrow_pool_id"`       // EscrowPoolAddend + ChainID
+	RewardPoolID    uint64 `ch:"reward_pool_id" json:"reward_pool_id"`       // Same as ChainID
+}
+
+// CalculatePoolIDs populates the calculated pool ID fields based on the ChainID.
+// This should be called after setting the ChainID field.
+func (p *Pool) CalculatePoolIDs() {
+	p.LiquidityPoolID = LiquidityPoolAddend + p.ChainID
+	p.HoldingPoolID = HoldingPoolAddend + p.ChainID
+	p.EscrowPoolID = EscrowPoolAddend + p.ChainID
+	p.RewardPoolID = p.ChainID
+}
+
+// ExtractChainIDFromPoolID extracts the chain ID from a pool ID.
+// Pool IDs are encoded as: TypeAddend + ChainID
+// where TypeAddend is 0 (reward), 16384 (holding), 32768 (liquidity), or 65536 (escrow)
+func ExtractChainIDFromPoolID(poolID uint64) uint64 {
+	switch {
+	case poolID >= EscrowPoolAddend:
+		return poolID - EscrowPoolAddend
+	case poolID >= LiquidityPoolAddend:
+		return poolID - LiquidityPoolAddend
+	case poolID >= HoldingPoolAddend:
+		return poolID - HoldingPoolAddend
+	default:
+		return poolID // Reward pool: ID = ChainID
+	}
+}

@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopy-node-3
+  labels:
+    app: canopy-node
+    node-id: "3"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: canopy-node
+      node-id: "3"
+  template:
+    metadata:
+      labels:
+        app: canopy-node
+        node-id: "3"
+    spec:
+      hostAliases:
+      - ip: "127.0.0.1"
+        hostnames:
+        - "node-3"
+      initContainers:
+      - name: setup-writable-files
+        image: busybox:latest
+        command: ['sh', '-c']
+        args:
+          - |
+            # Copy read-only ConfigMap files to writable data volume
+            cp /mnt/keystore-ro/book.json /mnt/keystore-rw/book.json
+            cp /mnt/keystore-ro/polls.json /mnt/keystore-rw/polls.json
+            cp /mnt/keystore-ro/proposals.json /mnt/keystore-rw/proposals.json
+            echo "Writable keystore files copied successfully"
+        volumeMounts:
+          - name: keystore-files
+            mountPath: /mnt/keystore-ro
+            readOnly: true
+          - name: writable-keystore
+            mountPath: /mnt/keystore-rw
+      containers:
+      - name: canopy
+        image: localhost:5001/canopy-node:latest
+        command: ["/app/bin", "start"]
+        ports:
+          - containerPort: 30000
+            name: wallet
+            protocol: TCP
+          - containerPort: 30001
+            name: explorer
+            protocol: TCP
+          - containerPort: 30002
+            name: rpc
+            protocol: TCP
+          - containerPort: 30003
+            name: admin
+            protocol: TCP
+          - containerPort: 9003
+            name: p2p
+            protocol: TCP
+          - containerPort: 9090
+            name: prometheus
+            protocol: TCP
+        volumeMounts:
+          - name: config
+            mountPath: /root/.canopy/config.json
+            subPath: config.json
+          - name: genesis
+            mountPath: /root/.canopy/genesis.json
+            subPath: genesis.json
+          - name: keystore-files
+            mountPath: /root/.canopy/keystore.json
+            subPath: keystore.json
+          - name: keystore-files
+            mountPath: /root/.canopy/validator_key.json
+            subPath: validator_key.json
+          - name: writable-keystore
+            mountPath: /root/.canopy/book.json
+            subPath: book.json
+          - name: writable-keystore
+            mountPath: /root/.canopy/polls.json
+            subPath: polls.json
+          - name: writable-keystore
+            mountPath: /root/.canopy/proposals.json
+            subPath: proposals.json
+          - name: data
+            mountPath: /root/.canopy/canopy
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+        - name: config
+          configMap:
+            name: canopy-node-3-config
+        - name: genesis
+          configMap:
+            name: canopy-node-3-genesis
+        - name: keystore-files
+          configMap:
+            name: canopy-node-3-keystore
+        - name: data
+          emptyDir: {}
+        - name: writable-keystore
+          emptyDir: {}

@@ -35,6 +35,8 @@ func main() {
 		}
 		provider = p
 	case "fake":
+		logger.Info("using fake provider")
+		provider = controller.NewFakeProvider(logger)
 	default:
 		logger.Info("using fake provider")
 		provider = controller.NewFakeProvider(logger)

@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      # Scrape ALL Kubernetes pods with prometheus.io annotations
+      # This includes: Temporal (frontend, history, matching, worker), ClickHouse, Cassandra
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Only scrape pods with prometheus.io/scrape=true annotation
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+
+          # Use custom metrics path if specified, otherwise default to /metrics
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+
+          # Use annotated port for scraping
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::[0-9]+)?;([0-9]+)
+            replacement: $1:$2
+            target_label: __address__
+
+          # Add pod name as label
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod
+
+          # Add namespace as label
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: namespace
+
+          # Use prometheus.io/job annotation for job label if present
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_job]
+            action: replace
+            target_label: job
+            regex: (.+)
+
+          # Add pod labels as metric labels
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)

@@ -1,0 +1,129 @@
+# Minimal Temporal with Cassandra + Elasticsearch
+# Let the chart use its defaults with minimal overrides
+
+# Use Cassandra
+cassandra:
+  enabled: true
+  config:
+    cluster_size: 1
+    max_heap_size: 8G
+    heap_new_size: 1600M
+    # Optimize for high write throughput
+    concurrent_writes: 256      # Doubled from default 128
+    concurrent_reads: 128       # Doubled from default 64
+  persistence:
+    enabled: true
+    size: 50Gi
+  # NOTE: The Helm incubator Cassandra chart doesn't support persistentVolumeClaimRetentionPolicy
+  # PVCs must be manually deleted: kubectl delete pvc -l app.kubernetes.io/instance=temporal
+
+  # Enable Cassandra Prometheus exporter
+  exporter:
+    enabled: true
+    servicemonitor: false  # Disable ServiceMonitor, use pod annotations instead
+    port: 5556
+  # Add Prometheus annotations for pod discovery
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5556"
+    prometheus.io/path: "/metrics"
+
+# Use Elasticsearch
+elasticsearch:
+  enabled: true
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 20Gi
+  # NOTE: The Elastic Elasticsearch chart doesn't support persistentVolumeClaimRetentionPolicy
+  # PVCs must be manually deleted: kubectl delete pvc -l app.kubernetes.io/instance=temporal
+  imageTag: 7.17.18
+  # Fix for cgroup v2 on newer kernels + resource constraints
+  esJavaOpts: "-Xmx1g -Xms1g"
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+  sysctlInitContainer:
+    enabled: true
+
+# Disable PostgreSQL
+postgresql:
+  enabled: false
+
+# Disable MySQL
+mysql:
+  enabled: false
+
+# Server config
+server:
+  replicaCount: 3  # Scale to 3 replicas for higher throughput
+
+  # Add Prometheus annotations for all Temporal services (frontend, history, matching, worker)
+  # All services expose metrics on port 9090 by default
+  frontend:
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+      prometheus.io/job: "temporal-frontend"
+
+  history:
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+      prometheus.io/job: "temporal-history"
+
+  matching:
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+      prometheus.io/job: "temporal-matching"
+
+  worker:
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9090"
+      prometheus.io/path: "/metrics"
+      prometheus.io/job: "temporal-worker"
+
+  config:
+    numHistoryShards: 512
+
+    # Increase rate limits for high-throughput (aggressive scaling)
+    # Goal: Find system stability limits, not rate limit bottlenecks
+    limits:
+      rpc:
+        frontend:
+          rps: 500000   # 5x increase - test frontend capacity
+        history:
+          rps: 1000000  # 5x increase - history writes are critical
+        matching:
+          rps: 500000   # 3.3x increase - PRIMARY bottleneck for scheduling
+        worker:
+          rps: 200000   # 4x increase - worker task scheduling
+
+      # Per-namespace rate limits (applies to all namespaces)
+      # These control workflow execution rate within each namespace
+      namespaceStateRPS: 500000     # 5x increase - namespace state changes/sec
+      namespaceRPS: 500000          # 5x increase - overall namespace operations/sec
+      namespaceActionRPS: 500000    # 5x increase - namespace actions/sec
+
+# Auto-register canopyx namespace on startup
+defaultNamespaces:
+  - name: canopyx
+    retention: 168h  # 7 days
+    archivalState:
+      history: Disabled
+      visibility: Disabled
+
+# Disable monitoring for dev
+prometheus:
+  enabled: false
+grafana:
+  enabled: false

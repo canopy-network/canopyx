@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopyx-admin-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: canopyx-admin-web
+  template:
+    metadata:
+      labels:
+        app: canopyx-admin-web
+    spec:
+      containers:
+        - name: admin-web
+          image: localhost:5001/canopyx-admin-web
+          env:
+            # Backend API endpoint for server-side proxy routes
+            # These are used by /app/api/admin/[...path]/route.ts
+            - name: ADMIN_API_BASE
+              value: "http://canopyx-admin.default.svc.cluster.local:3000"
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3003"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+          ports:
+            - name: http
+              containerPort: 3003
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3003
+            initialDelaySeconds: 5
+            periodSeconds: 5

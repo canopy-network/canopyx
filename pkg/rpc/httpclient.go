@@ -13,11 +13,7 @@ import (
 	"github.com/canopy-network/canopyx/pkg/utils"
 )
 
-const (
-	headPath          = "/v1/query/height"
-	blockByHeightPath = "/v1/query/block-by-height"
-	txsByHeightPath   = "/v1/query/txs-by-height"
-)
+// Path constants moved to paths.go for centralized management
 
 // HTTPClient is a wrapper around an http.Client that implements a circuit-breaker and token-bucket.
 type HTTPClient struct {
@@ -47,6 +43,7 @@ type Opts struct {
 	Burst           int
 	BreakerFailures int
 	BreakerCooldown time.Duration
+	HTTPClient      *http.Client
 }
 
 // NewHTTPWithOpts creates a new HTTPClient with the given options.
@@ -67,9 +64,16 @@ func NewHTTPWithOpts(o Opts) *HTTPClient {
 		o.BreakerCooldown = 5 * time.Second
 	}
 
+	client := o.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: o.Timeout}
+	} else if client.Timeout == 0 {
+		client.Timeout = o.Timeout
+	}
+
 	c := &HTTPClient{
 		endpoints:        utils.Dedup(o.Endpoints),
-		client:           &http.Client{Timeout: o.Timeout},
+		client:           client,
 		maxTokens:        int64(o.Burst),
 		refillEvery:      time.Second / time.Duration(o.RPS),
 		failures:         map[string]int{},
@@ -199,29 +203,18 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, payload an
 				continue
 			}
 
-			// raw can be a primitive (like `12345`) or an object
-			// re-unmarshal accordingly into your out
-			if len(raw) > 0 && raw[0] != '{' && raw[0] != '[' {
-				// likely a bare number/string → wrap into object if your `out` expects struct
-				// e.g. {"height": <raw>}
-				wrapped := []byte(`{"height":` + string(raw) + `}`)
-				if err := json.Unmarshal(wrapped, out); err != nil {
-					lastErr = err
-					continue
-				}
-			} else {
-				if err := json.Unmarshal(raw, out); err != nil {
-					lastErr = err
-					continue
-				}
+			// Unmarshal the raw response directly into the output
+			if err := json.Unmarshal(raw, out); err != nil {
+				lastErr = err
+				continue
 			}
 		}
 
 		// Success: drain+close (close error rarely actionable; log if you want).
-		if cerr := utils.DrainAndClose(resp.Body); cerr != nil && lastErr == nil {
-			lastErr = cerr
+		if cerr := utils.DrainAndClose(resp.Body); cerr != nil {
+			return cerr
 		}
-		return lastErr
+		return nil
 	}
 
 	return lastErr
@@ -241,7 +234,7 @@ type pageResp[T any] struct {
 }
 
 // ListPaged lists all pages of a given path
-func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args map[string]any) ([]T, error) {
+func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args any) ([]T, error) {
 	var first pageResp[T]
 	if err := c.doJSON(ctx, http.MethodPost, path, args, &first); err != nil {
 		return nil, err
@@ -260,8 +253,16 @@ func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args map[
 		go func(page int) {
 			var pr pageResp[T]
 			payload := map[string]any{}
-			for k, v := range args {
-				payload[k] = v
+			// Convert args to map for pagination
+			if args != nil {
+				switch v := args.(type) {
+				case map[string]any:
+					for k, val := range v {
+						payload[k] = val
+					}
+				case QueryByHeightRequest:
+					payload["height"] = v.Height
+				}
 			}
 			payload["pageNumber"] = page
 			if err := c.doJSON(ctx, http.MethodPost, path, payload, &pr); err != nil {

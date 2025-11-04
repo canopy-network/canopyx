@@ -11,6 +11,9 @@ type Provider interface {
 	PauseChain(ctx context.Context, chainID string) error
 	// DeleteChain removes the deployment and related autoscalers/resources.
 	DeleteChain(ctx context.Context, chainID string) error
+	// GetDeploymentHealth checks the health status of a chain's deployment.
+	// Returns status (healthy/degraded/failed/unknown), a human-readable message, and any error.
+	GetDeploymentHealth(ctx context.Context, chainID string) (status, message string, err error)
 	// Close releases any Provider resources.
 	Close() error
 }
