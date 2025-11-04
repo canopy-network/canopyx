@@ -92,11 +92,11 @@ func convertToBlockSummaryModel(height uint64, blockTime time.Time, summaries ty
 		NumOrdersCancelled: summaries.NumOrdersCancelled,
 		NumOrdersExpired:   summaries.NumOrdersExpired,
 
-		// Pools
+		// PoolsByHeight
 		NumPools:    summaries.NumPools,
 		NumPoolsNew: summaries.NumPoolsNew,
 
-		// DexPrices
+		// DexPricesByHeight
 		NumDexPrices: summaries.NumDexPrices,
 
 		// DexOrders

@@ -72,11 +72,11 @@ type BlockSummary struct {
 	NumOrdersCancelled uint32 `ch:"num_orders_cancelled" json:"num_orders_cancelled"` // Number of cancelled orders
 	NumOrdersExpired   uint32 `ch:"num_orders_expired" json:"num_orders_expired"`     // Number of expired orders
 
-	// ========== Pools (2 fields) ==========
+	// ========== PoolsByHeight (2 fields) ==========
 	NumPools    uint32 `ch:"num_pools" json:"num_pools"`         // Total number of pools
 	NumPoolsNew uint32 `ch:"num_pools_new" json:"num_pools_new"` // Number of new pools created
 
-	// ========== DexPrices (1 field) ==========
+	// ========== DexPricesByHeight (1 field) ==========
 	NumDexPrices uint32 `ch:"num_dex_prices" json:"num_dex_prices"` // Number of DEX price records
 
 	// ========== DexOrders (6 fields) ==========

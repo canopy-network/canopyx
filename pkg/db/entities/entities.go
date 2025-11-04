@@ -41,6 +41,14 @@ import (
 	"strings"
 )
 
+// StagingSuffix is the suffix appended to entity names to create staging table names.
+// This constant ensures consistent naming across the entire system.
+//
+// Example:
+//
+//	tableName := entities.Blocks.String() + entities.StagingSuffix // "blocks_staging"
+const StagingSuffix = "_staging"
+
 // Entity represents a database entity type (e.g., blocks, transactions, accounts).
 // This type provides compile-time safety when working with entity names and prevents
 // typos that could cause runtime errors.
@@ -230,7 +238,7 @@ func (e Entity) TableName() string {
 //	entities.Blocks.StagingTableName() // Returns: "blocks_staging"
 //	entities.Transactions.StagingTableName() // Returns: "transactions_staging"
 func (e Entity) StagingTableName() string {
-	return string(e) + "_staging"
+	return string(e) + StagingSuffix
 }
 
 // IsValid returns true if this entity is in the list of known entities.

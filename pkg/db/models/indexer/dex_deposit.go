@@ -2,10 +2,12 @@ package indexer
 
 import (
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 )
 
 const DexDepositsProductionTableName = "dex_deposits"
-const DexDepositsStagingTableName = DexDepositsProductionTableName + "_staging"
+const DexDepositsStagingTableName = DexDepositsProductionTableName + entities.StagingSuffix
 
 // DexDeposit represents a versioned snapshot of a DEX liquidity deposit.
 // Liquidity providers deposit tokens to earn a share of trading fees.
@@ -25,23 +27,23 @@ const DexDepositsStagingTableName = DexDepositsProductionTableName + "_staging"
 // if they need to know when a deposit was created.
 type DexDeposit struct {
 	// Identity
-	OrderID string `ch:"order_id"` // Hex string representation of order ID
+	OrderID string `ch:"order_id" json:"order_id"` // Hex string representation of order ID
 
 	// Version tracking - every state change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 
 	// Chain context
-	Committee uint64 `ch:"committee"` // Committee ID (pool's chain ID)
+	Committee uint64 `ch:"committee" json:"committee"` // Committee ID (pool's chain ID)
 
 	// Deposit details (from DexLiquidityDeposit)
-	Address string `ch:"address"` // Hex string representation of address
-	Amount  uint64 `ch:"amount"`  // Amount being deposited
+	Address string `ch:"address" json:"address"` // Hex string representation of address
+	Amount  uint64 `ch:"amount" json:"amount"`   // Amount being deposited
 
 	// Lifecycle state
-	State string `ch:"state"` // "pending" or "complete"
+	State string `ch:"state" json:"state"` // "pending" or "complete"
 
 	// Execution results (populated by EventDexLiquidityDeposit when state=complete)
-	LocalOrigin    bool   `ch:"local_origin"`    // Was deposit made on this chain or counter chain
-	PointsReceived uint64 `ch:"points_received"` // Pool points received for this deposit
+	LocalOrigin    bool   `ch:"local_origin" json:"local_origin"`       // Was deposit made on this chain or counter chain
+	PointsReceived uint64 `ch:"points_received" json:"points_received"` // Pool points received for this deposit
 }

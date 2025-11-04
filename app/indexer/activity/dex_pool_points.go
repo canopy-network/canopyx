@@ -14,7 +14,7 @@ import (
 // IndexDexPoolPoints indexes DEX pool points by holder for a given block height.
 //
 // Core Algorithm:
-// 1. Fetch all pools from RPC using Pools() endpoint
+// 1. Fetch all pools from RPC using PoolsByHeight() endpoint
 // 2. For each pool, iterate through its PoolPoints array
 // 3. For each holder in PoolPoints, create a DexPoolPointsByHolder snapshot
 // 4. Calculate derived fields (liquidity_pool_points, liquidity_pool_id)
@@ -22,7 +22,7 @@ import (
 //
 // Snapshot Strategy:
 // This implementation creates snapshots at every height (not snapshot-on-change) because:
-// - The RPC Pools() endpoint returns current chain head state, not historical state by height
+// - The RPC PoolsByHeight() endpoint returns current chain head state, not historical state by height
 // - Unlike AccountsByHeight(height), there is no PoolsByHeight(height) available
 // - Future optimization: Add RPC support for historical pool queries to enable snapshot-on-change
 //
@@ -57,7 +57,7 @@ func (c *Context) IndexDexPoolPoints(ctx context.Context, in types.IndexDexPoolP
 	// Note: This returns pools at the current chain head, not at the specific height
 	// Future improvement: Add height-based pool queries to RPC for true snapshot-on-change
 	cli := c.rpcClient(ch.RPCEndpoints)
-	rpcPools, err := cli.Pools(ctx)
+	rpcPools, err := cli.PoolsByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexDexPoolPointsOutput{}, fmt.Errorf("fetch pools: %w", err)
 	}

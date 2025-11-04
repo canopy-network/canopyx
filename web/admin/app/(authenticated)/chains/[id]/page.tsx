@@ -14,10 +14,6 @@ import { useBlockEvents } from '../../../hooks/useBlockEvents'
 import { TransactionTypeBreakdown } from './TransactionTypeBreakdown'
 import { TransactionList } from './TransactionList'
 import { EventTypeBreakdown } from './EventTypeBreakdown'
-import { EventList } from './EventList'
-import { PoolList } from './PoolList'
-import { OrderList } from './OrderList'
-import { DexPriceList } from './DexPriceList'
 
 // Types
 type QueueStatus = {
@@ -510,7 +506,6 @@ export default function ChainDetailPage() {
         <nav className="flex gap-6">
           {[
             { id: 'overview', label: 'Overview' },
-            { id: 'queues', label: 'Queues' },
             { id: 'explorer', label: 'Explorer' },
             { id: 'settings', label: 'Settings' },
           ].map((tab) => (
@@ -540,8 +535,6 @@ export default function ChainDetailPage() {
           onRefresh={loadChainData}
         />
       )}
-
-      {activeTab === 'queues' && <QueuesTab status={status} onRefresh={loadChainData} />}
 
       {activeTab === 'explorer' && <ExplorerTab chainId={chainId} />}
 
@@ -583,8 +576,8 @@ function OverviewTab({
 
       setLoadingTxData(true)
       try {
-        // Fetch latest block summary for tx_counts_by_type
-        const summaryRes = await fetch(`/api/query/chains/${config.chain_id}/block_summaries?limit=1&sort=desc`)
+        // Fetch latest block summary for tx_counts_by_type using generic entity endpoint
+        const summaryRes = await apiFetch(`/api/chains/${config.chain_id}/entity/block_summaries?limit=1&sort=desc`)
         if (summaryRes.ok) {
           const summaryData: PaginatedResponse<BlockSummary> = await summaryRes.json()
           if (summaryData.data && summaryData.data.length > 0) {
@@ -592,8 +585,8 @@ function OverviewTab({
           }
         }
 
-        // Fetch recent transactions
-        const txRes = await fetch(`/api/query/chains/${config.chain_id}/transactions?limit=10&sort=desc`)
+        // Fetch recent transactions using generic entity endpoint (entity name is "txs")
+        const txRes = await apiFetch(`/api/chains/${config.chain_id}/entity/txs?limit=10&sort=desc`)
         if (txRes.ok) {
           const txData: PaginatedResponse<Transaction> = await txRes.json()
           setTransactions(txData.data || [])
@@ -681,6 +674,26 @@ function OverviewTab({
           updatedAt={status?.deployment_health?.updated_at}
         />
       </div>
+
+      {/* Queue Metrics */}
+      {status && (
+        <div className="card">
+          <div className="card-header">
+            <h3 className="card-title">Queue Metrics</h3>
+          </div>
+          <QueueHealthBadge
+            liveDepth={status.live_queue_depth || 0}
+            liveAge={status.live_queue_backlog_age || 0}
+            historicalDepth={status.historical_queue_depth || 0}
+            historicalAge={status.historical_queue_backlog_age || 0}
+            opsQueue={{
+              pending_workflow: status.ops_queue?.pending_workflow || 0,
+              backlog_age_secs: status.ops_queue?.backlog_age_secs || 0,
+            }}
+            compact={false}
+          />
+        </div>
+      )}
 
       {/* Configuration Card */}
       <div className="card">
@@ -839,54 +852,18 @@ function HealthCard({
   )
 }
 
-// Queues Tab Component
-function QueuesTab({
-  status,
-  onRefresh,
-}: {
-  status: ChainStatus | null
-  onRefresh: () => void
-}) {
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-white">Queue Metrics</h2>
-        <button onClick={onRefresh} className="btn-secondary text-sm">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Refresh
-        </button>
-      </div>
-
-      {status && (
-        <QueueHealthBadge
-          liveDepth={status.live_queue_depth || 0}
-          liveAge={status.live_queue_backlog_age || 0}
-          historicalDepth={status.historical_queue_depth || 0}
-          historicalAge={status.historical_queue_backlog_age || 0}
-          opsQueue={{
-            pending_workflow: status.ops_queue?.pending_workflow || 0,
-            backlog_age_secs: status.ops_queue?.backlog_age_secs || 0,
-          }}
-          compact={false}
-        />
-      )}
-    </div>
-  )
-}
-
 // Explorer Tab Component
 function ExplorerTab({ chainId }: { chainId: string }) {
   const { notify } = useToast()
 
   // Entities state
-  const [entities, setEntities] = useState<string[]>([])
+  const [entities, setEntities] = useState<EntityInfo[]>([])
   const [entityMap, setEntityMap] = useState<Record<string, string>>({}) // Maps entity name to route path
   const [loadingEntities, setLoadingEntities] = useState(true)
 
   // Table browsing state
   const [selectedTable, setSelectedTable] = useState<string>('')
+  const [useStaging, setUseStaging] = useState(false) // Toggle for staging vs production
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const [schema, setSchema] = useState<string[]>([])
@@ -897,8 +874,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
   const [itemsPerPage, setItemsPerPage] = useState(50)
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  // Single entity lookup state
-  const [lookupEntity, setLookupEntity] = useState<string>('')
+  // Single entity lookup state (uses selectedTable for entity type)
   const [lookupId, setLookupId] = useState('')
   const [lookupHeight, setLookupHeight] = useState('')
   const [lookupResult, setLookupResult] = useState<any>(null)
@@ -939,20 +915,23 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     dex_prices: 'dex-prices',
   }
 
+  // Get selected entity info
+  const selectedEntity = entities.find((e) => e.name === selectedTable)
+  const hasStaging = selectedEntity?.staging_name && selectedEntity.staging_name !== ''
+
   // Fetch entities on mount and build dynamic route mapping
   useEffect(() => {
     const fetchEntities = async () => {
       setLoadingEntities(true)
       try {
-        const response = await fetch('/api/query/entities')
+        const response = await apiFetch('/api/entities')
         if (!response.ok) {
           throw new Error('Failed to fetch entities')
         }
         const data: EntitiesResponse = await response.json()
 
-        // Build entity name list
-        const entityNames = data.entities.map((e) => e.name)
-        setEntities(entityNames)
+        // Store full entity objects
+        setEntities(data.entities)
 
         // Build dynamic mapping from entity names to route paths
         const mapping: Record<string, string> = {}
@@ -962,15 +941,19 @@ function ExplorerTab({ chainId }: { chainId: string }) {
         setEntityMap(mapping)
 
         // Set default selected table to first entity
-        if (entityNames.length > 0) {
-          setSelectedTable(entityNames[0])
-          setLookupEntity(entityNames[0])
+        if (data.entities.length > 0) {
+          setSelectedTable(data.entities[0].name)
         }
       } catch (err: any) {
         console.error('Entities fetch error:', err)
         notify('Failed to load entities list', 'error')
         // Fallback to hardcoded entities with hardcoded mapping
-        const fallbackEntities = ['blocks', 'block_summaries', 'transactions', 'accounts']
+        const fallbackEntities: EntityInfo[] = [
+          { name: 'blocks', table_name: 'blocks', staging_name: '', route_path: 'blocks' },
+          { name: 'block_summaries', table_name: 'block_summaries', staging_name: '', route_path: 'block-summaries' },
+          { name: 'transactions', table_name: 'transactions', staging_name: '', route_path: 'transactions' },
+          { name: 'accounts', table_name: 'accounts', staging_name: '', route_path: 'accounts' },
+        ]
         setEntities(fallbackEntities)
         setEntityMap({
           blocks: 'blocks',
@@ -979,14 +962,13 @@ function ExplorerTab({ chainId }: { chainId: string }) {
           accounts: 'accounts',
         })
         setSelectedTable('blocks')
-        setLookupEntity('blocks')
       } finally {
         setLoadingEntities(false)
       }
     }
 
     fetchEntities()
-  }, [])
+  }, [notify])
 
   // Fetch schema when table changes
   useEffect(() => {
@@ -999,10 +981,10 @@ function ExplorerTab({ chainId }: { chainId: string }) {
       setLoading(true)
       setError('')
       try {
-        // Use dynamic entityMap from backend, fallback to hardcoded TABLE_NAME_MAP
-        const tableName = entityMap[selectedTable] || TABLE_NAME_MAP[selectedTable] || selectedTable
-        const response = await fetch(
-          `/api/query/chains/${chainId}/schema?table=${tableName}`
+        // Use entity name directly (not route path) - schema endpoint expects entity names
+        const tableName = useStaging && hasStaging ? `${selectedTable}_staging` : selectedTable
+        const response = await apiFetch(
+          `/api/chains/${chainId}/schema?table=${tableName}`
         )
 
         if (!response.ok) {
@@ -1022,7 +1004,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     }
 
     fetchSchema()
-  }, [chainId, selectedTable])
+  }, [chainId, selectedTable, entityMap, useStaging, hasStaging])
 
   // Fetch data when table or page changes
   useEffect(() => {
@@ -1030,12 +1012,13 @@ function ExplorerTab({ chainId }: { chainId: string }) {
       setLoading(true)
       setError('')
       try {
-        const tableName = TABLE_NAME_MAP[selectedTable]
+        // Use entity name directly - the generic entity endpoint expects entity names
         const cursor = cursors[currentPageIndex]
         const cursorParam = cursor !== null ? `&cursor=${cursor}` : ''
+        const stagingParam = useStaging && hasStaging ? '&use_staging=true' : ''
 
-        const response = await fetch(
-          `/api/query/chains/${chainId}/${tableName}?limit=${itemsPerPage}&sort=${sortOrder}${cursorParam}`
+        const response = await apiFetch(
+          `/api/chains/${chainId}/entity/${selectedTable}?limit=${itemsPerPage}&sort=${sortOrder}${cursorParam}${stagingParam}`
         )
 
         if (!response.ok) {
@@ -1058,10 +1041,11 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     if (schema.length > 0) {
       fetchData()
     }
-  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, itemsPerPage, sortOrder])
+  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, itemsPerPage, sortOrder, entityMap, useStaging, hasStaging])
 
   const handleTableChange = (newTable: string) => {
     setSelectedTable(newTable)
+    setUseStaging(false) // Reset to production when changing entities
     setCursors([null])
     setCurrentPageIndex(0)
     setData([])
@@ -1075,7 +1059,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     setLookupError('')
     setLookupLoading(true)
 
-    const idConfig = entityIdFields[lookupEntity]
+    const idConfig = entityIdFields[selectedTable]
     if (!idConfig) {
       setLookupError('Unknown entity type')
       setLookupLoading(false)
@@ -1091,33 +1075,19 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     // Build URL based on entity type
     try {
       let url: string
-      const tableName = TABLE_NAME_MAP[lookupEntity] || lookupEntity
+      // Use entity name directly - the generic entity endpoint expects entity names
 
-      // Build query to find the specific entity using single entity endpoints
-      if (lookupEntity === 'blocks') {
-        // GET /chains/{id}/blocks/{height}
-        url = `/api/query/chains/${chainId}/blocks/${lookupId}`
-      } else if (lookupEntity === 'block_summaries') {
-        // GET /chains/{id}/block_summaries/{height}
-        url = `/api/query/chains/${chainId}/block_summaries/${lookupId}`
-      } else if (lookupEntity === 'transactions' || lookupEntity === 'txs') {
-        // GET /chains/{id}/transactions/{hash}
-        url = `/api/query/chains/${chainId}/transactions/${lookupId}`
-      } else if (lookupEntity === 'accounts') {
-        // GET /chains/{id}/accounts/{address}?height={height}
-        url = `/api/query/chains/${chainId}/accounts/${lookupId}`
-        if (lookupHeight) {
-          url += `?height=${lookupHeight}`
-        }
-      } else {
-        // Fallback for unknown entities
-        setLookupError(`Single entity lookup not supported for ${lookupEntity}`)
-        notify(`Lookup not supported for ${lookupEntity}`, 'error')
-        setLookupLoading(false)
-        return
-      }
+      // Check if the current entity has staging support (use hasStaging which is already computed)
+      const stagingParam = useStaging && hasStaging ? 'use_staging=true' : ''
 
-      const response = await fetch(url)
+      // Build query using generic entity endpoint
+      url = `/api/chains/${chainId}/entity/${selectedTable}/${lookupId}`
+      const params = []
+      if (lookupHeight) params.push(`height=${lookupHeight}`)
+      if (stagingParam) params.push(stagingParam)
+      if (params.length > 0) url += `?${params.join('&')}`
+
+      const response = await apiFetch(url)
 
       if (response.ok) {
         const responseData = await response.json()
@@ -1161,107 +1131,120 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     }
   }
 
-  // Sub-tab for explorer views
-  type ExplorerView = 'events' | 'pools' | 'orders' | 'dex-prices' | 'tables'
-  const [explorerView, setExplorerView] = useState<ExplorerView>('events')
-
   return (
     <div className="space-y-6">
-      {/* Explorer View Selector */}
-      <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-800 pb-0">
-        {[
-          { id: 'events', label: 'Events' },
-          { id: 'pools', label: 'Pools' },
-          { id: 'orders', label: 'Orders' },
-          { id: 'dex-prices', label: 'DEX Prices' },
-          { id: 'tables', label: 'Tables' },
-        ].map((view) => (
-          <button
-            key={view.id}
-            onClick={() => setExplorerView(view.id as ExplorerView)}
-            className={`whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
-              explorerView === view.id
-                ? 'border-indigo-500 text-white'
-                : 'border-transparent text-slate-400 hover:text-white'
-            }`}
-          >
-            {view.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Events View */}
-      {explorerView === 'events' && <EventList chainId={chainId} />}
-
-      {/* Pools View */}
-      {explorerView === 'pools' && <PoolList chainId={chainId} />}
-
-      {/* Orders View */}
-      {explorerView === 'orders' && <OrderList chainId={chainId} />}
-
-      {/* DEX Prices View */}
-      {explorerView === 'dex-prices' && <DexPriceList chainId={chainId} />}
-
-      {/* Table Browser View */}
-      {explorerView === 'tables' && (
-        <>
-          {/* Error Banner */}
-          {error && (
-            <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-rose-200">
-              <div className="flex items-start gap-3">
-                <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div>
-                  <p className="font-semibold">Error Loading Explorer Data</p>
-                  <p className="mt-1 text-sm text-rose-300">{error}</p>
-                </div>
-              </div>
+      {/* Error Banner */}
+      {error && (
+        <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-rose-200">
+          <div className="flex items-start gap-3">
+            <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="font-semibold">Error Loading Explorer Data</p>
+              <p className="mt-1 text-sm text-rose-300">{error}</p>
             </div>
-          )}
+          </div>
+        </div>
+      )}
+
+      {/* Entity Selection Header - Shared for both lookup and table browsing */}
+      {!loadingEntities && entities.length > 0 && (
+        <div className="card">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 flex-1">
+              <label className="text-sm font-medium text-slate-300 whitespace-nowrap">Entity:</label>
+              <select
+                value={selectedTable}
+                onChange={(e) => handleTableChange(e.target.value)}
+                className="input w-auto min-w-[200px]"
+                disabled={loading || loadingEntities}
+              >
+                {loadingEntities ? (
+                  <option>Loading...</option>
+                ) : (
+                  entities.map((entity) => (
+                    <option key={entity.name} value={entity.name}>
+                      {entity.name}
+                    </option>
+                  ))
+                )}
+              </select>
+
+              {/* Staging/Production Toggle - Only show if selected entity has staging */}
+              {hasStaging && (
+                <>
+                  <div className="h-6 w-px bg-slate-700"></div>
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-1.5">
+                    <label className="text-xs font-medium text-slate-400">Mode:</label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setUseStaging(false)}
+                        disabled={loading}
+                        className={`relative rounded px-2.5 py-1 text-xs font-medium transition-all ${
+                          !useStaging
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        Production
+                      </button>
+                      <button
+                        onClick={() => setUseStaging(true)}
+                        disabled={loading}
+                        className={`relative rounded px-2.5 py-1 text-xs font-medium transition-all ${
+                          useStaging
+                            ? 'bg-amber-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        Staging
+                      </button>
+                    </div>
+                    <span
+                      className={`ml-1 flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        useStaging
+                          ? 'bg-amber-500/20 text-amber-300'
+                          : 'bg-indigo-500/20 text-indigo-300'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${useStaging ? 'bg-amber-400' : 'bg-indigo-400'}`}></span>
+                      {useStaging ? 'STAGING' : 'PROD'}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Single Entity Lookup Section */}
       {!loadingEntities && entities.length > 0 && (
         <div className="card border-indigo-500/20 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
           <div className="card-header">
-            <h3 className="card-title">Single Entity Lookup</h3>
-            <p className="text-xs text-slate-500">Find a specific block, transaction, or account</p>
+            <h3 className="card-title">Quick Lookup</h3>
+            <p className="text-xs text-slate-500">Search for a specific {selectedTable} by ID</p>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Entity Type</label>
-              <select
-                value={lookupEntity}
-                onChange={(e) => setLookupEntity(e.target.value)}
-                className="input w-full"
-                disabled={lookupLoading}
-              >
-                {entities.map((entity) => (
-                  <option key={entity} value={entity}>
-                    {entity}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className={lookupEntity === 'accounts' ? 'md:col-span-2' : 'md:col-span-3'}>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+            <div className={selectedTable === 'accounts' ? 'md:col-span-8' : 'md:col-span-10'}>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                {entityIdFields[lookupEntity]?.label || 'ID'}
+                {entityIdFields[selectedTable]?.label || 'ID'}
               </label>
               <input
-                type={entityIdFields[lookupEntity]?.type || 'text'}
+                type={entityIdFields[selectedTable]?.type || 'text'}
                 value={lookupId}
                 onChange={(e) => setLookupId(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
-                placeholder={`Enter ${entityIdFields[lookupEntity]?.label || 'ID'}`}
+                placeholder={`Enter ${entityIdFields[selectedTable]?.label || 'ID'}`}
                 className="input w-full"
                 disabled={lookupLoading}
               />
             </div>
 
-            {lookupEntity === 'accounts' && (
-              <div>
+            {selectedTable === 'accounts' && (
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-slate-300 mb-2">
                   Height <span className="text-xs text-slate-500">(optional)</span>
                 </label>
@@ -1277,7 +1260,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
               </div>
             )}
 
-            <div className="flex items-end">
+            <div className="md:col-span-2 flex items-end">
               <button
                 onClick={handleLookup}
                 disabled={lookupLoading}
@@ -1343,30 +1326,10 @@ function ExplorerTab({ chainId }: { chainId: string }) {
         </div>
       )}
 
-      {/* Table Selector and Controls */}
+      {/* Table Controls */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-slate-300">Table:</label>
-          <select
-            value={selectedTable}
-            onChange={(e) => handleTableChange(e.target.value)}
-            className="input w-auto"
-            disabled={loading || loadingEntities}
-          >
-            {loadingEntities ? (
-              <option>Loading...</option>
-            ) : (
-              entities.map((entity) => (
-                <option key={entity} value={entity}>
-                  {entity}
-                </option>
-              ))
-            )}
-          </select>
-
-          <div className="h-6 w-px bg-slate-700"></div>
-
-          <label className="text-sm font-medium text-slate-300">Items:</label>
+          <label className="text-sm font-medium text-slate-300">Items per page:</label>
           <select
             value={itemsPerPage}
             onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
@@ -1431,7 +1394,20 @@ function ExplorerTab({ chainId }: { chainId: string }) {
       {schema.length > 0 && (
         <div className="card">
           <div className="card-header">
-            <h3 className="card-title">Schema: {selectedTable}</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="card-title">Schema: {selectedTable}</h3>
+              {hasStaging && (
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    useStaging
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                  }`}
+                >
+                  {useStaging ? 'STAGING' : 'PRODUCTION'}
+                </span>
+              )}
+            </div>
             <span className="text-xs text-slate-500">{schema.length} columns</span>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1497,8 +1473,6 @@ function ExplorerTab({ chainId }: { chainId: string }) {
           Showing {data.length} {data.length === 1 ? 'row' : 'rows'}
           {nextCursor !== null && ' • More results available'}
         </div>
-      )}
-        </>
       )}
     </div>
   )

@@ -17,7 +17,7 @@ import (
 // Test Fixtures and Utilities
 
 // createAdminStore creates a new AdminStore for testing with automatic cleanup.
-func createAdminStore(t *testing.T, dbName string) *adminpkg.AdminDB {
+func createAdminStore(t *testing.T, dbName string) *adminpkg.DB {
 	t.Helper()
 
 	// Use context with timeout to prevent hangs

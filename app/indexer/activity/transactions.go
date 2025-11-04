@@ -2,9 +2,12 @@ package activity
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/db/transform"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -27,14 +30,22 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransacti
 
 	// Fetch and parse transactions from RPC (single-table design)
 	cli := c.rpcClient(ch.RPCEndpoints)
-	txs, err := cli.TxsByHeight(ctx, in.Height)
+	rpcTxs, err := cli.TxsByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexTransactionsOutput{}, err
 	}
 
-	// Populate HeightTime field for all transactions using the block timestamp
-	for i := range txs {
-		txs[i].HeightTime = in.BlockTime
+	// Convert RPC transactions to indexer models
+	txs := make([]*indexer.Transaction, 0, len(rpcTxs))
+	for _, rpcTx := range rpcTxs {
+		tx, err := transform.Transaction(rpcTx)
+		if err != nil {
+			// Fail fast - conversion errors mean corrupted/incomplete data
+			return types.IndexTransactionsOutput{}, fmt.Errorf("convert transaction at height %d, hash %s: %w", in.Height, rpcTx.TxHash, err)
+		}
+		// Populate HeightTime field using the block timestamp
+		tx.HeightTime = in.BlockTime
+		txs = append(txs, tx)
 	}
 
 	// Count transactions by type for analytics

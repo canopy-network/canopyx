@@ -33,13 +33,13 @@ func (c *Context) IndexParams(ctx context.Context, in types.IndexParamsInput) (t
 	// Fetch params at both H and H-1 from RPC
 	cli := c.rpcClient(ch.RPCEndpoints)
 
-	// Fetch params at current height (H)
-	paramsAtH, err := cli.AllParams(ctx, in.Height)
+	// Fetch params at the current height (H)
+	paramsAtH, err := cli.AllParamsByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height, err)
 	}
 
-	// Convert RPC params at H to entity model
+	// Convert RPC params at H to an entity model
 	currentParams := convertRpcParamsToEntity(paramsAtH, in.Height, in.BlockTime)
 
 	// Determine if params changed by comparing with H-1
@@ -50,8 +50,8 @@ func (c *Context) IndexParams(ctx context.Context, in types.IndexParamsInput) (t
 		c.Logger.Debug("IndexParams genesis block - inserting initial params",
 			zap.Uint64("height", in.Height))
 	} else {
-		// Fetch params at previous height (H-1)
-		paramsAtH1, err := cli.AllParams(ctx, in.Height-1)
+		// Fetch params at the previous height (H-1)
+		paramsAtH1, err := cli.AllParamsByHeight(ctx, in.Height-1)
 		if err != nil {
 			return types.IndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height-1, err)
 		}

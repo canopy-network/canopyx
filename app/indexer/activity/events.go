@@ -2,9 +2,12 @@ package activity
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/db/transform"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -27,14 +30,22 @@ func (c *Context) IndexEvents(ctx context.Context, in types.IndexEventsInput) (t
 
 	// Fetch and parse events from RPC (single-table design)
 	cli := c.rpcClient(ch.RPCEndpoints)
-	events, err := cli.EventsByHeight(ctx, in.Height)
+	rpcEvents, err := cli.EventsByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexEventsOutput{}, err
 	}
 
-	// Populate HeightTime field for all events using the block timestamp
-	for i := range events {
-		events[i].HeightTime = in.BlockTime
+	// Convert RPC events to indexer models
+	events := make([]*indexer.Event, 0, len(rpcEvents))
+	for _, rpcEvent := range rpcEvents {
+		event, err := transform.Event(rpcEvent)
+		if err != nil {
+			// Fail fast - conversion errors mean corrupted/incomplete data
+			return types.IndexEventsOutput{}, fmt.Errorf("convert event at height %d, type %s: %w", in.Height, rpcEvent.EventType, err)
+		}
+		// Populate HeightTime field using the block timestamp
+		event.HeightTime = in.BlockTime
+		events = append(events, event)
 	}
 
 	// Count events by type for analytics

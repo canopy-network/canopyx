@@ -2,10 +2,12 @@ package indexer
 
 import (
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 )
 
 const DexWithdrawalsProductionTableName = "dex_withdrawals"
-const DexWithdrawalsStagingTableName = DexWithdrawalsProductionTableName + "_staging"
+const DexWithdrawalsStagingTableName = DexWithdrawalsProductionTableName + entities.StagingSuffix
 
 // DexWithdrawal represents a versioned snapshot of a DEX liquidity withdrawal.
 // Liquidity providers withdraw their tokens based on their pool points percentage.
@@ -25,24 +27,24 @@ const DexWithdrawalsStagingTableName = DexWithdrawalsProductionTableName + "_sta
 // if they need to know when a withdrawal was created.
 type DexWithdrawal struct {
 	// Identity
-	OrderID string `ch:"order_id"` // Hex string representation of order ID
+	OrderID string `ch:"order_id" json:"order_id"` // Hex string representation of order ID
 
 	// Version tracking - every state change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 
 	// Chain context
-	Committee uint64 `ch:"committee"` // Committee ID (pool's chain ID)
+	Committee uint64 `ch:"committee" json:"committee"` // Committee ID (pool's chain ID)
 
 	// Withdrawal details (from DexLiquidityWithdraw)
-	Address string `ch:"address"` // Hex string representation of address
-	Percent uint64 `ch:"percent"` // Percentage of pool points being withdrawn (0-100)
+	Address string `ch:"address" json:"address"` // Hex string representation of address
+	Percent uint64 `ch:"percent" json:"percent"` // Percentage of pool points being withdrawn (0-100)
 
 	// Lifecycle state
-	State string `ch:"state"` // "pending" or "complete"
+	State string `ch:"state" json:"state"` // "pending" or "complete"
 
 	// Execution results (populated by EventDexLiquidityWithdrawal when state=complete)
-	LocalAmount  uint64 `ch:"local_amount"`  // Amount received on this chain
-	RemoteAmount uint64 `ch:"remote_amount"` // Amount received on counter chain
-	PointsBurned uint64 `ch:"points_burned"` // Pool points burned in withdrawal
+	LocalAmount  uint64 `ch:"local_amount" json:"local_amount"`   // Amount received on this chain
+	RemoteAmount uint64 `ch:"remote_amount" json:"remote_amount"` // Amount received on counter chain
+	PointsBurned uint64 `ch:"points_burned" json:"points_burned"` // Pool points burned in withdrawal
 }

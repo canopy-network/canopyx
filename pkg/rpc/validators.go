@@ -5,12 +5,9 @@ import (
 	"fmt"
 )
 
-const (
-	validatorsPath = "/v1/query/validators"
-	nonSignersPath = "/v1/query/non-signers"
-)
+// Path constants moved to paths.go for centralized management
 
-// Validators returns all validators at a specific block height using pagination.
+// ValidatorsByHeight returns all validators at a specific block height using pagination.
 // The RPC endpoint returns validators in pages, this method fetches all pages.
 //
 // The Canopy RPC endpoint /v1/query/validators supports:
@@ -26,7 +23,7 @@ const (
 //   - error: If the endpoint is unreachable or returns invalid data
 //
 // This function fetches all pages in parallel for performance.
-func (c *HTTPClient) Validators(ctx context.Context, height uint64) ([]*RpcValidator, error) {
+func (c *HTTPClient) ValidatorsByHeight(ctx context.Context, height uint64) ([]*RpcValidator, error) {
 	req := NewQueryByHeightRequest(height)
 	validators, err := ListPaged[*RpcValidator](ctx, c, validatorsPath, req)
 	if err != nil {
@@ -35,7 +32,7 @@ func (c *HTTPClient) Validators(ctx context.Context, height uint64) ([]*RpcValid
 	return validators, nil
 }
 
-// NonSigners returns all non-signers (validators with missed blocks) at a specific block height.
+// NonSignersByHeight returns all non-signers (validators with missed blocks) at a specific block height.
 // The RPC endpoint returns non-signer information for validators that have missed blocks
 // within the non-sign tracking window.
 //
@@ -54,7 +51,7 @@ func (c *HTTPClient) Validators(ctx context.Context, height uint64) ([]*RpcValid
 // This function fetches all pages in parallel for performance.
 // Note: Returns an empty list (not an error) if the endpoint is not available,
 // for backward compatibility with older Canopy versions.
-func (c *HTTPClient) NonSigners(ctx context.Context, height uint64) ([]*RpcNonSigner, error) {
+func (c *HTTPClient) NonSignersByHeight(ctx context.Context, height uint64) ([]*RpcNonSigner, error) {
 	req := NewQueryByHeightRequest(height)
 	nonSigners, err := ListPaged[*RpcNonSigner](ctx, c, nonSignersPath, req)
 	if err != nil {
@@ -63,4 +60,28 @@ func (c *HTTPClient) NonSigners(ctx context.Context, height uint64) ([]*RpcNonSi
 		return []*RpcNonSigner{}, nil
 	}
 	return nonSigners, nil
+}
+
+// RpcValidator represents a validator returned from the RPC.
+// This matches the Validator protobuf structure from Canopy (fsm/validator.pb.go:45-76).
+// The structure contains exactly 10 fields that map directly to Canopy's validator state.
+type RpcValidator struct {
+	Address         string   `json:"address"`              // Hex-encoded validator address
+	PublicKey       string   `json:"publicKey"`            // Hex-encoded Ed25519 public key
+	NetAddress      string   `json:"netAddress"`           // P2P network address (host:port)
+	StakedAmount    uint64   `json:"stakedAmount"`         // Amount staked by validator in uCNPY
+	Committees      []uint64 `json:"committees,omitempty"` // Committee IDs validator is assigned to
+	MaxPausedHeight uint64   `json:"maxPausedHeight"`      // Block height when pause expires (0 = not paused)
+	UnstakingHeight uint64   `json:"unstakingHeight"`      // Block height when unstaking completes (0 = not unstaking)
+	Output          string   `json:"output,omitempty"`     // Reward destination address (hex-encoded, empty = self)
+	Delegate        bool     `json:"delegate,omitempty"`   // Whether validator accepts delegations
+	Compound        bool     `json:"compound,omitempty"`   // Whether rewards auto-compound into stake
+}
+
+// RpcNonSigner represents non-signing info returned from the RPC.
+// This matches the NonSigner protobuf structure from Canopy (fsm/validator.pb.go:236-244).
+// Tracks validators that have failed to sign blocks within the non-sign tracking window.
+type RpcNonSigner struct {
+	Address string `json:"address"` // Hex-encoded validator address
+	Counter uint64 `json:"counter"` // Number of blocks missed within the tracking window
 }

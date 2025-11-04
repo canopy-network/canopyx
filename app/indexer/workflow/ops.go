@@ -4,9 +4,10 @@ import (
 	"strconv"
 	"time"
 
+	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
+
 	"github.com/canopy-network/canopyx/app/indexer/activity"
 	"github.com/canopy-network/canopyx/app/indexer/types"
-	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	indexer "github.com/canopy-network/canopyx/pkg/workflows/indexer"
 	"go.temporal.io/api/enums/v1"
 	sdktemporal "go.temporal.io/sdk/temporal"
@@ -269,7 +270,7 @@ func (wc *Context) GapScanWorkflow(ctx workflow.Context, in GapScanInput) error 
 		return err
 	}
 
-	var gaps []adminstore.Gap
+	var gaps []adminmodels.Gap
 	if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.FindGaps, &types.ChainIdInput{ChainID: in.ChainID}).Get(localCtx, &gaps); err != nil {
 		return err
 	}

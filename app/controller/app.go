@@ -30,7 +30,7 @@ const (
 // App reads the desired state from IndexerDB (chain table) and reconciles
 // the real world via a Provider (e.g. Kubernetes), every Cron tick.
 type App struct {
-	IndexerDB *adminstore.AdminDB
+	IndexerDB *adminstore.DB
 
 	// Cron is the scheduler that triggers reconciliation tasks at specified intervals, according to CronSpec.
 	Cron     *cron.Cron
@@ -304,7 +304,7 @@ func (a *App) Reconcile(ctx context.Context) error {
 func (a *App) loadDesired(ctx context.Context) ([]Chain, error) {
 	loadStart := time.Now()
 
-	// Pull chains using AdminDB.ListChain (uses FINAL)
+	// Pull chains using DB.ListChain (uses FINAL)
 	rows, err := a.IndexerDB.ListChain(ctx)
 	if err != nil {
 		return nil, err

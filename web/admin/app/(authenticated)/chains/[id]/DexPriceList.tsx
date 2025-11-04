@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { apiFetch } from '../../../lib/api'
 
 // DexPrice type definition
 interface DexPrice {

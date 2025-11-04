@@ -6,68 +6,52 @@ import (
 	"net/http"
 )
 
-const (
-	statePath = "/v1/query/state"
-)
-
-// State queries the /v1/query/state endpoint to retrieve the current blockchain state.
-// This endpoint returns the full state including params, accounts, validators, and pools.
-// The state includes the RootChainID in params.consensusParams, which identifies the parent chain.
+// StateByHeight queries the /v1/query/state endpoint to retrieve blockchain state at a specific height.
+// When height is 0, it returns the genesis state. When height is nil, it returns the current state.
 //
-// This method is useful for:
-// - Getting the root chain ID during chain registration (alternative to cert-by-height)
-// - Retrieving governance parameters
-// - Accessing current blockchain state
-func (c *HTTPClient) State(ctx context.Context) (*StateResponse, error) {
+// The endpoint returns:
+//   - time: state timestamp (genesis time if height=0)
+//   - accounts: array of account objects with address and amount
+//   - validators: array of validators
+//   - pools: array of pools
+//   - params: chain parameters including RootChainID
+//
+// This unified method replaces the previous separate State() and GetGenesisState() methods.
+func (c *HTTPClient) StateByHeight(ctx context.Context, height uint64) (*StateResponse, error) {
 	var state StateResponse
-	if err := c.doJSON(ctx, http.MethodPost, statePath, map[string]any{}, &state); err != nil {
-		return nil, fmt.Errorf("fetch state: %w", err)
+	var err error
+
+	// Height specified - fetch state at that height (GET with height param)
+	req := QueryByHeightRequest{Height: height}
+	err = c.doJSON(ctx, http.MethodGet, statePath, req, &state)
+
+	if err != nil {
+		return nil, fmt.Errorf("fetch state at height=%d: %w", height, err)
 	}
 
 	return &state, nil
 }
 
-// FetchChainIDFromState queries the /v1/query/state endpoint to extract both the chain ID and root chain ID.
-// This is an alternative to FetchChainID (which uses cert-by-height) and provides additional information.
-//
-// Returns:
-//   - chainID: The chain ID from the certificate header
-//   - rootChainID: The root (parent) chain ID from params.consensusParams
-//   - error: If the endpoint is unreachable or returns invalid data
-//
-// The function uses a context timeout to prevent hanging on slow/unreachable endpoints.
-func FetchChainIDFromState(ctx context.Context, rpcURL string) (chainID uint64, rootChainID uint64, err error) {
-	// Create HTTP client with single endpoint
-	opts := Opts{
-		Endpoints: []string{rpcURL},
-		Timeout:   5 * http.DefaultClient.Timeout, // 5s timeout
-		RPS:       20,
-		Burst:     40,
-	}
-	client := NewHTTPWithOpts(opts)
-
-	// Query state endpoint
-	state, err := client.State(ctx)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to fetch state from %s: %w", rpcURL, err)
-	}
-
-	// Validate that we have params with consensus params
-	if state.Params == nil {
-		return 0, 0, fmt.Errorf("state params is nil from %s", rpcURL)
-	}
-	if state.Params.ConsensusParams == nil {
-		return 0, 0, fmt.Errorf("consensus params is nil from %s", rpcURL)
-	}
-
-	// For chainID, we need to query cert-by-height since state doesn't include it
-	// The state endpoint returns the state but not the chain's own ID
-	chainID, err = FetchChainID(ctx, rpcURL)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to fetch chain ID from %s: %w", rpcURL, err)
-	}
-
-	rootChainID = state.Params.ConsensusParams.RootChainID
-
-	return chainID, rootChainID, nil
+// Params represents the governance parameters returned from /v1/query/state.
+// Contains consensus, validator, fee, and other blockchain parameters.
+type Params struct {
+	ConsensusParams *ConsensusParams `json:"consensusParams"`
+	ValidatorParams *ValidatorParams `json:"validatorParams"`
+	FeeParams       *FeeParams       `json:"feeParams"`
+	GovParams       *GovParams       `json:"govParams"`
 }
+
+// GenesisState represents the full genesis state returned by the RPC endpoint.
+// This contains all initial blockchain states, including accounts, validators, pools, and parameters.
+type GenesisState struct {
+	Time     uint64     `json:"time"`     // Genesis timestamp
+	Accounts []*Account `json:"accounts"` // Initial account balances
+	// Future fields for complete genesis state
+	Validators []interface{} `json:"validators"` // Initial validators (not used yet)
+	Pools      []interface{} `json:"pools"`      // Initial pools (not used yet)
+	Params     *Params       `json:"params"`     // Chain parameters
+}
+
+// StateResponse represents the response from /v1/query/state endpoint.
+// This is an alias for GenesisState as they return the same structure.
+type StateResponse = GenesisState

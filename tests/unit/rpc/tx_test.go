@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/canopy-network/canopyx/pkg/db/transform"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -722,7 +723,7 @@ func TestToTransaction(t *testing.T) {
 	rpcTx.Transaction.NetworkID = 1
 	rpcTx.Transaction.ChainID = 1
 
-	tx, err := rpcTx.ToTransaction()
+	tx, err := transform.Transaction(rpcTx)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 
@@ -773,7 +774,7 @@ func TestToTransactionWithNilSignature(t *testing.T) {
 	rpcTx.Transaction.Fee = 5
 	// No signature fields set
 
-	tx, err := rpcTx.ToTransaction()
+	tx, err := transform.Transaction(rpcTx)
 	require.NoError(t, err)
 	require.NotNil(t, tx)
 

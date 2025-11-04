@@ -2,11 +2,7 @@ package rpc
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
-
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // RpcEvent represents an event from the Canopy RPC.
@@ -55,9 +51,10 @@ func detectEventType(eventType string) EventType {
 	}
 }
 
-// parseEventMessage converts an RPC event message into a typed EventMessage interface.
+// ParseEventMessage converts an RPC event message into a typed EventMessage interface.
 // This enables polymorphic handling of different event types while extracting common fields.
-func parseEventMessage(eventType string, msgData map[string]interface{}) EventMessage {
+// This function is exported for use by the transform package.
+func ParseEventMessage(eventType string, msgData map[string]interface{}) EventMessage {
 	evtType := detectEventType(eventType)
 
 	switch evtType {
@@ -107,56 +104,13 @@ func (e *UnknownEvent) GetSuccess() *bool        { return nil }
 func (e *UnknownEvent) GetLocalOrigin() *bool    { return nil }
 func (e *UnknownEvent) GetOrderID() *string      { return nil }
 
-// ToEvent maps an rpc.RpcEvent into the single-table Event model.
-// This uses the event message parsing to extract type-specific fields into nullable columns.
-func (e *RpcEvent) ToEvent() (*indexer.Event, error) {
-	// Parse event message into typed interface
-	msg := parseEventMessage(e.EventType, e.Msg)
-
-	// Marshal full message to JSON (will be compressed by ClickHouse with ZSTD)
-	msgJSON, err := json.Marshal(e.Msg)
-	if err != nil {
-		return nil, fmt.Errorf("marshal message to JSON: %w", err)
-	}
-
-	return &indexer.Event{
-		Height:       e.Height,
-		ChainID:      e.ChainID,
-		Address:      e.Address,
-		Reference:    e.Reference,
-		EventType:    string(msg.Type()),
-		Amount:       msg.GetAmount(),
-		SoldAmount:   msg.GetSoldAmount(),
-		BoughtAmount: msg.GetBoughtAmount(),
-		LocalAmount:  msg.GetLocalAmount(),
-		RemoteAmount: msg.GetRemoteAmount(),
-		Success:      msg.GetSuccess(),
-		LocalOrigin:  msg.GetLocalOrigin(),
-		OrderID:      msg.GetOrderID(),
-		Msg:          string(msgJSON),
-		// HeightTime will be set later by the activity layer
-	}, nil
-}
-
-// EventsByHeight returns all events for a given height.
-// This method follows the same pattern as TxsByHeight, using pagination and graceful error handling.
-func (c *HTTPClient) EventsByHeight(ctx context.Context, h uint64) ([]*indexer.Event, error) {
-	events, err := ListPaged[*RpcEvent](ctx, c, eventsByHeightPath, map[string]any{"height": h})
+// EventsByHeight returns all raw RPC events for a given height.
+// Callers should convert to indexer models using transform.Event() if needed.
+func (c *HTTPClient) EventsByHeight(ctx context.Context, h uint64) ([]*RpcEvent, error) {
+	events, err := ListPaged[*RpcEvent](ctx, c, eventsByHeightPath, QueryByHeightRequest{Height: h})
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert RPC events to DB model
-	dbEvents := make([]*indexer.Event, 0, len(events))
-	for _, e := range events {
-		evt, err := e.ToEvent()
-		if err != nil {
-			// Log warning but continue processing other events
-			// In production, you might want to track failed events
-			continue
-		}
-		dbEvents = append(dbEvents, evt)
-	}
-
-	return dbEvents, nil
+	return events, nil
 }

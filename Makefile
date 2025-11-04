@@ -347,8 +347,7 @@ kind-ensure-registry:
 		echo ">> Registry already running, skipping"; \
 	fi
 
-# --- Kind tuned kubelet config (3 nodes: 1 cp + 2 workers) ---
-# --- Kind tuned kubelet config (3 nodes) + containerd certs.d for local registry ---
+# --- Kind tuned kubelet config (single node) + containerd certs.d for local registry ---
 define KIND_TUNED_CFG
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -361,26 +360,6 @@ containerdConfigPatches:
 
 nodes:
 - role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: KubeletConfiguration
-    imageGCHighThresholdPercent: 70
-    imageGCLowThresholdPercent: 50
-    evictionHard:
-      nodefs.available: "5%"
-      nodefs.inodesFree: "5%"
-
-- role: worker
-  kubeadmConfigPatches:
-  - |
-    kind: KubeletConfiguration
-    imageGCHighThresholdPercent: 70
-    imageGCLowThresholdPercent: 50
-    evictionHard:
-      nodefs.available: "5%"
-      nodefs.inodesFree: "5%"
-
-- role: worker
   kubeadmConfigPatches:
   - |
     kind: KubeletConfiguration

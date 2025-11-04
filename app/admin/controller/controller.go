@@ -99,15 +99,15 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.Handle("/api/chains/{id}/reindex", c.RequireAuth(http.HandlerFunc(c.HandleReindex))).Methods(http.MethodPost)
 
 	// Schema introspection endpoints (migrated from query service)
-	r.Handle("/api/admin/entities", c.RequireAuth(http.HandlerFunc(c.HandleEntities))).Methods(http.MethodGet)
-	r.Handle("/api/admin/chains/{id}/schema", c.RequireAuth(http.HandlerFunc(c.HandleSchema))).Methods(http.MethodGet)
+	r.Handle("/api/entities", c.RequireAuth(http.HandlerFunc(c.HandleEntities))).Methods(http.MethodGet)
+	r.Handle("/api/chains/{id}/schema", c.RequireAuth(http.HandlerFunc(c.HandleSchema))).Methods(http.MethodGet)
+
+	// Generic entity query endpoints
+	r.Handle("/api/chains/{id}/entity/{entity}", c.RequireAuth(http.HandlerFunc(c.HandleEntityQuery))).Methods(http.MethodGet)
+	r.Handle("/api/chains/{id}/entity/{entity}/{id_value}", c.RequireAuth(http.HandlerFunc(c.HandleEntityGet))).Methods(http.MethodGet)
 
 	// WebSocket endpoint for real-time events (migrated from query service)
-	r.HandleFunc("/api/admin/ws", c.HandleWebSocket).Methods(http.MethodGet)
-
-	// Swagger UI - Serve API documentation at root
-	r.HandleFunc("/", c.HandleSwaggerUI).Methods(http.MethodGet)
-	r.HandleFunc("/openapi.yaml", c.HandleOpenAPISpec).Methods(http.MethodGet)
+	r.HandleFunc("/api/ws", c.HandleWebSocket).Methods(http.MethodGet)
 
 	return r, nil
 }

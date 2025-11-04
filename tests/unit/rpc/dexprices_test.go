@@ -11,51 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRpcDexPrice_ToDexPrice tests the conversion from RPC format to DB model.
-func TestRpcDexPrice_ToDexPrice(t *testing.T) {
-	tests := []struct {
-		name     string
-		rpcPrice rpc.RpcDexPrice
-	}{
-		{
-			name: "valid dex price conversion",
-			rpcPrice: rpc.RpcDexPrice{
-				LocalChainID:  1,
-				RemoteChainID: 2,
-				LocalPool:     1000000,
-				RemotePool:    2000000,
-				E6ScaledPrice: 500000,
-			},
-		},
-		{
-			name: "zero pools",
-			rpcPrice: rpc.RpcDexPrice{
-				LocalChainID:  5,
-				RemoteChainID: 10,
-				LocalPool:     0,
-				RemotePool:    0,
-				E6ScaledPrice: 0,
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dbPrice := tt.rpcPrice.ToDexPrice()
-
-			assert.NotNil(t, dbPrice)
-			assert.Equal(t, tt.rpcPrice.LocalChainID, dbPrice.LocalChainID)
-			assert.Equal(t, tt.rpcPrice.RemoteChainID, dbPrice.RemoteChainID)
-			assert.Equal(t, tt.rpcPrice.LocalPool, dbPrice.LocalPool)
-			assert.Equal(t, tt.rpcPrice.RemotePool, dbPrice.RemotePool)
-			assert.Equal(t, tt.rpcPrice.E6ScaledPrice, dbPrice.PriceE6)
-			// Height and HeightTime should be zero values since they're set by the activity
-			assert.Equal(t, uint64(0), dbPrice.Height)
-			assert.True(t, dbPrice.HeightTime.IsZero())
-		})
-	}
-}
-
 // TestHTTPClient_DexPrice tests fetching a single DEX price.
 func TestHTTPClient_DexPrice(t *testing.T) {
 	tests := []struct {
@@ -144,13 +99,7 @@ func TestHTTPClient_DexPrice(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, result)
 				if tt.validateResult != nil {
-					var rpcPrice rpc.RpcDexPrice
-					rpcPrice.LocalChainID = result.LocalChainID
-					rpcPrice.RemoteChainID = result.RemoteChainID
-					rpcPrice.LocalPool = result.LocalPool
-					rpcPrice.RemotePool = result.RemotePool
-					rpcPrice.E6ScaledPrice = result.PriceE6
-					tt.validateResult(t, rpcPrice)
+					tt.validateResult(t, *result)
 				}
 			}
 		})
@@ -245,7 +194,7 @@ func TestHTTPClient_DexPrices(t *testing.T) {
 			client := newTestRPCClient(handler)
 
 			// Execute
-			results, err := client.DexPrices(context.Background())
+			results, err := client.DexPricesByHeight(context.Background())
 
 			// Validate
 			if tt.wantErr {
@@ -257,18 +206,7 @@ func TestHTTPClient_DexPrices(t *testing.T) {
 				assert.Len(t, results, tt.wantCount)
 
 				if tt.validateResult != nil {
-					// Convert DB models back to RPC models for validation
-					rpcPrices := make([]*rpc.RpcDexPrice, len(results))
-					for i, r := range results {
-						rpcPrices[i] = &rpc.RpcDexPrice{
-							LocalChainID:  r.LocalChainID,
-							RemoteChainID: r.RemoteChainID,
-							LocalPool:     r.LocalPool,
-							RemotePool:    r.RemotePool,
-							E6ScaledPrice: r.PriceE6,
-						}
-					}
-					tt.validateResult(t, rpcPrices)
+					tt.validateResult(t, results)
 				}
 			}
 		})

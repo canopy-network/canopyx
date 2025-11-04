@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { apiFetch } from '../../../lib/api'
 
 // Event type definitions
 interface Event {
@@ -141,7 +142,7 @@ export function EventList({ chainId }: EventListProps) {
         params.set('type', selectedType)
       }
 
-      const response = await fetch(`/api/query/chains/${chainId}/events?${params.toString()}`)
+      const response = await apiFetch(`/api/admin/chains/${chainId}/events?${params.toString()}`)
 
       if (!response.ok) {
         throw new Error(`Failed to fetch events: ${response.statusText}`)

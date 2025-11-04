@@ -49,10 +49,16 @@ components:
                           # Requires: paths.canopy_source must exist
 
   # --- Optional Services (you can disable these if not needed) ---
+  admin: true             # Admin API server
+                          # Disable if: only running indexer, testing without API
+
+  controller: true        # Controller (manages indexer deployments)
+                          # Disable if: running standalone indexer, testing without auto-scaling
+
   admin_web: true         # Next.js admin UI
                           # Disable if: only using API directly, not working on UI
 
-# NOTE: admin, controller, and indexer are REQUIRED and always enabled
+# NOTE: Indexer is always required (managed by controller when enabled, or deployed manually)
 
 # ==============================================================================
 # PATHS

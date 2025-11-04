@@ -3,12 +3,16 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"net/http"
 	"time"
+
+	"go.uber.org/zap"
 )
 
-// FetchChainID queries the /v1/query/cert-by-height endpoint to extract the chain ID.
+// FetchChainID extracts the chain ID from a blockchain RPC endpoint.
+// This is a convenience wrapper around CertByHeight that queries the genesis certificate
+// and extracts only the chain ID.
+//
 // This is used during chain creation to automatically detect and validate the chain ID
 // from the blockchain's own data rather than accepting it from user input.
 //
@@ -24,18 +28,18 @@ func FetchChainID(ctx context.Context, rpcURL string) (uint64, error) {
 	}
 	client := NewHTTPWithOpts(opts)
 
-	// Query cert-by-height endpoint (height 0 typically returns genesis cert with chain ID)
-	var resp QuorumCertificateResponse
-	if err := client.doJSON(ctx, http.MethodPost, certByHeightPath, map[string]any{"height": 0}, &resp); err != nil {
+	// Query genesis certificate (height 0) to get chain ID
+	cert, err := client.CertByHeight(ctx, 0)
+	if err != nil {
 		return 0, fmt.Errorf("failed to fetch certificate from %s: %w", rpcURL, err)
 	}
 
 	// Validate that we got a valid chain ID
-	if resp.Header.ChainID == 0 {
+	if cert.Header.ChainID == 0 {
 		return 0, fmt.Errorf("invalid chain ID (0) returned from %s", rpcURL)
 	}
 
-	return resp.Header.ChainID, nil
+	return cert.Header.ChainID, nil
 }
 
 // ValidateAndExtractChainID validates RPC endpoints and extracts a consistent chain ID.

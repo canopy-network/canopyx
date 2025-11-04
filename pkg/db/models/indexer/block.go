@@ -2,10 +2,12 @@ package indexer
 
 import (
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 )
 
 const BlocksProductionTableName = "blocks"
-const BlocksStagingTableName = BlocksProductionTableName + "_staging"
+const BlocksStagingTableName = BlocksProductionTableName + entities.StagingSuffix
 
 type Block struct {
 	Height          uint64    `ch:"height" json:"height"`

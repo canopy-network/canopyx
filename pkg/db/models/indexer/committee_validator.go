@@ -25,14 +25,14 @@ const CommitteeValidatorStagingTableName = "committee_validators_staging"
 // It should be populated during IndexValidators activity when committee membership changes.
 type CommitteeValidator struct {
 	// Relationship
-	CommitteeID      uint64 `ch:"committee_id"`      // Committee (chain) ID
-	ValidatorAddress string `ch:"validator_address"` // Hex string representation of validator address
+	CommitteeID      uint64 `ch:"committee_id" json:"committee_id"`           // Committee (chain) ID
+	ValidatorAddress string `ch:"validator_address" json:"validator_address"` // Hex string representation of validator address
 
 	// Validator metadata (denormalized for query efficiency)
-	StakedAmount uint64 `ch:"staked_amount"` // Amount staked by validator in uCNPY
-	Status       string `ch:"status"`        // Validator status: active/paused/unstaking (derived from MaxPausedHeight/UnstakingHeight)
+	StakedAmount uint64 `ch:"staked_amount" json:"staked_amount"` // Amount staked by validator in uCNPY
+	Status       string `ch:"status" json:"status"`               // Validator status: active/paused/unstaking (derived from MaxPausedHeight/UnstakingHeight)
 
 	// Version tracking - every membership change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 }

@@ -16,20 +16,16 @@ import (
 	"github.com/puzpuzpuz/xsync/v4"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
-	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
 )
 
 type App struct {
 	// Database Client wrappers
-	AdminDB  *adminstore.AdminDB
+	AdminDB  *adminstore.DB
 	ChainsDB *xsync.Map[string, chainstore.Store]
 
 	// Temporal Client wrapper
 	TemporalClient *temporal.Client
-
-	// Temporal Worker Client
-	Worker worker.Worker
 
 	// Redis Client (for WebSocket real-time events)
 	RedisClient *redis.Client
@@ -64,9 +60,6 @@ func (a *App) Start(ctx context.Context) {
 		}
 		return true
 	})
-
-	a.Logger.Info("closing temporal worker")
-	a.Worker.Stop()
 
 	a.Logger.Info("shutting down server")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

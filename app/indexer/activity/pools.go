@@ -6,6 +6,7 @@ import (
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/db/transform"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -31,7 +32,21 @@ func (c *Context) IndexPools(ctx context.Context, in types.IndexPoolsInput) (typ
 	// Fetch all pools from RPC
 	// This returns ALL pools across all nested chains managed by this blockchain
 	cli := c.rpcClient(ch.RPCEndpoints)
-	rpcPools, err := cli.Pools(ctx)
+	rpcPools, err := cli.PoolsByHeight(ctx, in.Height)
+	if err != nil {
+		return types.IndexPoolsOutput{}, err
+	}
+
+	// Query pool liquidity events from staging table (event-driven correlation)
+	// These events provide context for pool state changes:
+	// - EventDexLiquidityDeposit: LP adds liquidity
+	// - EventDexLiquidityWithdraw: LP removes liquidity
+	// - EventDexSwap: Swap executes affecting pool balances
+	poolEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, in.Height,
+		"EventDexLiquidityDeposit",
+		"EventDexLiquidityWithdraw",
+		"EventDexSwap",
+	)
 	if err != nil {
 		return types.IndexPoolsOutput{}, err
 	}
@@ -41,7 +56,7 @@ func (c *Context) IndexPools(ctx context.Context, in types.IndexPoolsInput) (typ
 	// We index all pools at each height (snapshot pattern)
 	pools := make([]*indexer.Pool, 0, len(rpcPools))
 	for _, rpcPool := range rpcPools {
-		pool := rpcPool.ToPool(in.Height)
+		pool := transform.Pool(rpcPool, in.Height)
 		pool.HeightTime = in.BlockTime
 		// Calculate the derived pool ID fields based on ChainID
 		pool.CalculatePoolIDs()
@@ -49,9 +64,29 @@ func (c *Context) IndexPools(ctx context.Context, in types.IndexPoolsInput) (typ
 	}
 
 	numPools := uint32(len(pools))
-	c.Logger.Debug("IndexPools fetched from RPC",
+	numDeposits := 0
+	numWithdrawals := 0
+	numSwaps := 0
+
+	// Count event types for metrics
+	for _, event := range poolEvents {
+		switch event.EventType {
+		case "EventDexLiquidityDeposit":
+			numDeposits++
+		case "EventDexLiquidityWithdraw":
+			numWithdrawals++
+		case "EventDexSwap":
+			numSwaps++
+		}
+	}
+
+	c.Logger.Info("Indexed pools",
+		zap.Uint64("chainId", in.ChainID),
 		zap.Uint64("height", in.Height),
-		zap.Uint32("numPools", numPools))
+		zap.Uint32("numPools", numPools),
+		zap.Int("depositEvents", numDeposits),
+		zap.Int("withdrawalEvents", numWithdrawals),
+		zap.Int("swapEvents", numSwaps))
 
 	// Insert pools to staging table (two-phase commit pattern)
 	if err := chainDb.InsertPoolsStaging(ctx, pools); err != nil {

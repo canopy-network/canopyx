@@ -544,17 +544,17 @@ func (f *wfFakeRPCFactory) NewClient(_ []string) rpc.Client {
 }
 
 type wfFakeRPCClient struct {
-	block *indexermodels.Block
-	txs   []*indexermodels.Transaction
+	block *rpc.BlockByHeight
+	txs   []*rpc.Transaction
 }
 
 func (f *wfFakeRPCClient) ChainHead(context.Context) (uint64, error) { return 0, nil }
 
-func (f *wfFakeRPCClient) BlockByHeight(context.Context, uint64) (*indexermodels.Block, error) {
+func (f *wfFakeRPCClient) BlockByHeight(context.Context, uint64) (*rpc.BlockByHeight, error) {
 	return f.block, nil
 }
 
-func (f *wfFakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels.Transaction, error) {
+func (f *wfFakeRPCClient) TxsByHeight(context.Context, uint64) ([]*rpc.Transaction, error) {
 	return f.txs, nil
 }
 
@@ -566,7 +566,7 @@ func (f *wfFakeRPCClient) GetGenesisState(context.Context, uint64) (*rpc.Genesis
 	return nil, nil
 }
 
-func (f *wfFakeRPCClient) EventsByHeight(context.Context, uint64) ([]*indexermodels.Event, error) {
+func (f *wfFakeRPCClient) EventsByHeight(context.Context, uint64) ([]*rpc.RpcEvent, error) {
 	return nil, nil
 }
 
@@ -574,11 +574,11 @@ func (f *wfFakeRPCClient) OrdersByHeight(context.Context, uint64, uint64) ([]*rp
 	return nil, nil
 }
 
-func (f *wfFakeRPCClient) DexPrice(context.Context, uint64) (*indexermodels.DexPrice, error) {
+func (f *wfFakeRPCClient) DexPrice(context.Context, uint64, uint64) (*rpc.RpcDexPrice, error) {
 	return nil, nil
 }
 
-func (f *wfFakeRPCClient) DexPrices(context.Context) ([]*indexermodels.DexPrice, error) {
+func (f *wfFakeRPCClient) DexPrices(context.Context, uint64) ([]*rpc.RpcDexPrice, error) {
 	return nil, nil
 }
 
@@ -647,5 +647,17 @@ func (f *wfFakeRPCClient) DexBatchByHeight(context.Context, uint64, uint64) (*rp
 }
 
 func (f *wfFakeRPCClient) NextDexBatchByHeight(context.Context, uint64, uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) AllDexBatchesByHeight(context.Context, uint64) ([]*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) AllNextDexBatchesByHeight(context.Context, uint64) ([]*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (f *wfFakeRPCClient) StateByHeight(context.Context, *uint64) (*rpc.StateResponse, error) {
 	return nil, nil
 }

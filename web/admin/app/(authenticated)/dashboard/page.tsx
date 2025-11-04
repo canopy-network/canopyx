@@ -756,7 +756,7 @@ export default function DashboardPage() {
                       {isExpanded && (
                         <tr className="bg-slate-900/50">
                           <td colSpan={7}>
-                            <div className="grid gap-4 p-4 md:grid-cols-2 lg:grid-cols-3">
+                            <div className="grid gap-4 p-4 md:grid-cols-3">
                               {/* Health Status Breakdown */}
                               <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
                                 <div className="mb-3 text-sm font-semibold text-white">
@@ -810,8 +810,8 @@ export default function DashboardPage() {
                                 </div>
                               </div>
 
-                              {/* Queue Health - Compact View */}
-                              <div className="lg:col-span-2 rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+                              {/* Queue Status */}
+                              <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
                                 <div className="mb-3 text-sm font-semibold text-white">Queue Status</div>
                                 <QueueHealthBadge
                                   liveDepth={chain.live_queue_depth || 0}

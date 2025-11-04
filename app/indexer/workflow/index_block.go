@@ -171,7 +171,6 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		ChainID:   in.ChainID,
 		Height:    in.Height,
 		BlockTime: fetchOut.Block.Time,
-		Committee: in.ChainID, // Use root chain as committee
 	}
 	indexDexPoolPointsInput := types.IndexDexPoolPointsInput{
 		ChainID:   in.ChainID,
@@ -283,11 +282,11 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 		NumOrdersCancelled: 0,
 		NumOrdersExpired:   0,
 
-		// Pools (currently only total count available)
+		// PoolsByHeight (currently only total count available)
 		NumPools:    poolsOut.NumPools,
 		NumPoolsNew: 0, // TODO: Enhance IndexPools activity to return this
 
-		// DexPrices
+		// DexPricesByHeight
 		NumDexPrices: pricesOut.NumPrices,
 
 		// DexOrders, DexDeposits, DexWithdrawals from IndexDexBatch

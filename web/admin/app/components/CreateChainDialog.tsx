@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 
 type CreateChainFormData = {
-  chain_id: string
+  chain_id: number
   chain_name: string
   image: string
   rpc_endpoints: string[]
@@ -28,36 +28,29 @@ export default function CreateChainDialog({
 }: CreateChainDialogProps) {
   const [chainId, setChainId] = useState('')
   const [chainName, setChainName] = useState('')
-  const [image, setImage] = useState('localhost:5001/canopyx-indexer:dev')
-  const [rpcEndpoints, setRpcEndpoints] = useState('https://node1.canopy.us.nodefleet.net/rpc')
+  const [image, setImage] = useState('')
+  const [rpcEndpoints, setRpcEndpoints] = useState('')
   const [minReplicas, setMinReplicas] = useState(1)
   const [maxReplicas, setMaxReplicas] = useState(3)
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
+  const prevOpenRef = useRef(false)
 
+  // Set defaults only when dialog transitions from closed to open
   useEffect(() => {
-    if (!open) {
-      // Reset form when dialog closes
-      setChainId('')
-      setChainName('')
-      setImage('')
-      setRpcEndpoints('')
-      setMinReplicas(1)
-      setMaxReplicas(3)
-      setNotes('')
-      setError('')
+    if (open && !prevOpenRef.current) {
+      // Dialog just opened
+      if (!image) setImage('localhost:5001/canopyx-indexer:dev')
+      if (!rpcEndpoints) setRpcEndpoints('https://node1.canopy.us.nodefleet.net/rpc')
     }
+    prevOpenRef.current = open
   }, [open])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
 
-    // Validate
-    if (!chainId.trim()) {
-      setError('Chain ID is required')
-      return
-    }
+    // Validate required fields
     if (!chainName.trim()) {
       setError('Chain name is required')
       return
@@ -87,9 +80,17 @@ export default function CreateChainDialog({
       return
     }
 
+    // Convert chain_id: empty string -> 0 (auto-detect), or parse as number
+    const chainIdNum = chainId.trim() === '' ? 0 : Number(chainId)
+
+    if (isNaN(chainIdNum) || chainIdNum < 0) {
+      setError('Chain ID must be a positive number or empty for auto-detection')
+      return
+    }
+
     try {
       await onSubmit({
-        chain_id: chainId,
+        chain_id: chainIdNum,
         chain_name: chainName,
         image,
         rpc_endpoints: endpoints,
@@ -122,18 +123,20 @@ export default function CreateChainDialog({
             <div className="grid gap-4 md:grid-cols-2">
               <div>
                 <label htmlFor="chain_id" className="mb-2 block text-sm font-medium text-slate-300">
-                  Chain ID <span className="text-rose-400">*</span>
+                  Chain ID
                 </label>
                 <input
                   id="chain_id"
-                  type="text"
+                  type="number"
+                  min="1"
                   value={chainId}
                   onChange={(e) => setChainId(e.target.value)}
                   className="input"
-                  placeholder="e.g., ethereum_mainnet"
-                  required
+                  placeholder="Leave empty to auto-detect"
                 />
-                <p className="mt-1 text-xs text-slate-500">Unique identifier for this chain</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Leave empty to auto-detect from RPC endpoints
+                </p>
               </div>
 
               <div>

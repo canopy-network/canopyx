@@ -19,7 +19,7 @@ type ReindexWorkflowInfo struct {
 // initReindexRequests creates the reindex request log table.
 // Engine: ReplacingMergeTree(requested_at)
 // Order: (chain_id, requested_at, height)
-func (db *AdminDB) initReindexRequests(ctx context.Context) error {
+func (db *DB) initReindexRequests(ctx context.Context) error {
 	query := `
 		CREATE TABLE IF NOT EXISTS reindex_requests (
 			chain_id UInt64,
@@ -36,7 +36,7 @@ func (db *AdminDB) initReindexRequests(ctx context.Context) error {
 }
 
 // RecordReindexRequests logs a set of reindex requests for auditing purposes.
-func (db *AdminDB) RecordReindexRequests(ctx context.Context, chainID uint64, requestedBy string, heights []uint64) error {
+func (db *DB) RecordReindexRequests(ctx context.Context, chainID uint64, requestedBy string, heights []uint64) error {
 	if len(heights) == 0 {
 		return nil
 	}
@@ -58,7 +58,7 @@ func (db *AdminDB) RecordReindexRequests(ctx context.Context, chainID uint64, re
 }
 
 // insertReindexRequest inserts a new reindex request record.
-func (db *AdminDB) insertReindexRequest(ctx context.Context, req *admin.ReindexRequest) error {
+func (db *DB) insertReindexRequest(ctx context.Context, req *admin.ReindexRequest) error {
 	query := `
 		INSERT INTO reindex_requests (chain_id, height, requested_by, status, workflow_id, run_id, requested_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -75,7 +75,7 @@ func (db *AdminDB) insertReindexRequest(ctx context.Context, req *admin.ReindexR
 }
 
 // RecordReindexRequestsWithWorkflow logs reindex requests with workflow execution information.
-func (db *AdminDB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainID uint64, requestedBy string, infos []ReindexWorkflowInfo) error {
+func (db *DB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainID uint64, requestedBy string, infos []ReindexWorkflowInfo) error {
 	if len(infos) == 0 {
 		return nil
 	}
@@ -99,7 +99,7 @@ func (db *AdminDB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainI
 }
 
 // ListReindexRequests returns the most recent reindex requests for a chain.
-func (db *AdminDB) ListReindexRequests(ctx context.Context, chainID uint64, limit int) ([]admin.ReindexRequest, error) {
+func (db *DB) ListReindexRequests(ctx context.Context, chainID uint64, limit int) ([]admin.ReindexRequest, error) {
 	if limit <= 0 {
 		limit = 10
 	}

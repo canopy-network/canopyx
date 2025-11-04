@@ -79,9 +79,10 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 
 	// Worker 2: Fetch previous height orders from RPC
 	// Note: Unlike accounts, orders don't have genesis state, so we just fetch from RPC
+	// At height 1 (genesis), there are no previous orders to fetch
 	go func() {
 		defer wg.Done()
-		if input.Height > 0 {
+		if input.Height > 1 {
 			previousOrders, previousErr = cli.OrdersByHeight(ctx, input.Height-1, numericChainID)
 		}
 	}()
@@ -93,7 +94,7 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 	if currentErr != nil {
 		return types.IndexOrdersOutput{}, fmt.Errorf("fetch current orders at height %d: %w", input.Height, currentErr)
 	}
-	if previousErr != nil && input.Height > 0 {
+	if previousErr != nil && input.Height > 1 {
 		return types.IndexOrdersOutput{}, fmt.Errorf("fetch previous orders at height %d: %w", input.Height-1, previousErr)
 	}
 
@@ -104,14 +105,36 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 		prevMap[order.OrderID] = order
 	}
 
+	// Query order lifecycle events from staging table (event-driven state tracking)
+	// EventOrderBookSwap events indicate when an order transitions to "filled" state
+	orderEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height, "EventOrderBookSwap")
+	if err != nil {
+		return types.IndexOrdersOutput{}, fmt.Errorf("query order events at height %d: %w", input.Height, err)
+	}
+
+	// Build event map by order ID for O(1) lookup
+	swapEvents := make(map[string]*indexer.Event)
+	for _, event := range orderEvents {
+		// Events have nullable OrderID field
+		if event.OrderID == nil {
+			continue
+		}
+		orderID := *event.OrderID
+		swapEvents[orderID] = event
+	}
+
 	// Compare and collect changed orders
 	changedOrders := make([]*indexer.Order, 0)
 	for _, curr := range currentOrders {
 		prev, existed := prevMap[curr.OrderID]
 
+		// Check if order has a swap event (state transition to "filled")
+		_, hasSwapEvent := swapEvents[curr.OrderID]
+
 		// Determine if order state changed
 		// We check all significant fields: amount, status, buyer, deadline
-		hasChanged := !existed || orderStateChanged(prev, curr)
+		// OR if there's a swap event indicating state transition
+		hasChanged := !existed || hasSwapEvent || orderStateChanged(prev, curr)
 
 		if hasChanged {
 			changedOrders = append(changedOrders, &indexer.Order{
@@ -143,6 +166,7 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 		zap.Uint64("height", input.Height),
 		zap.Int("totalOrders", len(currentOrders)),
 		zap.Int("changedOrders", len(changedOrders)),
+		zap.Int("swapEvents", len(swapEvents)),
 		zap.Float64("durationMs", durationMs))
 
 	return types.IndexOrdersOutput{

@@ -2,9 +2,10 @@ package activity_test
 
 import (
 	"context"
-	"github.com/canopy-network/canopyx/app/indexer/activity"
 	"testing"
 	"time"
+
+	"github.com/canopy-network/canopyx/app/indexer/activity"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
@@ -30,20 +31,20 @@ func (m *mockAccountsRPCClient) ChainHead(ctx context.Context) (uint64, error) {
 	return args.Get(0).(uint64), args.Error(1)
 }
 
-func (m *mockAccountsRPCClient) BlockByHeight(ctx context.Context, height uint64) (*indexermodels.Block, error) {
+func (m *mockAccountsRPCClient) BlockByHeight(ctx context.Context, height uint64) (*rpc.BlockByHeight, error) {
 	args := m.Called(ctx, height)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*indexermodels.Block), args.Error(1)
+	return args.Get(0).(*rpc.BlockByHeight), args.Error(1)
 }
 
-func (m *mockAccountsRPCClient) TxsByHeight(ctx context.Context, height uint64) ([]*indexermodels.Transaction, error) {
+func (m *mockAccountsRPCClient) TxsByHeight(ctx context.Context, height uint64) ([]*rpc.Transaction, error) {
 	args := m.Called(ctx, height)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).([]*indexermodels.Transaction), args.Error(1)
+	return args.Get(0).([]*rpc.Transaction), args.Error(1)
 }
 
 func (m *mockAccountsRPCClient) AccountsByHeight(ctx context.Context, height uint64) ([]*rpc.Account, error) {
@@ -62,7 +63,7 @@ func (m *mockAccountsRPCClient) GetGenesisState(ctx context.Context, height uint
 	return args.Get(0).(*rpc.GenesisState), args.Error(1)
 }
 
-func (m *mockAccountsRPCClient) EventsByHeight(ctx context.Context, height uint64) ([]*indexermodels.Event, error) {
+func (m *mockAccountsRPCClient) EventsByHeight(ctx context.Context, height uint64) ([]*rpc.RpcEvent, error) {
 	return nil, nil
 }
 
@@ -70,11 +71,11 @@ func (m *mockAccountsRPCClient) OrdersByHeight(ctx context.Context, height uint6
 	return nil, nil
 }
 
-func (m *mockAccountsRPCClient) DexPrice(ctx context.Context, chainID uint64) (*indexermodels.DexPrice, error) {
+func (m *mockAccountsRPCClient) DexPrice(ctx context.Context, height uint64, chainID uint64) (*rpc.RpcDexPrice, error) {
 	return nil, nil
 }
 
-func (m *mockAccountsRPCClient) DexPrices(ctx context.Context) ([]*indexermodels.DexPrice, error) {
+func (m *mockAccountsRPCClient) DexPrices(ctx context.Context, height uint64) ([]*rpc.RpcDexPrice, error) {
 	return nil, nil
 }
 
@@ -143,6 +144,18 @@ func (m *mockAccountsRPCClient) DexBatchByHeight(ctx context.Context, height uin
 }
 
 func (m *mockAccountsRPCClient) NextDexBatchByHeight(ctx context.Context, height uint64, committee uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) AllDexBatchesByHeight(ctx context.Context, height uint64) ([]*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) AllNextDexBatchesByHeight(ctx context.Context, height uint64) ([]*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (m *mockAccountsRPCClient) StateByHeight(ctx context.Context, height *uint64) (*rpc.StateResponse, error) {
 	return nil, nil
 }
 

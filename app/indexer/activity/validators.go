@@ -63,7 +63,7 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 	// Worker 1: Fetch current height validators from RPC
 	go func() {
 		defer wg.Done()
-		currentValidators, currentErr = cli.Validators(ctx, input.Height)
+		currentValidators, currentErr = cli.ValidatorsByHeight(ctx, input.Height)
 	}()
 
 	// Worker 2: Fetch previous state
@@ -77,14 +77,14 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 		} else if input.Height > 1 {
 			// Normal case: fetch from RPC at height-1
 			// This queries the validator state as it existed at the previous block
-			previousValidators, previousErr = cli.Validators(ctx, input.Height-1)
+			previousValidators, previousErr = cli.ValidatorsByHeight(ctx, input.Height-1)
 		}
 	}()
 
 	// Worker 3: Fetch current non-signers
 	go func() {
 		defer wg.Done()
-		currentNonSigners, nonSignersErr = cli.NonSigners(ctx, input.Height)
+		currentNonSigners, nonSignersErr = cli.NonSignersByHeight(ctx, input.Height)
 	}()
 
 	// Worker 4: Fetch previous non-signers
@@ -93,7 +93,7 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 		if input.Height == 1 {
 			previousNonSigners = make([]*rpc.RpcNonSigner, 0)
 		} else if input.Height > 1 {
-			previousNonSigners, prevNonSignersErr = cli.NonSigners(ctx, input.Height-1)
+			previousNonSigners, prevNonSignersErr = cli.NonSignersByHeight(ctx, input.Height-1)
 		}
 	}()
 
@@ -104,7 +104,7 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 	if currentErr != nil {
 		return types.IndexValidatorsOutput{}, fmt.Errorf("fetch current validators at height %d: %w", input.Height, currentErr)
 	}
-	if previousErr != nil {
+	if previousErr != nil && input.Height > 1 {
 		return types.IndexValidatorsOutput{}, fmt.Errorf("fetch previous validators at height %d: %w", input.Height-1, previousErr)
 	}
 	// Non-signer errors are non-fatal - the endpoint may not be available
@@ -138,6 +138,46 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 		currentNonSignerMap[ns.Address] = ns
 	}
 
+	// Query validator lifecycle events from staging table (event-driven state tracking)
+	// These events define state transitions in the validator lifecycle:
+	// - EventAutoPause: validator transitions to paused state
+	// - EventAutoBeginUnstaking: validator transitions to unstaking state
+	// - EventFinishUnstaking: validator deleted (unstaked)
+	// - EventSlash: validator slashed (affects staked amount)
+	// - EventReward: validator rewarded (informational, doesn't change state)
+	validatorEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height,
+		"EventAutoPause",
+		"EventAutoBeginUnstaking",
+		"EventFinishUnstaking",
+		"EventSlash",
+		"EventReward",
+	)
+	if err != nil {
+		return types.IndexValidatorsOutput{}, fmt.Errorf("query validator events at height %d: %w", input.Height, err)
+	}
+
+	// Build event maps by validator address for O(1) lookup
+	pauseEvents := make(map[string]*indexer.Event)
+	beginUnstakingEvents := make(map[string]*indexer.Event)
+	finishUnstakingEvents := make(map[string]*indexer.Event)
+	slashEvents := make(map[string]*indexer.Event)
+
+	for _, event := range validatorEvents {
+		// Events have Address field for the validator address
+		addr := event.Address
+
+		switch event.EventType {
+		case "EventAutoPause":
+			pauseEvents[addr] = event
+		case "EventAutoBeginUnstaking":
+			beginUnstakingEvents[addr] = event
+		case "EventFinishUnstaking":
+			finishUnstakingEvents[addr] = event
+		case "EventSlash":
+			slashEvents[addr] = event
+		}
+	}
+
 	// Compare and collect changed validators
 	changedValidators := make([]*indexer.Validator, 0)
 	for _, curr := range currentValidators {
@@ -145,10 +185,28 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 
 		// Check if validator state changed
 		changed := false
+		hasEvent := false
+
+		// Check for lifecycle events (state transitions)
+		if _, hasPause := pauseEvents[curr.Address]; hasPause {
+			changed = true
+			hasEvent = true
+		}
+		if _, hasBeginUnstake := beginUnstakingEvents[curr.Address]; hasBeginUnstake {
+			changed = true
+			hasEvent = true
+		}
+		if _, hasSlash := slashEvents[curr.Address]; hasSlash {
+			changed = true
+			hasEvent = true
+		}
+
 		if prev == nil {
 			// New validator
 			changed = true
-		} else {
+		} else if !hasEvent {
+			// Only compare RPC fields if no event occurred
+			// If an event occurred, we already marked changed=true above
 			// Compare all fields that affect validator state
 			// Note: Status is derived from MaxPausedHeight/UnstakingHeight, not compared directly
 			if curr.StakedAmount != prev.StakedAmount ||
@@ -208,7 +266,7 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 		if changed {
 			// Get validator params to calculate the missed blocks window
 			// The window start is computed as: CurrentHeight - NonSignWindow
-			valParams, err := cli.ValParams(ctx, input.Height)
+			valParams, err := cli.ValParamsByHeight(ctx, input.Height)
 			var missedBlocksWindow uint64
 			if err == nil && valParams != nil {
 				// Calculate window start: current height minus window size
@@ -276,6 +334,10 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 		zap.Int("committeeValidators", len(committeeValidators)),
 		zap.Int("totalNonSigners", len(currentNonSigners)),
 		zap.Int("changedSigningInfos", len(changedSigningInfos)),
+		zap.Int("pauseEvents", len(pauseEvents)),
+		zap.Int("beginUnstakingEvents", len(beginUnstakingEvents)),
+		zap.Int("finishUnstakingEvents", len(finishUnstakingEvents)),
+		zap.Int("slashEvents", len(slashEvents)),
 		zap.Float64("durationMs", durationMs))
 
 	return types.IndexValidatorsOutput{

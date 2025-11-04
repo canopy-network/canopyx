@@ -41,7 +41,7 @@ func (db *DB) initPollSnapshots(ctx context.Context) error {
 			validators_reject_percentage UInt64 CODEC(Delta, ZSTD(1)),
 			validators_voted_percentage UInt64 CODEC(Delta, ZSTD(1)),
 			height_time DateTime64(6) CODEC(Delta, ZSTD(1))
-		) ENGINE = MergeTree()
+		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (proposal_hash, height)
 	`
 

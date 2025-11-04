@@ -39,7 +39,7 @@ data:
       "maxInbound": 21,
       "maxOutbound": 7,
       "trustedPeerIDs": null,
-      "dialPeers": ["canopy-node-1.default.svc.cluster.local:9001"],
+      "dialPeers": ["canopy-node-1.default.svc.cluster.local:9001", "canopy-node-3.default.svc.cluster.local:9003"],
       "bannedPeerIDs": null,
       "bannedIPs": null,
       "minimumPeersToStart": 0,

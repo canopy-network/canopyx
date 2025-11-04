@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/db/transform"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -27,24 +29,27 @@ func (c *Context) IndexDexPrices(ctx context.Context, in types.IndexDexPricesInp
 
 	// Fetch DEX prices from RPC
 	cli := c.rpcClient(ch.RPCEndpoints)
-	prices, err := cli.DexPrices(ctx)
+	rpcPrices, err := cli.DexPricesByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexDexPricesOutput{}, err
 	}
 
-	// Populate Height and HeightTime fields using the block height and timestamp
-	for i := range prices {
-		prices[i].Height = in.Height
-		prices[i].HeightTime = in.BlockTime
+	// Convert RPC types to database models and populate height fields
+	dbPrices := make([]*indexer.DexPrice, 0, len(rpcPrices))
+	for _, rpcPrice := range rpcPrices {
+		dbPrice := transform.DexPrice(rpcPrice)
+		dbPrice.Height = in.Height
+		dbPrice.HeightTime = in.BlockTime
+		dbPrices = append(dbPrices, dbPrice)
 	}
 
-	numPrices := uint32(len(prices))
+	numPrices := uint32(len(dbPrices))
 	c.Logger.Debug("IndexDexPrices fetched from RPC",
 		zap.Uint64("height", in.Height),
 		zap.Uint32("numPrices", numPrices))
 
 	// Insert DEX prices to staging table (two-phase commit pattern)
-	if err := chainDb.InsertDexPricesStaging(ctx, prices); err != nil {
+	if err := chainDb.InsertDexPricesStaging(ctx, dbPrices); err != nil {
 		return types.IndexDexPricesOutput{}, err
 	}
 

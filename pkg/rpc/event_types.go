@@ -79,7 +79,7 @@ func (e *DexLiquidityDepositEvent) GetLocalAmount() *uint64  { return nil }
 func (e *DexLiquidityDepositEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *DexLiquidityDepositEvent) GetSuccess() *bool        { return nil }
 func (e *DexLiquidityDepositEvent) GetLocalOrigin() *bool {
-	return getOptionalBoolField(e.Data, "localOrigin")
+	return GetOptionalBoolField(e.Data, "localOrigin")
 }
 func (e *DexLiquidityDepositEvent) GetOrderID() *string { return nil }
 
@@ -117,8 +117,8 @@ func (e *DexSwapEvent) GetBoughtAmount() *uint64 {
 }
 func (e *DexSwapEvent) GetLocalAmount() *uint64  { return nil }
 func (e *DexSwapEvent) GetRemoteAmount() *uint64 { return nil }
-func (e *DexSwapEvent) GetSuccess() *bool        { return getOptionalBoolField(e.Data, "success") }
-func (e *DexSwapEvent) GetLocalOrigin() *bool    { return getOptionalBoolField(e.Data, "localOrigin") }
+func (e *DexSwapEvent) GetSuccess() *bool        { return GetOptionalBoolField(e.Data, "success") }
+func (e *DexSwapEvent) GetLocalOrigin() *bool    { return GetOptionalBoolField(e.Data, "localOrigin") }
 func (e *DexSwapEvent) GetOrderID() *string      { return nil }
 
 // OrderBookSwapEvent represents an order book swap event
@@ -139,7 +139,7 @@ func (e *OrderBookSwapEvent) GetLocalAmount() *uint64  { return nil }
 func (e *OrderBookSwapEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *OrderBookSwapEvent) GetSuccess() *bool        { return nil }
 func (e *OrderBookSwapEvent) GetLocalOrigin() *bool    { return nil }
-func (e *OrderBookSwapEvent) GetOrderID() *string      { return getOptionalStringField(e.Data, "orderID") }
+func (e *OrderBookSwapEvent) GetOrderID() *string      { return GetOptionalStringField(e.Data, "orderID") }
 
 // AutomaticPauseEvent represents an automatic validator pause event
 type AutomaticPauseEvent struct {

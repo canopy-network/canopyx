@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { apiFetch } from '../../../lib/api'
 
 // Pool type definition
 interface Pool {
@@ -68,7 +69,7 @@ export function PoolList({ chainId }: PoolListProps) {
         params.set('cursor', cursor.toString())
       }
 
-      const response = await fetch(`/api/query/chains/${chainId}/pools?${params.toString()}`)
+      const response = await apiFetch(`/api/admin/chains/${chainId}/pools?${params.toString()}`)
 
       if (!response.ok) {
         throw new Error(`Failed to fetch pools: ${response.statusText}`)

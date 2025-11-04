@@ -2,10 +2,12 @@ package indexer
 
 import (
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 )
 
 const DexPoolPointsByHolderProductionTableName = "dex_pool_points_by_holder"
-const DexPoolPointsByHolderStagingTableName = DexPoolPointsByHolderProductionTableName + "_staging"
+const DexPoolPointsByHolderStagingTableName = DexPoolPointsByHolderProductionTableName + entities.StagingSuffix
 
 // DexPoolPointsByHolder represents a versioned snapshot of a liquidity provider's pool points.
 // Pool points represent ownership shares in a DEX liquidity pool, determining the proportion
@@ -28,20 +30,20 @@ const DexPoolPointsByHolderStagingTableName = DexPoolPointsByHolderProductionTab
 // materialized view, which calculates MIN(height) for each (address, pool_id) pair.
 type DexPoolPointsByHolder struct {
 	// Identity - composite key
-	Address string `ch:"address"` // Hex string representation of holder address
-	PoolID  uint64 `ch:"pool_id"` // Calculated pool ID (committee + LiquidityPoolAddend)
+	Address string `ch:"address" json:"address"` // Hex string representation of holder address
+	PoolID  uint64 `ch:"pool_id" json:"pool_id"` // Calculated pool ID (committee + LiquidityPoolAddend)
 
 	// Version tracking - every points change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 
 	// Chain context
-	Committee uint64 `ch:"committee"` // Committee ID (pool's chain ID)
+	Committee uint64 `ch:"committee" json:"committee"` // Committee ID (pool's chain ID)
 
 	// Pool points ownership
-	Points uint64 `ch:"points"` // Number of pool points owned by this holder
+	Points uint64 `ch:"points" json:"points"` // Number of pool points owned by this holder
 
 	// Derived values for convenience (calculated from pool state at height H)
-	LiquidityPoolPoints uint64 `ch:"liquidity_pool_points"` // Holder's share of liquidity pool: pool.Amount * holder.Points / pool.TotalPoints
-	LiquidityPoolID     uint64 `ch:"liquidity_pool_id"`     // Calculated liquidity pool ID (committee + LiquidityPoolAddend)
+	LiquidityPoolPoints uint64 `ch:"liquidity_pool_points" json:"liquidity_pool_points"` // Holder's share of liquidity pool: pool.Amount * holder.Points / pool.TotalPoints
+	LiquidityPoolID     uint64 `ch:"liquidity_pool_id" json:"liquidity_pool_id"`         // Calculated liquidity pool ID (committee + LiquidityPoolAddend)
 }

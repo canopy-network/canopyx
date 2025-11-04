@@ -26,10 +26,6 @@ RUN apk add --no-cache ca-certificates
 # Copy admin binary
 COPY --from=go-build /out/admin /app/admin
 
-# Copy OpenAPI spec for Swagger UI
-RUN mkdir -p /app/docs
-COPY --from=go-build /src/docs/openapi.yaml /app/docs/openapi.yaml
-
 # Non-root user
 RUN adduser -D -H app && chown -R app:app /app
 USER app

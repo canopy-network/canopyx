@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/canopy-network/canopyx/pkg/db/transform"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,7 +22,7 @@ func TestRpcPool_ToPool(t *testing.T) {
 		TotalPoolPoints: 1000,
 	}
 
-	dbPool := rpcPool.ToPool(100)
+	dbPool := transform.Pool(&rpcPool, 100)
 
 	assert.NotNil(t, dbPool)
 	assert.Equal(t, rpcPool.ID, dbPool.PoolID)
@@ -74,7 +75,7 @@ func TestHTTPClient_Pools(t *testing.T) {
 	})
 
 	client := newTestRPCClient(handler)
-	pools, err := client.Pools(context.Background())
+	pools, err := client.PoolsByHeight(context.Background())
 
 	require.NoError(t, err)
 	require.Len(t, pools, 2)

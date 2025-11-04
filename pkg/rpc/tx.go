@@ -2,11 +2,6 @@ package rpc
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"time"
-
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // Transaction represents a transaction from the RPC.
@@ -43,7 +38,7 @@ type Transaction struct {
 	TxHash string `json:"txHash"`
 }
 
-// DetectMessageType infers message type from RPC transaction data.
+// DetectMessageType infers a message type from RPC transaction data.
 // This examines the messageType field and message structure to determine the type.
 func DetectMessageType(msgType string, msg map[string]interface{}) MessageType {
 	// Normalize the message type string
@@ -158,7 +153,7 @@ func DetectMessageType(msgType string, msg map[string]interface{}) MessageType {
 	return MsgTypeUnknown
 }
 
-// parseMessage converts RPC transaction message into a typed Message interface.
+// ParseMessage converts RPC transaction message into a typed Message interface.
 // This handles all supported transaction types and falls back to UnknownMessage for unsupported types.
 func ParseMessage(msgType string, msgData map[string]interface{}) (Message, error) {
 	messageType := DetectMessageType(msgType, msgData)
@@ -285,14 +280,14 @@ func ParseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 			ChainID:    uint64(GetIntField(msgData, "chain_id")),
 			SellAmount: uint64(GetIntField(msgData, "sell_amount")),
 			BuyAmount:  uint64(GetIntField(msgData, "buy_amount")),
-			Price:      getFloat64Field(msgData, "price"),
+			Price:      GetFloat64Field(msgData, "price"),
 		}, nil
 
 	case MsgTypeEditOrder:
 		return &EditOrderMessage{
 			Signer:  GetStringField(msgData, "signer"),
 			OrderID: GetStringField(msgData, "order_id"),
-			Price:   getFloat64Field(msgData, "price"),
+			Price:   GetFloat64Field(msgData, "price"),
 		}, nil
 
 	case MsgTypeDeleteOrder:
@@ -307,7 +302,7 @@ func ParseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 			ChainID:    uint64(GetIntField(msgData, "chain_id")),
 			SellAmount: uint64(GetIntField(msgData, "sell_amount")),
 			BuyAmount:  uint64(GetIntField(msgData, "buy_amount")),
-			Price:      getFloat64Field(msgData, "price"),
+			Price:      GetFloat64Field(msgData, "price"),
 		}, nil
 
 	case MsgTypeDexLiquidityDeposit:
@@ -340,185 +335,13 @@ func ParseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 	}
 }
 
-// Helper functions to safely extract fields from map[string]interface{}
-
-func GetStringField(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func GetIntField(m map[string]interface{}, key string) int {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case int:
-			return val
-		case int64:
-			return int(val)
-		case float64:
-			return int(val)
-		}
-	}
-	return 0
-}
-
-func GetOptionalUint32Field(m map[string]interface{}, key string) *uint32 {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case int:
-			u := uint32(val)
-			return &u
-		case int64:
-			u := uint32(val)
-			return &u
-		case float64:
-			u := uint32(val)
-			return &u
-		case uint32:
-			return &val
-		}
-	}
-	return nil
-}
-
-func GetOptionalUint64Field(m map[string]interface{}, key string) *uint64 {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case int:
-			u := uint64(val)
-			return &u
-		case int64:
-			u := uint64(val)
-			return &u
-		case float64:
-			u := uint64(val)
-			return &u
-		case uint64:
-			return &val
-		}
-	}
-	return nil
-}
-
-func getFloat64Field(m map[string]interface{}, key string) float64 {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case float64:
-			return val
-		case float32:
-			return float64(val)
-		case int:
-			return float64(val)
-		case int64:
-			return float64(val)
-		}
-	}
-	return 0.0
-}
-
-func getOptionalStringField(m map[string]interface{}, key string) *string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return &s
-		}
-	}
-	return nil
-}
-
-func getOptionalBoolField(m map[string]interface{}, key string) *bool {
-	if v, ok := m[key]; ok {
-		if b, ok := v.(bool); ok {
-			return &b
-		}
-	}
-	return nil
-}
-
-// ToTransaction maps a rpc.Transaction into the single-table Transaction model.
-// This uses the new message parsing to extract type-specific fields.
-func (tx *Transaction) ToTransaction() (*indexer.Transaction, error) {
-	// Convert the msg struct to map for parsing
-	msgBytes, err := json.Marshal(tx.Transaction.Msg)
-	if err != nil {
-		return nil, fmt.Errorf("marshal message: %w", err)
-	}
-
-	var msgMap map[string]interface{}
-	if err := json.Unmarshal(msgBytes, &msgMap); err != nil {
-		return nil, fmt.Errorf("unmarshal message: %w", err)
-	}
-
-	// Parse message into typed interface
-	msg, err := ParseMessage(tx.MessageType, msgMap)
-	if err != nil {
-		return nil, fmt.Errorf("parse message: %w", err)
-	}
-
-	// Marshal full message to JSON (will be compressed by ClickHouse with ZSTD)
-	msgJSON, err := json.Marshal(msg)
-	if err != nil {
-		return nil, fmt.Errorf("marshal message to JSON: %w", err)
-	}
-
-	// Extract optional signature fields
-	var publicKey *string
-	if tx.Transaction.Signature.PublicKey != "" {
-		publicKey = &tx.Transaction.Signature.PublicKey
-	}
-	var signature *string
-	if tx.Transaction.Signature.Signature != "" {
-		signature = &tx.Transaction.Signature.Signature
-	}
-
-	return &indexer.Transaction{
-		Height:           uint64(tx.Height),
-		TxHash:           tx.TxHash,
-		Time:             time.UnixMicro(tx.Transaction.Time),
-		MessageType:      string(msg.Type()),
-		Signer:           msg.GetSigner(),
-		Counterparty:     msg.GetCounterparty(),
-		Amount:           msg.GetAmount(),
-		Fee:              uint64(tx.Transaction.Fee),
-		ValidatorAddress: msg.GetValidatorAddress(),
-		Commission:       msg.GetCommission(),
-		ChainID:          msg.GetChainID(),
-		SellAmount:       msg.GetSellAmount(),
-		BuyAmount:        msg.GetBuyAmount(),
-		LiquidityAmt:     msg.GetLiquidityAmount(),
-		OrderID:          msg.GetOrderID(),
-		Price:            msg.GetPrice(),
-		ParamKey:         msg.GetParamKey(),
-		ParamValue:       msg.GetParamValue(),
-		CommitteeID:      msg.GetCommitteeID(),
-		Recipient:        msg.GetRecipient(),
-		Msg:              string(msgJSON),
-		PublicKey:        publicKey,
-		Signature:        signature,
-	}, nil
-}
-
-// TxsByHeight returns all transactions for a given height.
-// Updated signature returns single array (no more TransactionRaw).
-func (c *HTTPClient) TxsByHeight(ctx context.Context, h uint64) ([]*indexer.Transaction, error) {
-	txs, txsErr := ListPaged[*Transaction](ctx, c, txsByHeightPath, map[string]any{"height": h})
+// TxsByHeight returns all raw RPC transactions for a given height.
+// Callers should convert to indexer models using transform.Transaction() if needed.
+func (c *HTTPClient) TxsByHeight(ctx context.Context, height uint64) ([]*Transaction, error) {
+	txs, txsErr := ListPaged[*Transaction](ctx, c, txsByHeightPath, NewQueryByHeightRequest(height))
 	if txsErr != nil {
 		return nil, txsErr
 	}
 
-	// Convert RPC transactions to DB model
-	dbTxs := make([]*indexer.Transaction, 0, len(txs))
-	for _, t := range txs {
-		tx, err := t.ToTransaction()
-		if err != nil {
-			// Log warning but continue processing other transactions
-			// In production, you might want to track failed transactions
-			continue
-		}
-		dbTxs = append(dbTxs, tx)
-	}
-
-	return dbTxs, nil
+	return txs, nil
 }

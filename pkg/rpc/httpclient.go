@@ -13,15 +13,7 @@ import (
 	"github.com/canopy-network/canopyx/pkg/utils"
 )
 
-const (
-	headPath             = "/v1/query/height"
-	accountsByHeightPath = "/v1/query/accounts"
-	blockByHeightPath    = "/v1/query/block-by-height"
-	txsByHeightPath      = "/v1/query/txs-by-height"
-	eventsByHeightPath   = "/v1/query/events-by-height"
-	dexPricePath         = "/v1/query/dex-price"
-	certByHeightPath     = "/v1/query/cert-by-height"
-)
+// Path constants moved to paths.go for centralized management
 
 // HTTPClient is a wrapper around an http.Client that implements a circuit-breaker and token-bucket.
 type HTTPClient struct {
@@ -211,21 +203,10 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, payload an
 				continue
 			}
 
-			// raw can be a primitive (like `12345`) or an object
-			// re-unmarshal accordingly into your out
-			if len(raw) > 0 && raw[0] != '{' && raw[0] != '[' {
-				// likely a bare number/string → wrap into object if your `out` expects struct
-				// e.g. {"height": <raw>}
-				wrapped := []byte(`{"height":` + string(raw) + `}`)
-				if err := json.Unmarshal(wrapped, out); err != nil {
-					lastErr = err
-					continue
-				}
-			} else {
-				if err := json.Unmarshal(raw, out); err != nil {
-					lastErr = err
-					continue
-				}
+			// Unmarshal the raw response directly into the output
+			if err := json.Unmarshal(raw, out); err != nil {
+				lastErr = err
+				continue
 			}
 		}
 
@@ -253,7 +234,7 @@ type pageResp[T any] struct {
 }
 
 // ListPaged lists all pages of a given path
-func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args QueryByHeightRequest) ([]T, error) {
+func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args any) ([]T, error) {
 	var first pageResp[T]
 	if err := c.doJSON(ctx, http.MethodPost, path, args, &first); err != nil {
 		return nil, err
@@ -271,9 +252,17 @@ func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args Quer
 	for p := 2; p <= first.TotalPages; p++ {
 		go func(page int) {
 			var pr pageResp[T]
-			payload := QueryByHeightRequest{}
-			for k, v := range args {
-				payload[k] = v
+			payload := map[string]any{}
+			// Convert args to map for pagination
+			if args != nil {
+				switch v := args.(type) {
+				case map[string]any:
+					for k, val := range v {
+						payload[k] = val
+					}
+				case QueryByHeightRequest:
+					payload["height"] = v.Height
+				}
 			}
 			payload["pageNumber"] = page
 			if err := c.doJSON(ctx, http.MethodPost, path, payload, &pr); err != nil {

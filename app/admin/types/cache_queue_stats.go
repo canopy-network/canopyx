@@ -1,8 +1,9 @@
 package types
 
 import (
-	"github.com/puzpuzpuz/xsync/v4"
 	"time"
+
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type CachedQueueStats struct {

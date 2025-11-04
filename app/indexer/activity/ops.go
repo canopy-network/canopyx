@@ -9,7 +9,7 @@ import (
 
 	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
-	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
+	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
@@ -130,7 +130,7 @@ func (c *Context) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (ui
 }
 
 // FindGaps identifies and retrieves missing height ranges (gaps) in the indexing progress for a chain.
-func (c *Context) FindGaps(ctx context.Context, in *types.ChainIdInput) ([]adminstore.Gap, error) {
+func (c *Context) FindGaps(ctx context.Context, in *types.ChainIdInput) ([]adminmodels.Gap, error) {
 	return c.AdminDB.FindGaps(ctx, in.ChainID)
 }
 
@@ -285,7 +285,7 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 	batchIsLive := types.IsLiveBlock(latest, in.StartHeight) && types.IsLiveBlock(latest, in.EndHeight)
 	batchIsHistorical := !types.IsLiveBlock(latest, in.StartHeight) && !types.IsLiveBlock(latest, in.EndHeight)
 
-	// Handle mixed batches - split at boundary
+	// Handle mixed batches - split at the boundary
 	if !batchIsLive && !batchIsHistorical {
 		logger.Info("Mixed batch detected, splitting by queue",
 			zap.Uint64("latest", latest),
@@ -303,7 +303,7 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 
 		var totalScheduled, totalFailed int
 
-		// Schedule historical portion (start to boundary) if it exists
+		// Schedule the historical portion (start to boundary) if it exists
 		if in.StartHeight <= boundary && boundary < in.EndHeight {
 			histEnd := boundary
 			if histEnd > in.EndHeight {

@@ -97,8 +97,8 @@ func TestIndexParams_Success_ParamsChanged(t *testing.T) {
 		GovParams:       currentParams.GovParams,
 	}
 
-	mockRPC.On("AllParams", mock.Anything, uint64(100)).Return(currentParams, nil)
-	mockRPC.On("AllParams", mock.Anything, uint64(99)).Return(previousParams, nil)
+	mockRPC.On("AllParamsByHeight", mock.Anything, uint64(100)).Return(currentParams, nil)
+	mockRPC.On("AllParamsByHeight", mock.Anything, uint64(99)).Return(previousParams, nil)
 
 	// Setup mock chain store
 	mockChainStore := &mockParamsChainStore{
@@ -179,8 +179,8 @@ func TestIndexParams_Success_NoChanges(t *testing.T) {
 		},
 	}
 
-	mockRPC.On("AllParams", mock.Anything, uint64(100)).Return(sameParams, nil)
-	mockRPC.On("AllParams", mock.Anything, uint64(99)).Return(sameParams, nil)
+	mockRPC.On("AllParamsByHeight", mock.Anything, uint64(100)).Return(sameParams, nil)
+	mockRPC.On("AllParamsByHeight", mock.Anything, uint64(99)).Return(sameParams, nil)
 
 	mockChainStore := &mockParamsChainStore{
 		chainID:      "chain-A",
@@ -251,7 +251,7 @@ func TestIndexParams_GenesisBlock(t *testing.T) {
 		},
 	}
 
-	mockRPC.On("AllParams", mock.Anything, uint64(1)).Return(genesisParams, nil)
+	mockRPC.On("AllParamsByHeight", mock.Anything, uint64(1)).Return(genesisParams, nil)
 
 	mockChainStore := &mockParamsChainStore{
 		chainID:      "chain-A",
@@ -304,7 +304,7 @@ func TestIndexParams_RPCError(t *testing.T) {
 	}
 
 	mockRPC := &mockParamsRPCClient{}
-	mockRPC.On("AllParams", mock.Anything, uint64(100)).Return((*rpc.RpcAllParams)(nil), assert.AnError)
+	mockRPC.On("AllParamsByHeight", mock.Anything, uint64(100)).Return((*rpc.RpcAllParams)(nil), assert.AnError)
 
 	mockChainStore := &mockParamsChainStore{
 		chainID:      "chain-A",

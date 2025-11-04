@@ -9,7 +9,7 @@ import (
 // UpdateRPCHealth updates the RPC health status for a chain.
 // This method should be called by the headscan workflow when it checks RPC endpoint reachability.
 // It inserts a new row with updated RPC health fields, leveraging ClickHouse's ReplacingMergeTree.
-func (db *AdminDB) UpdateRPCHealth(ctx context.Context, chainID uint64, status, message string) error {
+func (db *DB) UpdateRPCHealth(ctx context.Context, chainID uint64, status, message string) error {
 	if chainID == 0 {
 		return fmt.Errorf("chain_id is required")
 	}
@@ -30,7 +30,7 @@ func (db *AdminDB) UpdateRPCHealth(ctx context.Context, chainID uint64, status, 
 	current.UpdatedAt = time.Now()
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
-	if err := db.insertChain(ctx, current); err != nil {
+	if err := db.InsertChain(ctx, current); err != nil {
 		return fmt.Errorf("insert rpc health update for chain %d: %w", chainID, err)
 	}
 
@@ -41,7 +41,7 @@ func (db *AdminDB) UpdateRPCHealth(ctx context.Context, chainID uint64, status, 
 // UpdateQueueHealth updates the queue health status for a chain.
 // This method should be called by the controller when it monitors queue backlog metrics.
 // It inserts a new row with updated queue health fields.
-func (db *AdminDB) UpdateQueueHealth(ctx context.Context, chainID uint64, status, message string) error {
+func (db *DB) UpdateQueueHealth(ctx context.Context, chainID uint64, status, message string) error {
 	if chainID == 0 {
 		return fmt.Errorf("chain_id is required")
 	}
@@ -62,7 +62,7 @@ func (db *AdminDB) UpdateQueueHealth(ctx context.Context, chainID uint64, status
 	current.UpdatedAt = time.Now()
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
-	if err := db.insertChain(ctx, current); err != nil {
+	if err := db.InsertChain(ctx, current); err != nil {
 		return fmt.Errorf("insert queue health update for chain %d: %w", chainID, err)
 	}
 
@@ -73,7 +73,7 @@ func (db *AdminDB) UpdateQueueHealth(ctx context.Context, chainID uint64, status
 // UpdateDeploymentHealth updates the deployment health status for a chain.
 // This method should be called by the controller when it checks k8s pod/deployment status.
 // It inserts a new row with updated deployment health fields.
-func (db *AdminDB) UpdateDeploymentHealth(ctx context.Context, chainID uint64, status, message string) error {
+func (db *DB) UpdateDeploymentHealth(ctx context.Context, chainID uint64, status, message string) error {
 	if chainID == 0 {
 		return fmt.Errorf("chain_id is required")
 	}
@@ -94,7 +94,7 @@ func (db *AdminDB) UpdateDeploymentHealth(ctx context.Context, chainID uint64, s
 	current.UpdatedAt = time.Now()
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
-	if err := db.insertChain(ctx, current); err != nil {
+	if err := db.InsertChain(ctx, current); err != nil {
 		return fmt.Errorf("insert deployment health update for chain %d: %w", chainID, err)
 	}
 
@@ -106,7 +106,7 @@ func (db *AdminDB) UpdateDeploymentHealth(ctx context.Context, chainID uint64, s
 // based on its RPC, queue, and deployment health statuses.
 // Overall health is the worst status among the three subsystems:
 // unknown < healthy < degraded/warning < critical/unreachable/failed
-func (db *AdminDB) updateOverallHealth(ctx context.Context, chainID uint64) error {
+func (db *DB) updateOverallHealth(ctx context.Context, chainID uint64) error {
 	if chainID == 0 {
 		return fmt.Errorf("chain_id is required")
 	}
@@ -134,7 +134,7 @@ func (db *AdminDB) updateOverallHealth(ctx context.Context, chainID uint64) erro
 	current.UpdatedAt = time.Now()
 
 	// Insert new row (ReplacingMergeTree will handle deduplication)
-	if err := db.insertChain(ctx, current); err != nil {
+	if err := db.InsertChain(ctx, current); err != nil {
 		return fmt.Errorf("insert overall health update for chain %d: %w", chainID, err)
 	}
 
@@ -143,7 +143,7 @@ func (db *AdminDB) updateOverallHealth(ctx context.Context, chainID uint64) erro
 
 // computeOverallHealthStatus determines the worst health status among multiple subsystems.
 // The priority order (worst to best) is: failed/critical/unreachable > warning/degraded > healthy > unknown
-func (db *AdminDB) computeOverallHealthStatus(statuses ...string) string {
+func (db *DB) computeOverallHealthStatus(statuses ...string) string {
 	// Priority map (higher number = worse health)
 	priority := map[string]int{
 		"failed":      5,

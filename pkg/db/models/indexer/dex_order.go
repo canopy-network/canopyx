@@ -2,10 +2,12 @@ package indexer
 
 import (
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 )
 
 const DexOrdersProductionTableName = "dex_orders"
-const DexOrdersStagingTableName = DexOrdersProductionTableName + "_staging"
+const DexOrdersStagingTableName = DexOrdersProductionTableName + entities.StagingSuffix
 
 // DexOrder represents a versioned snapshot of a DEX limit order.
 // DEX orders are AMM-based cross-chain swaps that go through a batch lifecycle.
@@ -26,29 +28,29 @@ const DexOrdersStagingTableName = DexOrdersProductionTableName + "_staging"
 // if they need to know when an order was created.
 type DexOrder struct {
 	// Identity
-	OrderID string `ch:"order_id"` // Hex string representation of order ID
+	OrderID string `ch:"order_id" json:"order_id"` // Hex string representation of order ID
 
 	// Version tracking - every state change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 
 	// Chain context
-	Committee uint64 `ch:"committee"` // Committee ID (counter-asset chain ID)
+	Committee uint64 `ch:"committee" json:"committee"` // Committee ID (counter-asset chain ID)
 
 	// Order details (from DexLimitOrder)
-	Address         string `ch:"address"`          // Hex string representation of address
-	AmountForSale   uint64 `ch:"amount_for_sale"`  // Amount of asset being sold
-	RequestedAmount uint64 `ch:"requested_amount"` // Minimum amount of counter-asset to receive
+	Address         string `ch:"address" json:"address"`                   // Hex string representation of address
+	AmountForSale   uint64 `ch:"amount_for_sale" json:"amount_for_sale"`   // Amount of asset being sold
+	RequestedAmount uint64 `ch:"requested_amount" json:"requested_amount"` // Minimum amount of counter-asset to receive
 
 	// Lifecycle state
-	State string `ch:"state"` // "future", "locked", or "complete"
+	State string `ch:"state" json:"state"` // "future", "locked", or "complete"
 
 	// Execution results (populated by EventDexSwap when state=complete)
-	Success      bool   `ch:"success"`       // Whether swap succeeded
-	SoldAmount   uint64 `ch:"sold_amount"`   // Actual amount sold (from event)
-	BoughtAmount uint64 `ch:"bought_amount"` // Actual amount bought (from event)
-	LocalOrigin  bool   `ch:"local_origin"`  // Did user sell on this chain or counter chain
+	Success      bool   `ch:"success" json:"success"`             // Whether swap succeeded
+	SoldAmount   uint64 `ch:"sold_amount" json:"sold_amount"`     // Actual amount sold (from event)
+	BoughtAmount uint64 `ch:"bought_amount" json:"bought_amount"` // Actual amount bought (from event)
+	LocalOrigin  bool   `ch:"local_origin" json:"local_origin"`   // Did user sell on this chain or counter chain
 
 	// Batch tracking
-	LockedHeight uint64 `ch:"locked_height"` // Height when order was locked (moved from next -> current batch)
+	LockedHeight uint64 `ch:"locked_height" json:"locked_height"` // Height when order was locked (moved from next -> current batch)
 }

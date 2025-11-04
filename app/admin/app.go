@@ -10,7 +10,6 @@ import (
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/canopy-network/canopyx/pkg/utils"
-	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
 )
 
@@ -46,13 +45,6 @@ func Initialize(ctx context.Context) *types.App {
 	}
 	logger.Info("Temporal namespace ready", zap.String("namespace", temporalClient.Namespace))
 
-	// This will listen to workflows/activities for the ManagerQueue (head, gap, etc.)
-	managerTemporalWorker := worker.New(temporalClient.TClient, temporalClient.ManagerQueue, worker.Options{
-		MaxConcurrentWorkflowTaskPollers: 10,
-		MaxConcurrentActivityTaskPollers: 10,
-		WorkerStopTimeout:                1 * time.Minute,
-	})
-
 	// Initialize Redis client for real-time WebSocket events (optional)
 	var redisClient *redis.Client
 	if utils.Env("REDIS_ENABLED", "false") == "true" {
@@ -81,9 +73,6 @@ func Initialize(ctx context.Context) *types.App {
 
 		// Logger initialization
 		Logger: logger,
-
-		// Worker initialization
-		Worker: managerTemporalWorker,
 
 		// Queue stats cache initialization (30s TTL to reduce Temporal API rate limiting)
 		QueueStatsCache: types.NewQueueStatsCache(),

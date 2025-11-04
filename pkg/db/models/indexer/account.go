@@ -2,10 +2,12 @@ package indexer
 
 import (
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 )
 
 const AccountsProductionTableName = "accounts"
-const AccountsStagingTableName = AccountsProductionTableName + "_staging"
+const AccountsStagingTableName = AccountsProductionTableName + entities.StagingSuffix
 
 // Account represents a versioned snapshot of an account balance.
 // Snapshots are created ONLY when the balance changes (not every block).
@@ -22,12 +24,12 @@ const AccountsStagingTableName = AccountsProductionTableName + "_staging"
 // if they need to know when an account was created.
 type Account struct {
 	// Identity
-	Address string `ch:"address"` // Hex string representation of address
+	Address string `ch:"address" json:"address"` // Hex string representation of address
 
 	// Balance (using uint64 to match the blockchain's native type)
-	Amount uint64 `ch:"amount"` // Account balance in uCNPY (micro-denomination)
+	Amount uint64 `ch:"amount" json:"amount"` // Account balance in uCNPY (micro-denomination)
 
 	// Version tracking - every balance change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 }

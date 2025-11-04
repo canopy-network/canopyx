@@ -37,6 +37,11 @@ spec:
             # Temporal Connection
             - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.default.svc.cluster.local:7233" }
             - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
+            # Redis Connection (for WebSocket real-time events)
+            - { name: REDIS_ENABLED, value: "true" }
+            - { name: REDIS_HOST, value: "redis-master.default.svc.cluster.local" }
+            - { name: REDIS_PORT, value: "6379" }
+            - { name: REDIS_PASSWORD, value: "canopy-redis-dev" }
           ports:
             - name: http
               containerPort: 3000

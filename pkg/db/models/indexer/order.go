@@ -22,21 +22,21 @@ const OrdersStagingTableName = "orders_staging"
 // if they need to know when an order was created.
 type Order struct {
 	// Identity - OrderID is the unique identifier for this order
-	OrderID string `ch:"order_id"` // Unique order identifier
+	OrderID string `ch:"order_id" json:"order_id"` // Unique order identifier
 
 	// Version tracking - every state change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 
 	// Order Details
-	Committee       uint64  `ch:"committee"`        // Committee ID for the order
-	AmountForSale   uint64  `ch:"amount_for_sale"`  // Amount being sold
-	RequestedAmount uint64  `ch:"requested_amount"` // Amount requested in return
-	SellerAddress   string  `ch:"seller_address"`   // Address of the seller
-	BuyerAddress    *string `ch:"buyer_address"`    // Address of the buyer (null if not filled)
-	Deadline        *uint64 `ch:"deadline"`         // Order deadline height (null if no deadline)
+	Committee       uint64  `ch:"committee" json:"committee"`               // Committee ID for the order
+	AmountForSale   uint64  `ch:"amount_for_sale" json:"amount_for_sale"`   // Amount being sold
+	RequestedAmount uint64  `ch:"requested_amount" json:"requested_amount"` // Amount requested in return
+	SellerAddress   string  `ch:"seller_address" json:"seller_address"`     // Address of the seller
+	BuyerAddress    *string `ch:"buyer_address" json:"buyer_address"`       // Address of the buyer (null if not filled)
+	Deadline        *uint64 `ch:"deadline" json:"deadline"`                 // Order deadline height (null if no deadline)
 
 	// Status tracking (LowCardinality for efficient filtering)
 	// Possible values: "open", "filled", "cancelled", "expired"
-	Status string `ch:"status"` // LowCardinality(String) for efficient filtering
+	Status string `ch:"status" json:"status"` // LowCardinality(String) for efficient filtering
 }

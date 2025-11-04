@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
+	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"github.com/go-jose/go-jose/v4/json"
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
@@ -31,26 +32,19 @@ func (c *Controller) HandleSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate table name to prevent SQL injection
-	// Accept both underscore (database names) and dash (API route names)
-	validTables := map[string]string{
-		"blocks":          "blocks",
-		"block_summaries": "block_summaries",
-		"block-summaries": "block_summaries", // API route format
-		"transactions":    "txs",
-		"accounts":        "accounts",
-		"events":          "events",
-		"pools":           "pools",
-		"orders":          "orders",
-		"dex_prices":      "dex_prices",
-		"dex-prices":      "dex_prices", // API route format
-	}
+	// Validate and normalize table name using entities package
+	// Strip _staging suffix if present to get base entity name
+	baseTableName := strings.TrimSuffix(tableName, entities.StagingSuffix)
 
-	actualTable, ok := validTables[tableName]
-	if !ok {
-		http.Error(w, "invalid table name. Must be one of: blocks, block-summaries, transactions, accounts, events, pools, orders, dex-prices", http.StatusBadRequest)
+	// Validate entity name
+	_, err := entities.FromString(baseTableName)
+	if err != nil {
+		http.Error(w, "invalid table name: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Use the actual table name (with _staging suffix if it was provided)
+	actualTable := tableName
 
 	ctx := context.Background()
 

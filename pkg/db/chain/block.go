@@ -35,7 +35,7 @@ func (db *DB) initBlocks(ctx context.Context) error {
 			parent_hash String,
 			proposer_address String,
 			size Int32
-		) ENGINE = MergeTree()
+		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height)
 	`, db.Name, indexermodels.BlocksStagingTableName)
 	if err := db.Exec(ctx, stagingQuery); err != nil {

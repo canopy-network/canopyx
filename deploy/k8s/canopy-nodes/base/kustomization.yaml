@@ -16,6 +16,13 @@ resources:
   - node-2-deployment.yaml
   - node-2-service.yaml
 
+  # Node 3 Resources
+  - node-3-configmap-config.yaml
+  - node-3-configmap-genesis.yaml
+  - node-3-configmap-keystore.yaml
+  - node-3-deployment.yaml
+  - node-3-service.yaml
+
 commonLabels:
   app.kubernetes.io/component: blockchain
   app.kubernetes.io/part-of: canopyx

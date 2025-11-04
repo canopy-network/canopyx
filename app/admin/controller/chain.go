@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/canopy-network/canopyx/app/admin/controller/types"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/canopy-network/canopyx/app/admin/controller/types"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/alitto/pond/v2"
@@ -329,18 +330,16 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 				}
 			}(rows)
 			for rows.Next() {
-				var id string
+				var chainID uint64
 				var last uint64
-				if err := rows.Scan(&id, &last); err != nil {
+				if err := rows.Scan(&chainID, &last); err != nil {
+					c.App.Logger.Warn("Failed to scan index progress row", zap.Error(err))
 					continue
 				}
+				id := fmt.Sprintf("%d", chainID)
 				cs, ok := out.Load(id)
 				if !ok {
-					idUint, parseErr := strconv.ParseUint(id, 10, 64)
-					if parseErr != nil {
-						continue
-					}
-					cs = admintypes.ChainStatus{ChainID: idUint}
+					cs = admintypes.ChainStatus{ChainID: chainID}
 				}
 				cs.LastIndexed = last
 				out.Store(id, cs)
@@ -367,18 +366,16 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 				}
 			}(rows)
 			for rows.Next() {
-				var id string
+				var chainID uint64
 				var last uint64
-				if err := rows.Scan(&id, &last); err != nil {
+				if err := rows.Scan(&chainID, &last); err != nil {
+					c.App.Logger.Warn("Failed to scan fallback index progress row", zap.Error(err))
 					continue
 				}
+				id := fmt.Sprintf("%d", chainID)
 				cs, ok := out.Load(id)
 				if !ok {
-					idUint, parseErr := strconv.ParseUint(id, 10, 64)
-					if parseErr != nil {
-						continue
-					}
-					cs = admintypes.ChainStatus{ChainID: idUint}
+					cs = admintypes.ChainStatus{ChainID: chainID}
 				}
 				if cs.LastIndexed == 0 {
 					cs.LastIndexed = last
@@ -837,8 +834,18 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 				zap.Duration("cache_age", cacheAge),
 				zap.Int64("ops_pending_workflows", cached.OpsQueue.PendingWorkflow),
 			)
-			// TODO: this need to be fixed, we have 3 queues, ops, live, historical
-			return cached.OpsQueue, cached.OpsQueue, nil
+			// Return aggregated indexer stats (live + historical combined)
+			aggregatedIndexer := admintypes.QueueStatus{
+				PendingWorkflow: cached.LiveQueue.PendingWorkflow + cached.HistoricalQueue.PendingWorkflow,
+				PendingActivity: cached.LiveQueue.PendingActivity + cached.HistoricalQueue.PendingActivity,
+				Pollers:         cached.LiveQueue.Pollers + cached.HistoricalQueue.Pollers,
+				BacklogAgeSecs:  cached.LiveQueue.BacklogAgeSecs,
+			}
+			// Use max backlog age (worst case)
+			if cached.HistoricalQueue.BacklogAgeSecs > aggregatedIndexer.BacklogAgeSecs {
+				aggregatedIndexer.BacklogAgeSecs = cached.HistoricalQueue.BacklogAgeSecs
+			}
+			return cached.OpsQueue, aggregatedIndexer, nil
 		}
 	}
 
@@ -847,8 +854,10 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 
 	// Query both queues in parallel for better performance using the enhanced API
 	type queueResult struct {
-		stats admintypes.QueueStatus
-		err   error
+		stats           admintypes.QueueStatus
+		liveStats       admintypes.QueueStatus // Individual live queue stats
+		historicalStats admintypes.QueueStatus // Individual historical queue stats
+		err             error
 	}
 
 	opsChannel := make(chan queueResult, 1)
@@ -868,7 +877,12 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 		// Use the common GetQueueStats function with enhanced API
 		pendingWorkflows, pendingActivities, pollerCount, backlogAge, err := temporalClient.GetQueueStats(reqCtx, queueName)
 		if err != nil {
-			opsChannel <- queueResult{stats: opsStats, err: err}
+			opsChannel <- queueResult{
+				stats:           opsStats,
+				liveStats:       admintypes.QueueStatus{},
+				historicalStats: admintypes.QueueStatus{},
+				err:             err,
+			}
 			return
 		}
 
@@ -878,7 +892,12 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 			Pollers:         pollerCount,
 			BacklogAgeSecs:  backlogAge,
 		}
-		opsChannel <- queueResult{stats: stats, err: nil}
+		opsChannel <- queueResult{
+			stats:           stats,
+			liveStats:       admintypes.QueueStatus{},
+			historicalStats: admintypes.QueueStatus{},
+			err:             nil,
+		}
 	}()
 
 	// Query BOTH live and historical queues and aggregate them for backward compatibility
@@ -923,10 +942,26 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 		// Return error only if BOTH queues failed
 		if liveErr != nil && histErr != nil {
 			indexerChannel <- queueResult{
-				stats: indexerStats,
-				err:   fmt.Errorf("both queues failed: live=%v, historical=%v", liveErr, histErr),
+				stats:           indexerStats,
+				liveStats:       admintypes.QueueStatus{},
+				historicalStats: admintypes.QueueStatus{},
+				err:             fmt.Errorf("both queues failed: live=%v, historical=%v", liveErr, histErr),
 			}
 			return
+		}
+
+		// Create individual queue stats
+		liveQueueStats := admintypes.QueueStatus{
+			PendingWorkflow: livePendingWF,
+			PendingActivity: livePendingAct,
+			Pollers:         livePollers,
+			BacklogAgeSecs:  liveBacklogAge,
+		}
+		historicalQueueStats := admintypes.QueueStatus{
+			PendingWorkflow: histPendingWF,
+			PendingActivity: histPendingAct,
+			Pollers:         histPollers,
+			BacklogAgeSecs:  histBacklogAge,
 		}
 
 		// Aggregate stats from both queues
@@ -940,31 +975,19 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 			maxBacklogAge = histBacklogAge
 		}
 
-		// Store individual queue stats in cache for visibility
-		if cached, ok := c.App.QueueStatsCache.Load(chainID); ok {
-			cached.LiveQueue = admintypes.QueueStatus{
-				PendingWorkflow: livePendingWF,
-				PendingActivity: livePendingAct,
-				Pollers:         livePollers,
-				BacklogAgeSecs:  liveBacklogAge,
-			}
-			cached.HistoricalQueue = admintypes.QueueStatus{
-				PendingWorkflow: histPendingWF,
-				PendingActivity: histPendingAct,
-				Pollers:         histPollers,
-				BacklogAgeSecs:  histBacklogAge,
-			}
-			c.App.QueueStatsCache.Store(chainID, cached)
-		}
-
-		// Return aggregated stats for backward compatibility
-		stats := admintypes.QueueStatus{
+		// Return aggregated stats for backward compatibility, plus individual stats
+		aggregatedStats := admintypes.QueueStatus{
 			PendingWorkflow: totalPendingWF,
 			PendingActivity: totalPendingAct,
 			Pollers:         totalPollers,
 			BacklogAgeSecs:  maxBacklogAge,
 		}
-		indexerChannel <- queueResult{stats: stats, err: nil}
+		indexerChannel <- queueResult{
+			stats:           aggregatedStats,
+			liveStats:       liveQueueStats,
+			historicalStats: historicalQueueStats,
+			err:             nil,
+		}
 	}()
 
 	// Collect results
@@ -1004,11 +1027,11 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 		zap.Int("indexer_pollers", indexerStats.Pollers),
 	)
 
-	// Store all queues in a cache (including live and historical)
+	// Store all queues in cache (ops + individual live + historical stats)
 	c.App.QueueStatsCache.Store(chainID, admintypes.CachedQueueStats{
 		OpsQueue:        opsStats,
-		LiveQueue:       admintypes.QueueStatus{}, // Will be populated when a dual-queue is implemented
-		HistoricalQueue: admintypes.QueueStatus{}, // Will be populated when a dual-queue is implemented
+		LiveQueue:       indexerResult.liveStats,
+		HistoricalQueue: indexerResult.historicalStats,
 		Fetched:         time.Now(),
 	})
 

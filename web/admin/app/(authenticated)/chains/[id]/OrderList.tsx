@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { apiFetch } from '../../../lib/api'
 
 // Order type definition
 interface Order {
@@ -114,7 +115,7 @@ export function OrderList({ chainId }: OrderListProps) {
         params.set('status', selectedStatus)
       }
 
-      const response = await fetch(`/api/query/chains/${chainId}/orders?${params.toString()}`)
+      const response = await apiFetch(`/api/admin/chains/${chainId}/orders?${params.toString()}`)
 
       if (!response.ok) {
         throw new Error(`Failed to fetch orders: ${response.statusText}`)

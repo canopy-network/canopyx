@@ -14,18 +14,18 @@ const (
 // Committees are only inserted when their data changes to maintain a sparse historical record.
 type Committee struct {
 	// Primary identifier
-	ChainID uint64 `ch:"chain_id"` // Unique identifier of the chain/committee
+	ChainID uint64 `ch:"chain_id" json:"chain_id"` // Unique identifier of the chain/committee
 
 	// Committee state tracking
-	LastRootHeightUpdated  uint64 `ch:"last_root_height_updated"`  // Canopy height of most recent Certificate Results tx
-	LastChainHeightUpdated uint64 `ch:"last_chain_height_updated"` // 3rd party chain height of most recent Certificate Results
-	NumberOfSamples        uint64 `ch:"number_of_samples"`         // Count of processed Certificate Result Transactions
+	LastRootHeightUpdated  uint64 `ch:"last_root_height_updated" json:"last_root_height_updated"`   // Canopy height of most recent Certificate Results tx
+	LastChainHeightUpdated uint64 `ch:"last_chain_height_updated" json:"last_chain_height_updated"` // 3rd party chain height of most recent Certificate Results
+	NumberOfSamples        uint64 `ch:"number_of_samples" json:"number_of_samples"`                 // Count of processed Certificate Result Transactions
 
 	// Status flags
-	Subsidized bool `ch:"subsidized"` // Whether committee meets stake requirement for subsidies
-	Retired    bool `ch:"retired"`    // Whether committee has shut down and is forever unsubsidized
+	Subsidized bool `ch:"subsidized" json:"subsidized"` // Whether committee meets stake requirement for subsidies
+	Retired    bool `ch:"retired" json:"retired"`       // Whether committee has shut down and is forever unsubsidized
 
 	// Block context
-	Height     uint64    `ch:"height"`      // Block height when this committee state became effective
-	HeightTime time.Time `ch:"height_time"` // Timestamp of the block
+	Height     uint64    `ch:"height" json:"height"`           // Block height when this committee state became effective
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Timestamp of the block
 }

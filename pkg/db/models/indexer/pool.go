@@ -56,3 +56,19 @@ func (p *Pool) CalculatePoolIDs() {
 	p.EscrowPoolID = EscrowPoolAddend + p.ChainID
 	p.RewardPoolID = p.ChainID
 }
+
+// ExtractChainIDFromPoolID extracts the chain ID from a pool ID.
+// Pool IDs are encoded as: TypeAddend + ChainID
+// where TypeAddend is 0 (reward), 16384 (holding), 32768 (liquidity), or 65536 (escrow)
+func ExtractChainIDFromPoolID(poolID uint64) uint64 {
+	switch {
+	case poolID >= EscrowPoolAddend:
+		return poolID - EscrowPoolAddend
+	case poolID >= LiquidityPoolAddend:
+		return poolID - LiquidityPoolAddend
+	case poolID >= HoldingPoolAddend:
+		return poolID - HoldingPoolAddend
+	default:
+		return poolID // Reward pool: ID = ChainID
+	}
+}

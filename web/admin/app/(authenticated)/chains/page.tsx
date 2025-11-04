@@ -208,11 +208,18 @@ export default function ChainsPage() {
         const errorData = await res.json().catch(() => ({ error: 'Failed to create chain' }))
         throw new Error(errorData.error || 'Failed to create chain')
       }
-      notify('Chain created successfully')
+
+      // Show success message
+      if (data.chain_id === 0) {
+        notify('Chain created successfully (chain ID auto-detected from RPC endpoints)')
+      } else {
+        notify('Chain created successfully')
+      }
+
       setCreateDialogOpen(false)
       await loadChains()
     } catch (err: any) {
-      notify(err.message || 'Failed to create chain', 'error')
+      // Re-throw the error so the CreateChainDialog can display it inline
       throw err
     } finally {
       setSaving(false)

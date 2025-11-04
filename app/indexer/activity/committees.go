@@ -33,18 +33,18 @@ func (c *Context) IndexCommittees(ctx context.Context, in types.IndexCommitteesI
 	cli := c.rpcClient(ch.RPCEndpoints)
 
 	// Fetch committees at current height (H)
-	committeesAtH, err := cli.CommitteesData(ctx, in.Height)
+	committeesAtH, err := cli.CommitteesDataByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height, err)
 	}
 
 	// Also fetch subsidized and retired lists at H
-	subsidizedAtH, err := cli.SubsidizedCommittees(ctx, in.Height)
+	subsidizedAtH, err := cli.SubsidizedCommitteesByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height, err)
 	}
 
-	retiredAtH, err := cli.RetiredCommittees(ctx, in.Height)
+	retiredAtH, err := cli.RetiredCommitteesByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height, err)
 	}
@@ -87,18 +87,18 @@ func (c *Context) IndexCommittees(ctx context.Context, in types.IndexCommitteesI
 			zap.Int("numCommittees", len(changedCommittees)))
 	} else {
 		// Fetch committees at previous height (H-1)
-		committeesAtH1, err := cli.CommitteesData(ctx, in.Height-1)
+		committeesAtH1, err := cli.CommitteesDataByHeight(ctx, in.Height-1)
 		if err != nil {
 			return types.IndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height-1, err)
 		}
 
 		// Fetch subsidized and retired lists at H-1
-		subsidizedAtH1, err := cli.SubsidizedCommittees(ctx, in.Height-1)
+		subsidizedAtH1, err := cli.SubsidizedCommitteesByHeight(ctx, in.Height-1)
 		if err != nil {
 			return types.IndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height-1, err)
 		}
 
-		retiredAtH1, err := cli.RetiredCommittees(ctx, in.Height-1)
+		retiredAtH1, err := cli.RetiredCommitteesByHeight(ctx, in.Height-1)
 		if err != nil {
 			return types.IndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height-1, err)
 		}

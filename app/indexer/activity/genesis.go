@@ -53,7 +53,7 @@ func (c *Context) EnsureGenesisCached(ctx context.Context, input types.EnsureGen
 		zap.Uint64("chainId", input.ChainID))
 
 	cli := c.rpcClient(ch.RPCEndpoints)
-	genesis, err := cli.GetGenesisState(ctx, 0)
+	genesis, err := cli.StateByHeight(ctx, 0)
 	if err != nil {
 		return err
 	}

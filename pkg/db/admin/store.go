@@ -13,7 +13,7 @@ type Store interface {
 	RecordIndexed(ctx context.Context, chainID uint64, height uint64, blockTime time.Time, indexingTimeMs float64, indexingDetail string) error
 	ListChain(ctx context.Context) ([]admin.Chain, error)
 	LastIndexed(ctx context.Context, chainID uint64) (uint64, error)
-	FindGaps(ctx context.Context, chainID uint64) ([]Gap, error)
+	FindGaps(ctx context.Context, chainID uint64) ([]admin.Gap, error)
 	UpdateRPCHealth(ctx context.Context, chainID uint64, status, message string) error
 	IndexProgressHistory(ctx context.Context, chainID uint64, hours, intervalMinutes int) ([]admin.ProgressPoint, error)
 }

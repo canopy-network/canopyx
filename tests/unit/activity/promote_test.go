@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/canopy-network/canopyx/app/indexer/activity"
 	"testing"
 	"time"
+
+	"github.com/canopy-network/canopyx/app/indexer/activity"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"

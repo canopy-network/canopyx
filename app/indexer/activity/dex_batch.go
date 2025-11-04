@@ -61,38 +61,39 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 	// Create RPC client
 	cli := c.rpcClient(ch.RPCEndpoints)
 
-	// Parallel RPC fetch: DexBatch(H) and NextDexBatch(H)
+	// Parallel RPC fetch: ALL DexBatches(H) and ALL NextDexBatches(H) in a single call each
+	// Using committee=0 returns all committees' batches
 	var (
-		currentBatch *rpc.RpcDexBatch
-		nextBatch    *rpc.RpcDexBatch
-		currentErr   error
-		nextErr      error
-		wg           sync.WaitGroup
+		currentBatches []*rpc.RpcDexBatch
+		nextBatches    []*rpc.RpcDexBatch
+		currentErr     error
+		nextErr        error
+		wg             sync.WaitGroup
 	)
 
 	wg.Add(2)
 
-	// Worker 1: Fetch current batch (locked orders)
+	// Worker 1: Fetch ALL current batches (locked orders across all committees)
 	go func() {
 		defer wg.Done()
-		currentBatch, currentErr = cli.DexBatchByHeight(ctx, in.Height, in.Committee)
+		currentBatches, currentErr = cli.AllDexBatchesByHeight(ctx, in.Height)
 	}()
 
-	// Worker 2: Fetch next batch (future orders)
+	// Worker 2: Fetch ALL next batches (future orders across all committees)
 	go func() {
 		defer wg.Done()
-		nextBatch, nextErr = cli.NextDexBatchByHeight(ctx, in.Height, in.Committee)
+		nextBatches, nextErr = cli.AllNextDexBatchesByHeight(ctx, in.Height)
 	}()
 
 	// Wait for both workers
 	wg.Wait()
 
-	// Check for errors (nil batch is acceptable - means no batch at this height)
+	// Check for errors (empty batches is acceptable - means no batches at this height)
 	if currentErr != nil {
-		return types.IndexDexBatchOutput{}, fmt.Errorf("fetch dex batch at height %d: %w", in.Height, currentErr)
+		return types.IndexDexBatchOutput{}, fmt.Errorf("fetch all dex batches at height %d: %w", in.Height, currentErr)
 	}
 	if nextErr != nil {
-		return types.IndexDexBatchOutput{}, fmt.Errorf("fetch next dex batch at height %d: %w", in.Height, nextErr)
+		return types.IndexDexBatchOutput{}, fmt.Errorf("fetch all next dex batches at height %d: %w", in.Height, nextErr)
 	}
 
 	// Query events from staging table
@@ -127,17 +128,17 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 		}
 	}
 
-	// Process orders
+	// Process orders from ALL committees
 	orders := make([]*indexer.DexOrder, 0)
 
 	// Process current batch orders (state=locked or state=complete if event exists)
-	if currentBatch != nil {
+	for _, currentBatch := range currentBatches {
 		for _, rpcOrder := range currentBatch.Orders {
 			order := &indexer.DexOrder{
 				OrderID:         rpcOrder.OrderID,
 				Height:          in.Height,
 				HeightTime:      in.BlockTime,
-				Committee:       in.Committee,
+				Committee:       currentBatch.Committee, // Use committee from batch
 				Address:         rpcOrder.Address,
 				AmountForSale:   rpcOrder.AmountForSale,
 				RequestedAmount: rpcOrder.RequestedAmount,
@@ -168,13 +169,13 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 	}
 
 	// Process next batch orders (state=future)
-	if nextBatch != nil {
+	for _, nextBatch := range nextBatches {
 		for _, rpcOrder := range nextBatch.Orders {
 			order := &indexer.DexOrder{
 				OrderID:         rpcOrder.OrderID,
 				Height:          in.Height,
 				HeightTime:      in.BlockTime,
-				Committee:       in.Committee,
+				Committee:       nextBatch.Committee, // Use committee from batch
 				Address:         rpcOrder.Address,
 				AmountForSale:   rpcOrder.AmountForSale,
 				RequestedAmount: rpcOrder.RequestedAmount,
@@ -185,17 +186,17 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 		}
 	}
 
-	// Process deposits
+	// Process deposits from ALL committees
 	deposits := make([]*indexer.DexDeposit, 0)
 
 	// Process current batch deposits
-	if currentBatch != nil {
+	for _, currentBatch := range currentBatches {
 		for _, rpcDeposit := range currentBatch.Deposits {
 			deposit := &indexer.DexDeposit{
 				OrderID:    rpcDeposit.OrderID,
 				Height:     in.Height,
 				HeightTime: in.BlockTime,
-				Committee:  in.Committee,
+				Committee:  currentBatch.Committee, // Use committee from batch
 				Address:    rpcDeposit.Address,
 				Amount:     rpcDeposit.Amount,
 				State:      "pending",
@@ -217,13 +218,13 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 	}
 
 	// Process next batch deposits
-	if nextBatch != nil {
+	for _, nextBatch := range nextBatches {
 		for _, rpcDeposit := range nextBatch.Deposits {
 			deposit := &indexer.DexDeposit{
 				OrderID:    rpcDeposit.OrderID,
 				Height:     in.Height,
 				HeightTime: in.BlockTime,
-				Committee:  in.Committee,
+				Committee:  nextBatch.Committee, // Use committee from batch
 				Address:    rpcDeposit.Address,
 				Amount:     rpcDeposit.Amount,
 				State:      "pending",
@@ -232,17 +233,17 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 		}
 	}
 
-	// Process withdrawals
+	// Process withdrawals from ALL committees
 	withdrawals := make([]*indexer.DexWithdrawal, 0)
 
 	// Process current batch withdrawals
-	if currentBatch != nil {
+	for _, currentBatch := range currentBatches {
 		for _, rpcWithdrawal := range currentBatch.Withdrawals {
 			withdrawal := &indexer.DexWithdrawal{
 				OrderID:    rpcWithdrawal.OrderID,
 				Height:     in.Height,
 				HeightTime: in.BlockTime,
-				Committee:  in.Committee,
+				Committee:  currentBatch.Committee, // Use committee from batch
 				Address:    rpcWithdrawal.Address,
 				Percent:    rpcWithdrawal.Percent,
 				State:      "pending",
@@ -267,13 +268,13 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 	}
 
 	// Process next batch withdrawals
-	if nextBatch != nil {
+	for _, nextBatch := range nextBatches {
 		for _, rpcWithdrawal := range nextBatch.Withdrawals {
 			withdrawal := &indexer.DexWithdrawal{
 				OrderID:    rpcWithdrawal.OrderID,
 				Height:     in.Height,
 				HeightTime: in.BlockTime,
-				Committee:  in.Committee,
+				Committee:  nextBatch.Committee, // Use committee from batch
 				Address:    rpcWithdrawal.Address,
 				Percent:    rpcWithdrawal.Percent,
 				State:      "pending",
@@ -303,10 +304,10 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 
-	c.Logger.Info("Indexed DEX batch",
+	c.Logger.Info("Indexed DEX batches (all committees)",
 		zap.Uint64("chainId", in.ChainID),
 		zap.Uint64("height", in.Height),
-		zap.Uint64("committee", in.Committee),
+		zap.Int("committees", len(currentBatches)+len(nextBatches)),
 		zap.Int("orders", len(orders)),
 		zap.Int("deposits", len(deposits)),
 		zap.Int("withdrawals", len(withdrawals)),

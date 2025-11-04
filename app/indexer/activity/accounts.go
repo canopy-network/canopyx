@@ -98,6 +98,34 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 		prevMap[acc.Address] = acc.Amount
 	}
 
+	// Query account-related events from staging table (event-driven correlation)
+	// These events provide context for account balance changes:
+	// - EventReward: Validator receives block rewards
+	// - EventSlash: Validator slashed for Byzantine behavior
+	accountEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height,
+		"EventReward",
+		"EventSlash",
+	)
+	if err != nil {
+		return types.IndexAccountsOutput{}, fmt.Errorf("query account events at height %d: %w", input.Height, err)
+	}
+
+	// Build event maps by address for O(1) lookup
+	rewardEvents := make(map[string]*indexer.Event)
+	slashEvents := make(map[string]*indexer.Event)
+
+	for _, event := range accountEvents {
+		// Events have Address field which corresponds to account/validator address
+		addr := event.Address
+
+		switch event.EventType {
+		case "EventReward":
+			rewardEvents[addr] = event
+		case "EventSlash":
+			slashEvents[addr] = event
+		}
+	}
+
 	// Compare and collect changed accounts
 	changedAccounts := make([]*indexer.Account, 0)
 	for _, curr := range currentAccounts {
@@ -128,6 +156,8 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 		zap.Uint64("height", input.Height),
 		zap.Int("totalAccounts", len(currentAccounts)),
 		zap.Int("changedAccounts", len(changedAccounts)),
+		zap.Int("rewardEvents", len(rewardEvents)),
+		zap.Int("slashEvents", len(slashEvents)),
 		zap.Float64("durationMs", durationMs))
 
 	return types.IndexAccountsOutput{

@@ -28,19 +28,19 @@ const ValidatorSigningInfoStagingTableName = "validator_signing_info_staging"
 // - EventFinishUnstaking: when unstaking completes
 type ValidatorSigningInfo struct {
 	// Identity
-	Address string `ch:"address"` // Hex string representation of validator address
+	Address string `ch:"address" json:"address"` // Hex string representation of validator address
 
 	// Signing performance tracking (from Canopy RpcNonSigner)
-	MissedBlocksCount uint64 `ch:"missed_blocks_count"` // Maps from RpcNonSigner.Counter - count of missed blocks in current window
+	MissedBlocksCount uint64 `ch:"missed_blocks_count" json:"missed_blocks_count"` // Maps from RpcNonSigner.Counter - count of missed blocks in current window
 
 	// Derived window tracking (not from RPC - computed from chain params)
-	MissedBlocksWindow uint64 `ch:"missed_blocks_window"` // Computed as: CurrentHeight - NonSignWindow (from validator params)
+	MissedBlocksWindow uint64 `ch:"missed_blocks_window" json:"missed_blocks_window"` // Computed as: CurrentHeight - NonSignWindow (from validator params)
 
 	// Additional tracking fields (if available from other sources)
-	LastSignedHeight uint64 `ch:"last_signed_height"` // Last height at which validator signed (if tracked)
-	StartHeight      uint64 `ch:"start_height"`       // Height at which validator started (if tracked)
+	LastSignedHeight uint64 `ch:"last_signed_height" json:"last_signed_height"` // Last height at which validator signed (if tracked)
+	StartHeight      uint64 `ch:"start_height" json:"start_height"`             // Height at which validator started (if tracked)
 
 	// Version tracking - every change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 }

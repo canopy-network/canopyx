@@ -23,31 +23,31 @@ const ValidatorsStagingTableName = "validators_staging"
 // if they need to know when a validator was created.
 type Validator struct {
 	// Identity
-	Address    string `ch:"address"`     // Hex string representation of validator address
-	PublicKey  string `ch:"public_key"`  // Hex string representation of public key
-	NetAddress string `ch:"net_address"` // P2P network address for validator communication
+	Address    string `ch:"address" json:"address"`         // Hex string representation of validator address
+	PublicKey  string `ch:"public_key" json:"public_key"`   // Hex string representation of public key
+	NetAddress string `ch:"net_address" json:"net_address"` // P2P network address for validator communication
 
 	// Stake and economics
-	StakedAmount uint64 `ch:"staked_amount"` // Amount staked by validator in uCNPY
-	Output       string `ch:"output"`        // Reward recipient address (empty = self)
+	StakedAmount uint64 `ch:"staked_amount" json:"staked_amount"` // Amount staked by validator in uCNPY
+	Output       string `ch:"output" json:"output"`               // Reward recipient address (empty = self)
 
 	// Committee assignments
-	Committees []uint64 `ch:"committees"` // Array of committee IDs validator is assigned to
+	Committees []uint64 `ch:"committees" json:"committees"` // Array of committee IDs validator is assigned to
 
 	// State management
-	MaxPausedHeight uint64 `ch:"max_paused_height"` // Height when pause expires (0 = not paused)
-	UnstakingHeight uint64 `ch:"unstaking_height"`  // Height when unstaking completes (0 = not unstaking)
+	MaxPausedHeight uint64 `ch:"max_paused_height" json:"max_paused_height"` // Height when pause expires (0 = not paused)
+	UnstakingHeight uint64 `ch:"unstaking_height" json:"unstaking_height"`   // Height when unstaking completes (0 = not unstaking)
 
 	// Delegation settings (stored as UInt8 in ClickHouse: 0=false, 1=true)
-	Delegate bool `ch:"delegate"` // Whether validator accepts delegations
-	Compound bool `ch:"compound"` // Whether rewards are auto-compounded
+	Delegate bool `ch:"delegate" json:"delegate"` // Whether validator accepts delegations
+	Compound bool `ch:"compound" json:"compound"` // Whether rewards are auto-compounded
 
 	// Derived status (computed from MaxPausedHeight and UnstakingHeight)
-	Status string `ch:"status"` // Validator status: active/paused/unstaking
+	Status string `ch:"status" json:"status"` // Validator status: active/paused/unstaking
 
 	// Version tracking - every state change creates a new snapshot
-	Height     uint64    `ch:"height"`      // Height at which this snapshot was created
-	HeightTime time.Time `ch:"height_time"` // Block timestamp for time-range queries
+	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 }
 
 // DeriveStatus computes the validator status from protocol state fields.

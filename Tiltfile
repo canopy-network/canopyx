@@ -419,62 +419,67 @@ else:
     print("Monitoring disabled - skipping Prometheus and Grafana deployment")
 
 # ------------------------------------------
-# ADMIN API (Always Required)
+# ADMIN API (Optional)
 # ------------------------------------------
 
-docker_build_with_restart(
-    "localhost:5001/canopyx-admin",
-    ".",
-    dockerfile="./Dockerfile.admin",
-    entrypoint=["/app/admin"],
-    live_update=[sync("bin/admin", "/app/admin")],
-    ignore=['web/', 'docs/*.md', '*.png', '*.md', 'deploy/'],
-)
+if components.get('admin', True):
+    print("Admin API enabled")
 
-# Load admin manifests and apply resource limits from profile
-admin_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin/overlays/local"))
-canopyx_cfg = resources_cfg.get('canopyx', {})
+    docker_build_with_restart(
+        "localhost:5001/canopyx-admin",
+        ".",
+        dockerfile="./Dockerfile.admin",
+        entrypoint=["/app/admin"],
+        live_update=[sync("bin/admin", "/app/admin")],
+        ignore=['web/', 'docs/*.md', '*.png', '*.md', 'deploy/'],
+    )
 
-for o in admin_objects:
-    if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-admin':
-        # Apply resource limits from profile
-        containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
-        for container in containers:
-            if container.get('name') == 'admin':
-                admin_cpu = canopyx_cfg.get('admin_cpu_limit', '1000m')
-                admin_mem = canopyx_cfg.get('admin_memory_limit', '1Gi')
-                container['resources'] = {
-                    'limits': {
-                        'cpu': admin_cpu,
-                        'memory': admin_mem
-                    },
-                    'requests': {
-                        'cpu': str(int(admin_cpu.replace('m', '')) // 2) + 'm' if 'm' in admin_cpu else str(float(admin_cpu) / 2),
-                        'memory': str(int(admin_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in admin_mem else str(int(admin_mem.replace('Mi', '')) // 2) + 'Mi'
+    # Load admin manifests and apply resource limits from profile
+    admin_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin/overlays/local"))
+    canopyx_cfg = resources_cfg.get('canopyx', {})
+
+    for o in admin_objects:
+        if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-admin':
+            # Apply resource limits from profile
+            containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+            for container in containers:
+                if container.get('name') == 'admin':
+                    admin_cpu = canopyx_cfg.get('admin_cpu_limit', '1000m')
+                    admin_mem = canopyx_cfg.get('admin_memory_limit', '1Gi')
+                    container['resources'] = {
+                        'limits': {
+                            'cpu': admin_cpu,
+                            'memory': admin_mem
+                        },
+                        'requests': {
+                            'cpu': str(int(admin_cpu.replace('m', '')) // 2) + 'm' if 'm' in admin_cpu else str(float(admin_cpu) / 2),
+                            'memory': str(int(admin_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in admin_mem else str(int(admin_mem.replace('Mi', '')) // 2) + 'Mi'
+                        }
                     }
-                }
-                print("CanopyX Admin resources: CPU=%s, Memory=%s" % (admin_cpu, admin_mem))
+                    print("CanopyX Admin resources: CPU=%s, Memory=%s" % (admin_cpu, admin_mem))
 
-                # Apply environment variable overrides from config
-                admin_env_overrides = env_cfg.get('admin', {})
-                if admin_env_overrides:
-                    env_vars = container.get('env', [])
-                    for env_var in env_vars:
-                        env_name = env_var.get('name')
-                        if env_name in admin_env_overrides:
-                            env_var['value'] = str(admin_env_overrides[env_name])
-                            print("CanopyX Admin env override: %s=%s" % (env_name, env_var['value']))
-        break
+                    # Apply environment variable overrides from config
+                    admin_env_overrides = env_cfg.get('admin', {})
+                    if admin_env_overrides:
+                        env_vars = container.get('env', [])
+                        for env_var in env_vars:
+                            env_name = env_var.get('name')
+                            if env_name in admin_env_overrides:
+                                env_var['value'] = str(admin_env_overrides[env_name])
+                                print("CanopyX Admin env override: %s=%s" % (env_name, env_var['value']))
+            break
 
-k8s_yaml(encode_yaml_stream(admin_objects))
+    k8s_yaml(encode_yaml_stream(admin_objects))
 
-k8s_resource(
-    "canopyx-admin",
-    port_forwards=["%s:3000" % get_port('admin', 3000)],
-    labels=['apps'],
-    resource_deps=["clickhouse-server", "temporal-frontend"],
-    pod_readiness='wait',
-)
+    k8s_resource(
+        "canopyx-admin",
+        port_forwards=["%s:3000" % get_port('admin', 3000)],
+        labels=['apps'],
+        resource_deps=["clickhouse-server", "temporal-frontend"],
+        pod_readiness='wait',
+    )
+else:
+    print("Admin API disabled")
 
 # ------------------------------------------
 # QUERY API - REMOVED (Phase 4: Query Service Deprecation)
@@ -545,10 +550,15 @@ if components.get('admin_web', True):
 
     k8s_yaml(encode_yaml_stream(admin_web_objects))
 
+    # Build admin_web resource_deps dynamically based on what's enabled
+    admin_web_deps = []
+    if components.get('admin', True):
+        admin_web_deps.append("canopyx-admin")
+
     k8s_resource(
         "canopyx-admin-web",
         labels=['apps'],
-        resource_deps=["canopyx-admin"],
+        resource_deps=admin_web_deps if admin_web_deps else None,
         pod_readiness='wait',
     )
 
@@ -562,11 +572,16 @@ if components.get('admin_web', True):
 
     k8s_yaml(kustomize("./deploy/k8s/admin-web-proxy/overlays/local"))
 
+    # Build proxy resource_deps dynamically
+    proxy_deps = ["canopyx-admin-web"]
+    if components.get('admin', True):
+        proxy_deps.append("canopyx-admin")
+
     k8s_resource(
         "admin-web-proxy",
         port_forwards=["%s:80" % get_port('admin_web', 3003)],
         labels=['apps'],
-        resource_deps=["canopyx-admin-web", "canopyx-admin"],
+        resource_deps=proxy_deps,
         pod_readiness='wait',
         objects=["admin-web-proxy-config:configmap"]
     )
@@ -574,60 +589,70 @@ else:
     print("Admin Web UI disabled")
 
 # ------------------------------------------
-# CONTROLLER (Always Required)
+# CONTROLLER (Optional)
 # ------------------------------------------
 
-docker_build_with_restart(
-    "localhost:5001/canopyx-controller",
-    ".",
-    dockerfile="./Dockerfile.controller",
-    entrypoint=["/app/controller"],
-    live_update=[sync("bin/controller", "/app/controller")],
-    ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
-)
+if components.get('controller', True):
+    print("Controller enabled")
 
-# Load controller manifests and apply resource limits from profile
-controller_objects = decode_yaml_stream(kustomize("./deploy/k8s/controller/overlays/local"))
+    docker_build_with_restart(
+        "localhost:5001/canopyx-controller",
+        ".",
+        dockerfile="./Dockerfile.controller",
+        entrypoint=["/app/controller"],
+        live_update=[sync("bin/controller", "/app/controller")],
+        ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
+    )
 
-for o in controller_objects:
-    if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-controller':
-        containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
-        for container in containers:
-            if container.get('name') == 'controller':
-                controller_cpu = canopyx_cfg.get('controller_cpu_limit', '500m')
-                controller_mem = canopyx_cfg.get('controller_memory_limit', '512Mi')
-                container['resources'] = {
-                    'limits': {
-                        'cpu': controller_cpu,
-                        'memory': controller_mem
-                    },
-                    'requests': {
-                        'cpu': str(int(controller_cpu.replace('m', '')) // 2) + 'm' if 'm' in controller_cpu else str(float(controller_cpu) / 2),
-                        'memory': str(int(controller_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in controller_mem else str(int(controller_mem.replace('Mi', '')) // 2) + 'Mi'
+    # Load controller manifests and apply resource limits from profile
+    controller_objects = decode_yaml_stream(kustomize("./deploy/k8s/controller/overlays/local"))
+
+    for o in controller_objects:
+        if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-controller':
+            containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+            for container in containers:
+                if container.get('name') == 'controller':
+                    controller_cpu = canopyx_cfg.get('controller_cpu_limit', '500m')
+                    controller_mem = canopyx_cfg.get('controller_memory_limit', '512Mi')
+                    container['resources'] = {
+                        'limits': {
+                            'cpu': controller_cpu,
+                            'memory': controller_mem
+                        },
+                        'requests': {
+                            'cpu': str(int(controller_cpu.replace('m', '')) // 2) + 'm' if 'm' in controller_cpu else str(float(controller_cpu) / 2),
+                            'memory': str(int(controller_mem.replace('Gi', '')) // 2) + 'Gi' if 'Gi' in controller_mem else str(int(controller_mem.replace('Mi', '')) // 2) + 'Mi'
+                        }
                     }
-                }
-                print("CanopyX Controller resources: CPU=%s, Memory=%s" % (controller_cpu, controller_mem))
+                    print("CanopyX Controller resources: CPU=%s, Memory=%s" % (controller_cpu, controller_mem))
 
-                # Apply environment variable overrides from config
-                controller_env_overrides = env_cfg.get('controller', {})
-                if controller_env_overrides:
-                    env_vars = container.get('env', [])
-                    for env_var in env_vars:
-                        env_name = env_var.get('name')
-                        if env_name in controller_env_overrides:
-                            env_var['value'] = str(controller_env_overrides[env_name])
-                            print("CanopyX Controller env override: %s=%s" % (env_name, env_var['value']))
-        break
+                    # Apply environment variable overrides from config
+                    controller_env_overrides = env_cfg.get('controller', {})
+                    if controller_env_overrides:
+                        env_vars = container.get('env', [])
+                        for env_var in env_vars:
+                            env_name = env_var.get('name')
+                            if env_name in controller_env_overrides:
+                                env_var['value'] = str(controller_env_overrides[env_name])
+                                print("CanopyX Controller env override: %s=%s" % (env_name, env_var['value']))
+            break
 
-k8s_yaml(encode_yaml_stream(controller_objects))
+    k8s_yaml(encode_yaml_stream(controller_objects))
 
-k8s_resource(
-    "canopyx-controller",
-    labels=['apps'],
-    objects=["canopyx-controller:serviceaccount", "canopyx-controller:role", "canopyx-controller:rolebinding"],
-    resource_deps=["clickhouse-server", "temporal-frontend", "canopyx-admin"],
-    pod_readiness='wait',
-)
+    # Build resource_deps dynamically based on what's enabled
+    controller_deps = ["clickhouse-server", "temporal-frontend"]
+    if components.get('admin', True):
+        controller_deps.append("canopyx-admin")
+
+    k8s_resource(
+        "canopyx-controller",
+        labels=['apps'],
+        objects=["canopyx-controller:serviceaccount", "canopyx-controller:role", "canopyx-controller:rolebinding"],
+        resource_deps=controller_deps,
+        pod_readiness='wait',
+    )
+else:
+    print("Controller disabled")
 
 # ------------------------------------------
 # CANOPY LOCAL NODES (Optional - Dual Node Setup)
@@ -688,6 +713,25 @@ if canopy_mode == 'dual':
                 "%s:40002" % get_port('canopy2_rpc', 40002),
                 "%s:40003" % get_port('canopy2_admin', 40003),
                 "%s:9001" % get_port('canopy2_p2p', 9002),
+            ],
+            labels=['blockchain'],
+            pod_readiness='wait',
+        )
+
+        # Node 3 resource (Chain ID 1 - second validator)
+        k8s_resource(
+            "canopy-node-3",
+            objects=[
+                "canopy-node-3-config:configmap",
+                "canopy-node-3-genesis:configmap",
+                "canopy-node-3-keystore:configmap"
+            ],
+            port_forwards=[
+                "%s:30000" % get_port('canopy3_wallet', 30000),
+                "%s:30001" % get_port('canopy3_explorer', 30001),
+                "%s:30002" % get_port('canopy3_rpc', 30002),
+                "%s:30003" % get_port('canopy3_admin', 30003),
+                "%s:9003" % get_port('canopy3_p2p', 9003),
             ],
             labels=['blockchain'],
             pod_readiness='wait',
@@ -761,8 +805,13 @@ local_resource(
 
 # Auto-register dual nodes
 if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
-    if dev_cfg.get('auto_register_chain', True):
+    if dev_cfg.get('auto_register_chain', True) and components.get('admin', True):
         print("Auto-registering dual Canopy chains")
+
+        # Build resource_deps dynamically
+        register_deps = ["canopy-node-1", "canopy-node-2", "canopy-node-3"]
+        if components.get('admin', True):
+            register_deps.append("canopyx-admin")
 
         local_resource(
             name="register-canopy-chains",
@@ -837,17 +886,42 @@ if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
             """,
             deps=[],
             labels=['setup'],
-            resource_deps=["canopyx-admin", "canopy-node-1", "canopy-node-2"],
+            resource_deps=register_deps,
             allow_parallel=False,
             auto_init=True,
         )
+
+        # Only attach indexers if controller is enabled
+        if components.get('controller', True):
+            # Attach to Chain 1 indexer (root chain)
+            k8s_attach(
+                name="indexer-chain-1",
+                obj="deployment/canopyx-indexer-1",
+                resource_deps=["canopyx-controller", "register-canopy-chains"],
+                labels=['indexers'],
+            )
+
+            # Attach to Chain 2 indexer (subchain)
+            k8s_attach(
+                name="indexer-chain-2",
+                obj="deployment/canopyx-indexer-2",
+                resource_deps=["canopyx-controller", "register-canopy-chains"],
+                labels=['indexers'],
+            )
+    elif not components.get('admin', True):
+        print("Auto-register chains disabled - admin API required")
     else:
         print("Auto-register chains disabled in config")
 
 # Auto-register single node (legacy support)
 elif components.get('canopy', 'off') == 'single' and os.path.exists(canopy_path):
-    if dev_cfg.get('auto_register_chain', True):
+    if dev_cfg.get('auto_register_chain', True) and components.get('admin', True):
         print("Auto-registering local Canopy chain")
+
+        # Build resource_deps dynamically
+        single_deps = ["canopy-node"]
+        if components.get('admin', True):
+            single_deps.append("canopyx-admin")
 
         local_resource(
             name="add-canopy-local",
@@ -865,17 +939,21 @@ elif components.get('canopy', 'off') == 'single' and os.path.exists(canopy_path)
             """,
             deps=[],
             labels=['no-op'],
-            resource_deps=["canopyx-admin", "canopy-node"],
+            resource_deps=single_deps,
             allow_parallel=False,
             auto_init=True,
         )
 
-        k8s_attach(
-            name="indexer-local",
-            obj="deployment/canopyx-indexer-canopy-local",
-            resource_deps=["canopyx-controller", "add-canopy-local"],
-            labels=['indexers'],
-        )
+        # Only attach indexer if controller is enabled
+        if components.get('controller', True):
+            k8s_attach(
+                name="indexer-local",
+                obj="deployment/canopyx-indexer-canopy-local",
+                resource_deps=["canopyx-controller", "add-canopy-local"],
+                labels=['indexers'],
+            )
+    elif not components.get('admin', True):
+        print("Auto-register chain disabled - admin API required")
     else:
         print("Auto-register chain disabled in config")
 
@@ -883,7 +961,7 @@ elif components.get('canopy', 'off') == 'single' and os.path.exists(canopy_path)
 # AUTO-REGISTER EXTERNAL CHAINS
 # ------------------------------------------
 # Register external Canopy networks from config
-if chains_cfg and len(chains_cfg) > 0:
+if chains_cfg and len(chains_cfg) > 0 and components.get('admin', True):
     print("Auto-registering %d external Canopy chain(s)" % len(chains_cfg))
 
     for chain in chains_cfg:
@@ -907,6 +985,11 @@ if chains_cfg and len(chains_cfg) > 0:
 
         print("Configuring auto-registration for chain: %s (%s)" % (chain_name, chain_id))
 
+        # Build resource_deps dynamically
+        chain_deps = []
+        if components.get('admin', True):
+            chain_deps.append("canopyx-admin")
+
         local_resource(
             name=resource_name,
             cmd="""
@@ -923,30 +1006,39 @@ if chains_cfg and len(chains_cfg) > 0:
             """ % (chain_payload, chain_name, chain_name),
             deps=[],
             labels=['chains'],
-            resource_deps=["canopyx-admin"],
+            resource_deps=chain_deps if chain_deps else None,
             allow_parallel=False,
             auto_init=True,
         )
 
-        # Attach to the controller-spawned indexer deployment
-        k8s_attach(
-            name="indexer-%s" % chain_id,
-            obj="deployment/canopyx-indexer-%s" % chain_id,
-            resource_deps=["canopyx-controller", resource_name],
-            labels=['indexers'],
-        )
+        # Only attach indexer if controller is enabled
+        if components.get('controller', True):
+            # Build indexer resource_deps dynamically
+            indexer_deps = [resource_name]
+            if components.get('controller', True):
+                indexer_deps.append("canopyx-controller")
+
+            k8s_attach(
+                name="indexer-%s" % chain_id,
+                obj="deployment/canopyx-indexer-%s" % chain_id,
+                resource_deps=indexer_deps,
+                labels=['indexers'],
+            )
+elif not components.get('admin', True):
+    print("No external chains configured - admin API required for auto-registration")
 else:
     print("No external chains configured for auto-registration")
 
-# Cleanup resource for controller-spawned deployments
-k8s_custom_deploy(
-  'cleanup-controller-spawns',
-  apply_cmd='true',
-  delete_cmd='kubectl delete deployment -l managed-by=canopyx-controller -l app=indexer --ignore-not-found --wait',
-  deps=[],
-)
+# Cleanup resource for controller-spawned deployments (only if controller is enabled)
+if components.get('controller', True):
+    k8s_custom_deploy(
+      'cleanup-controller-spawns',
+      apply_cmd='true',
+      delete_cmd='kubectl delete deployment -l managed-by=canopyx-controller -l app=indexer --ignore-not-found --wait',
+      deps=[],
+    )
 
-k8s_resource('cleanup-controller-spawns', resource_deps=['canopyx-controller'], labels=['no-op'])
+    k8s_resource('cleanup-controller-spawns', resource_deps=['canopyx-controller'], labels=['no-op'])
 
 # Cleanup persistent data which are not deleted by helm charts
 # This ensures fresh data on each tilt up by removing old workflow/visibility data

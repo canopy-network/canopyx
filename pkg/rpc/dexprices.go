@@ -4,64 +4,40 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // RpcDexPrice represents the DEX price information returned from the RPC endpoint.
 // This matches the JSON structure returned by /v1/query/dex-price?id={chain}.
+// JSON tags match Canopy's actual response format (camelCase).
 type RpcDexPrice struct {
-	LocalChainID  uint64 `json:"LocalChainId"`
-	RemoteChainID uint64 `json:"RemoteChainId"`
-	LocalPool     uint64 `json:"LocalPool"`
-	RemotePool    uint64 `json:"RemotePool"`
-	E6ScaledPrice uint64 `json:"E6ScaledPrice"`
+	LocalChainID  uint64 `json:"chainId"`
+	RemoteChainID uint64 `json:"remoteChainId"`
+	LocalPool     uint64 `json:"localPool"`
+	RemotePool    uint64 `json:"remotePool"`
+	E6ScaledPrice uint64 `json:"e6ScaledPrice"`
 }
 
-// ToDexPrice converts an RPC dex price response to the database model.
-// The height and height_time fields must be populated by the caller (activity layer).
-func (r *RpcDexPrice) ToDexPrice() *indexer.DexPrice {
-	return &indexer.DexPrice{
-		LocalChainID:  r.LocalChainID,
-		RemoteChainID: r.RemoteChainID,
-		LocalPool:     r.LocalPool,
-		RemotePool:    r.RemotePool,
-		PriceE6:       r.E6ScaledPrice,
-		// Height and HeightTime will be set by the activity layer
-	}
-}
-
-// DexPrice fetches the DEX price for a specific chain pair.
-// The chainId parameter identifies the remote chain in the pair.
-// Returns a single DexPrice record or an error if the request fails.
-func (c *HTTPClient) DexPrice(ctx context.Context, chainID uint64) (*indexer.DexPrice, error) {
-	var rpcPrice RpcDexPrice
-	if err := c.doJSON(ctx, "POST", dexPricePath, map[string]any{"id": chainID}, &rpcPrice); err != nil {
-		return nil, fmt.Errorf("fetch dex price for chain %d: %w", chainID, err)
-	}
-
-	return rpcPrice.ToDexPrice(), nil
-}
-
-// DexPrices fetches all DEX prices for all chain pairs.
+// DexPricesByHeight fetches all DEX prices for all chain pairs.
 // This endpoint returns the current state of all DEX pools.
-// Returns a slice of DexPrice records or an error if the request fails.
-func (c *HTTPClient) DexPrices(ctx context.Context) ([]*indexer.DexPrice, error) {
+// Returns a slice of RpcDexPrice or an error if the request fails.
+// Callers should convert to indexer models using transform.DexPrice() if needed.
+func (c *HTTPClient) DexPricesByHeight(ctx context.Context, height uint64) ([]*RpcDexPrice, error) {
 	// The RPC might return either:
 	// 1. A single object (when there's only one price)
 	// 2. An array of objects (when there are multiple prices)
 	// We need to handle both cases
+	req := DexPriceRequest{Height: height, ID: 0}
 
 	var raw json.RawMessage
-	// Send empty object instead of nil to satisfy server requirements
-	if err := c.doJSON(ctx, "POST", dexPricePath, map[string]any{}, &raw); err != nil {
+	// Send an empty object instead of nil to satisfy server requirements
+	if err := c.doJSON(ctx, "POST", dexPricePath, req, &raw); err != nil {
 		return nil, fmt.Errorf("fetch all dex prices: %w", err)
 	}
 
-	// Try to unmarshal as array first
+	// Try to unmarshal as an array first
 	var rpcPrices []RpcDexPrice
 	if err := json.Unmarshal(raw, &rpcPrices); err != nil {
-		// If that fails, try as single object
+		// If that fails, try as a single object
 		var singlePrice RpcDexPrice
 		if err := json.Unmarshal(raw, &singlePrice); err != nil {
 			return nil, fmt.Errorf("unmarshal dex prices: %w", err)
@@ -69,11 +45,11 @@ func (c *HTTPClient) DexPrices(ctx context.Context) ([]*indexer.DexPrice, error)
 		rpcPrices = []RpcDexPrice{singlePrice}
 	}
 
-	// Convert to database models
-	dbPrices := make([]*indexer.DexPrice, 0, len(rpcPrices))
+	// Return RPC types - callers will transform to DB models
+	result := make([]*RpcDexPrice, 0, len(rpcPrices))
 	for i := range rpcPrices {
-		dbPrices = append(dbPrices, rpcPrices[i].ToDexPrice())
+		result = append(result, &rpcPrices[i])
 	}
 
-	return dbPrices, nil
+	return result, nil
 }

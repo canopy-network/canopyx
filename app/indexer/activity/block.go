@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	"github.com/canopy-network/canopyx/pkg/db/transform"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.temporal.io/sdk/temporal"
 )
@@ -21,13 +22,16 @@ func (c *Context) FetchBlockFromRPC(ctx context.Context, in types.IndexBlockInpu
 	}
 
 	cli := c.rpcClient(ch.RPCEndpoints)
-	blk, err := cli.BlockByHeight(ctx, in.Height)
+	rpcBlock, err := cli.BlockByHeight(ctx, in.Height)
 	if err != nil {
 		return types.FetchBlockOutput{}, err
 	}
 
+	// Convert RPC type to indexer model
+	block := transform.Block(rpcBlock)
+
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.FetchBlockOutput{Block: blk, DurationMs: durationMs}, nil
+	return types.FetchBlockOutput{Block: block, DurationMs: durationMs}, nil
 }
 
 // SaveBlock saves a fetched block to the database.
@@ -69,18 +73,21 @@ func (c *Context) IndexBlock(ctx context.Context, in types.IndexBlockInput) (typ
 	}
 
 	cli := c.rpcClient(ch.RPCEndpoints)
-	blk, err := cli.BlockByHeight(ctx, in.Height)
+	rpcBlock, err := cli.BlockByHeight(ctx, in.Height)
 	if err != nil {
 		return types.IndexBlockOutput{Height: in.Height}, err
 	}
 
+	// Convert RPC type to indexer model
+	block := transform.Block(rpcBlock)
+
 	// Insert block to staging table (two-phase commit pattern)
-	if err = chainDb.InsertBlocksStaging(ctx, blk); err != nil {
-		return types.IndexBlockOutput{Height: blk.Height}, err
+	if err = chainDb.InsertBlocksStaging(ctx, block); err != nil {
+		return types.IndexBlockOutput{Height: block.Height}, err
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.IndexBlockOutput{Height: blk.Height, DurationMs: durationMs}, nil
+	return types.IndexBlockOutput{Height: block.Height, DurationMs: durationMs}, nil
 }
 
 func (c *Context) rpcClient(endpoints []string) rpc.Client {

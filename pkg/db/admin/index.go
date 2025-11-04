@@ -2,12 +2,13 @@ package admin
 
 import (
 	"fmt"
+
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
-func (db *AdminDB) IndexProgressHistory(ctx context.Context, chainID uint64, hours, intervalMinutes int) ([]admin.ProgressPoint, error) {
+func (db *DB) IndexProgressHistory(ctx context.Context, chainID uint64, hours, intervalMinutes int) ([]admin.ProgressPoint, error) {
 	query := fmt.Sprintf(`
         SELECT
             toStartOfInterval(indexed_at, INTERVAL %d MINUTE) AS time_bucket,

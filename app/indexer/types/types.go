@@ -54,11 +54,11 @@ type BlockSummaries struct {
 	NumOrdersCancelled uint32 `json:"numOrdersCancelled"` // Number of cancelled orders
 	NumOrdersExpired   uint32 `json:"numOrdersExpired"`   // Number of expired orders
 
-	// ========== Pools (2 fields) ==========
+	// ========== PoolsByHeight (2 fields) ==========
 	NumPools    uint32 `json:"numPools"`    // Total number of pools
 	NumPoolsNew uint32 `json:"numPoolsNew"` // Number of new pools created
 
-	// ========== DexPrices (1 field) ==========
+	// ========== DexPricesByHeight (1 field) ==========
 	NumDexPrices uint32 `json:"numDexPrices"` // Number of DEX price records
 
 	// ========== DexOrders (6 fields) ==========

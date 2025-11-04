@@ -60,12 +60,12 @@ func TestIndexCommittees_Success_CommitteesChanged(t *testing.T) {
 		},
 	}
 
-	mockRPC.On("CommitteesData", mock.Anything, uint64(100)).Return(currentCommittees, nil)
-	mockRPC.On("CommitteesData", mock.Anything, uint64(99)).Return(previousCommittees, nil)
-	mockRPC.On("SubsidizedCommittees", mock.Anything, uint64(100)).Return([]uint64{1}, nil)
-	mockRPC.On("SubsidizedCommittees", mock.Anything, uint64(99)).Return([]uint64{}, nil)
-	mockRPC.On("RetiredCommittees", mock.Anything, uint64(100)).Return([]uint64{}, nil)
-	mockRPC.On("RetiredCommittees", mock.Anything, uint64(99)).Return([]uint64{}, nil)
+	mockRPC.On("CommitteesDataByHeight", mock.Anything, uint64(100)).Return(currentCommittees, nil)
+	mockRPC.On("CommitteesDataByHeight", mock.Anything, uint64(99)).Return(previousCommittees, nil)
+	mockRPC.On("SubsidizedCommitteesByHeight", mock.Anything, uint64(100)).Return([]uint64{1}, nil)
+	mockRPC.On("SubsidizedCommitteesByHeight", mock.Anything, uint64(99)).Return([]uint64{}, nil)
+	mockRPC.On("RetiredCommitteesByHeight", mock.Anything, uint64(100)).Return([]uint64{}, nil)
+	mockRPC.On("RetiredCommitteesByHeight", mock.Anything, uint64(99)).Return([]uint64{}, nil)
 
 	mockChainStore := &mockNewEntitiesChainStore{
 		chainID:      "chain-A",
@@ -137,9 +137,9 @@ func TestIndexCommittees_GenesisBlock(t *testing.T) {
 		},
 	}
 
-	mockRPC.On("CommitteesData", mock.Anything, uint64(1)).Return(genesisCommittees, nil)
-	mockRPC.On("SubsidizedCommittees", mock.Anything, uint64(1)).Return([]uint64{}, nil)
-	mockRPC.On("RetiredCommittees", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	mockRPC.On("CommitteesDataByHeight", mock.Anything, uint64(1)).Return(genesisCommittees, nil)
+	mockRPC.On("SubsidizedCommitteesByHeight", mock.Anything, uint64(1)).Return([]uint64{}, nil)
+	mockRPC.On("RetiredCommitteesByHeight", mock.Anything, uint64(1)).Return([]uint64{}, nil)
 
 	mockChainStore := &mockNewEntitiesChainStore{
 		chainID:      "chain-A",
@@ -532,7 +532,7 @@ func TestIndexDexPoolPoints_Success(t *testing.T) {
 		},
 	}
 
-	mockRPC.On("Pools", mock.Anything).Return(pools, nil)
+	mockRPC.On("PoolsByHeight", mock.Anything).Return(pools, nil)
 
 	mockChainStore := &mockNewEntitiesChainStore{
 		chainID:      "chain-A",
@@ -595,7 +595,7 @@ func TestIndexDexPoolPoints_EmptyPools(t *testing.T) {
 	}
 
 	mockRPC := &mockNewEntitiesRPCClient{}
-	mockRPC.On("Pools", mock.Anything).Return([]*rpc.RpcPool{}, nil)
+	mockRPC.On("PoolsByHeight", mock.Anything).Return([]*rpc.RpcPool{}, nil)
 
 	mockChainStore := &mockNewEntitiesChainStore{
 		chainID:      "chain-A",

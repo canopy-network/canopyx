@@ -37,9 +37,11 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 	chainsMap.Store("chain-A", chainStore)
 
 	rpcClient := &fakeRPCClient{
-		block: &indexermodels.Block{Height: 10},
-		txs: []*indexermodels.Transaction{
-			{TxHash: "tx1"}, {TxHash: "tx2"},
+		block: &rpc.BlockByHeight{
+			BlockHeader: rpc.BlockHeader{Height: 10},
+		},
+		txs: []*rpc.Transaction{
+			{Hash: "tx1"}, {Hash: "tx2"},
 		},
 	}
 	activityCtx := &activity.Context{
@@ -80,7 +82,9 @@ func TestFetchBlockFromRPC(t *testing.T) {
 	chainsMap.Store("chain-A", &fakeChainStore{chainID: "chain-A", databaseName: "chain_a"})
 
 	rpcClient := &fakeRPCClient{
-		block: &indexermodels.Block{Height: 42, Hash: "abc123"},
+		block: &rpc.BlockByHeight{
+			BlockHeader: rpc.BlockHeader{Height: 42, Hash: "abc123"},
+		},
 	}
 	activityCtx := &activity.Context{
 		Logger:     logger,
@@ -158,7 +162,9 @@ func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	chainsMap.Store("chain-A", chainStore)
 
 	rpcClient := &fakeRPCClient{
-		block: &indexermodels.Block{Height: 42},
+		block: &rpc.BlockByHeight{
+			BlockHeader: rpc.BlockHeader{Height: 42},
+		},
 	}
 	ctx := &activity.Context{
 		Logger:     logger,
@@ -624,19 +630,19 @@ func (f *fakeRPCFactory) NewClient(_ []string) rpc.Client {
 }
 
 type fakeRPCClient struct {
-	block *indexermodels.Block
-	txs   []*indexermodels.Transaction
+	block *rpc.BlockByHeight
+	txs   []*rpc.Transaction
 }
 
 func (f *fakeRPCClient) ChainHead(context.Context) (uint64, error) {
 	return 0, nil
 }
 
-func (f *fakeRPCClient) BlockByHeight(context.Context, uint64) (*indexermodels.Block, error) {
+func (f *fakeRPCClient) BlockByHeight(context.Context, uint64) (*rpc.BlockByHeight, error) {
 	return f.block, nil
 }
 
-func (f *fakeRPCClient) TxsByHeight(context.Context, uint64) ([]*indexermodels.Transaction, error) {
+func (f *fakeRPCClient) TxsByHeight(context.Context, uint64) ([]*rpc.Transaction, error) {
 	return f.txs, nil
 }
 
@@ -648,7 +654,7 @@ func (f *fakeRPCClient) GetGenesisState(context.Context, uint64) (*rpc.GenesisSt
 	return nil, nil
 }
 
-func (f *fakeRPCClient) EventsByHeight(context.Context, uint64) ([]*indexermodels.Event, error) {
+func (f *fakeRPCClient) EventsByHeight(context.Context, uint64) ([]*rpc.RpcEvent, error) {
 	return nil, nil
 }
 
@@ -656,11 +662,11 @@ func (f *fakeRPCClient) OrdersByHeight(context.Context, uint64, uint64) ([]*rpc.
 	return nil, nil
 }
 
-func (f *fakeRPCClient) DexPrice(context.Context, uint64) (*indexermodels.DexPrice, error) {
+func (f *fakeRPCClient) DexPrice(context.Context, uint64, uint64) (*rpc.RpcDexPrice, error) {
 	return nil, nil
 }
 
-func (f *fakeRPCClient) DexPrices(context.Context) ([]*indexermodels.DexPrice, error) {
+func (f *fakeRPCClient) DexPrices(context.Context, uint64) ([]*rpc.RpcDexPrice, error) {
 	return nil, nil
 }
 
@@ -729,5 +735,17 @@ func (f *fakeRPCClient) DexBatchByHeight(context.Context, uint64, uint64) (*rpc.
 }
 
 func (f *fakeRPCClient) NextDexBatchByHeight(context.Context, uint64, uint64) (*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) AllDexBatchesByHeight(context.Context, uint64) ([]*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) AllNextDexBatchesByHeight(context.Context, uint64) ([]*rpc.RpcDexBatch, error) {
+	return nil, nil
+}
+
+func (f *fakeRPCClient) StateByHeight(context.Context, *uint64) (*rpc.StateResponse, error) {
 	return nil, nil
 }

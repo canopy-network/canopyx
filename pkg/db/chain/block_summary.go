@@ -67,11 +67,11 @@ func (db *DB) initBlockSummaries(ctx context.Context) error {
 		num_orders_cancelled UInt32 DEFAULT 0 CODEC(Delta, ZSTD),
 		num_orders_expired UInt32 DEFAULT 0 CODEC(Delta, ZSTD),
 
-		-- Pools (2 fields)
+		-- PoolsByHeight (2 fields)
 		num_pools UInt32 DEFAULT 0 CODEC(Delta, ZSTD),
 		num_pools_new UInt32 DEFAULT 0 CODEC(Delta, ZSTD),
 
-		-- DexPrices (1 field)
+		-- DexPricesByHeight (1 field)
 		num_dex_prices UInt32 DEFAULT 0 CODEC(Delta, ZSTD),
 
 		-- DexOrders (6 fields)
@@ -139,7 +139,7 @@ func (db *DB) initBlockSummaries(ctx context.Context) error {
 	stagingQuery := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
-		) ENGINE = MergeTree()
+		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height)
 	`, db.Name, indexermodels.BlockSummariesStagingTableName, columnsDefinition)
 

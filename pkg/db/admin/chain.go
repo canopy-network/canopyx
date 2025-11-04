@@ -14,7 +14,7 @@ import (
 
 // initChains creates the chain table using raw SQL.
 // Table: ReplacingMergeTree(updated_at) ORDER BY (chain_id)
-func (db *AdminDB) initChains(ctx context.Context) error {
+func (db *DB) initChains(ctx context.Context) error {
 	query := `
 		CREATE TABLE IF NOT EXISTS chains (
 			chain_id UInt64,
@@ -46,7 +46,7 @@ func (db *AdminDB) initChains(ctx context.Context) error {
 }
 
 // EnsureChainsDbs ensures the required database and tables for indexing are created if they do not already exist.
-func (db *AdminDB) EnsureChainsDbs(ctx context.Context) (*xsync.Map[string, chain.Store], error) {
+func (db *DB) EnsureChainsDbs(ctx context.Context) (*xsync.Map[string, chain.Store], error) {
 	chainDbMap := xsync.NewMap[string, chain.Store]()
 
 	chains, err := db.ListChain(ctx)
@@ -67,7 +67,7 @@ func (db *AdminDB) EnsureChainsDbs(ctx context.Context) (*xsync.Map[string, chai
 }
 
 // UpsertChain creates or updates a chain in the database.
-func (db *AdminDB) UpsertChain(ctx context.Context, c *admin.Chain) error {
+func (db *DB) UpsertChain(ctx context.Context, c *admin.Chain) error {
 	now := time.Now()
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = now
@@ -102,12 +102,12 @@ func (db *AdminDB) UpsertChain(ctx context.Context, c *admin.Chain) error {
 	}
 
 	// Insert (ReplacingMergeTree will treat the same (chain_id) as an upsert by latest UpdatedAt)
-	return db.insertChain(ctx, c)
+	return db.InsertChain(ctx, c)
 }
 
-// insertChain inserts a new chain record.
+// InsertChain inserts a new chain record.
 // ReplacingMergeTree will handle deduplication based on updated_at.
-func (db *AdminDB) insertChain(ctx context.Context, c *admin.Chain) error {
+func (db *DB) InsertChain(ctx context.Context, c *admin.Chain) error {
 	query := `
 		INSERT INTO chains (
 			chain_id, chain_name, rpc_endpoints, paused, deleted, image,
@@ -146,7 +146,7 @@ func (db *AdminDB) insertChain(ctx context.Context, c *admin.Chain) error {
 }
 
 // GetChain returns the latest (deduped) row for the given chain_id.
-func (db *AdminDB) GetChain(ctx context.Context, id uint64) (*admin.Chain, error) {
+func (db *DB) GetChain(ctx context.Context, id uint64) (*admin.Chain, error) {
 	query := `
 		SELECT
 			chain_id, chain_name, rpc_endpoints, paused, deleted, image,
@@ -194,7 +194,7 @@ func (db *AdminDB) GetChain(ctx context.Context, id uint64) (*admin.Chain, error
 }
 
 // ListChain returns the latest (deduped) row per chain_id.
-func (db *AdminDB) ListChain(ctx context.Context) ([]admin.Chain, error) {
+func (db *DB) ListChain(ctx context.Context) ([]admin.Chain, error) {
 	query := `
 		SELECT
 			chain_id, chain_name, rpc_endpoints, paused, deleted, image,
@@ -217,7 +217,7 @@ func (db *AdminDB) ListChain(ctx context.Context) ([]admin.Chain, error) {
 
 // PatchChains applies bulk partial updates by inserting new versioned rows
 // into ReplacingMergeTree (models.Chain). It preserves created_at and bumps updated_at.
-func (db *AdminDB) PatchChains(ctx context.Context, patches []admin.Chain) error {
+func (db *DB) PatchChains(ctx context.Context, patches []admin.Chain) error {
 	for _, p := range patches {
 		cur, err := db.GetChain(ctx, p.ChainID)
 		if err != nil {
@@ -240,7 +240,7 @@ func (db *AdminDB) PatchChains(ctx context.Context, patches []admin.Chain) error
 		cur.UpdatedAt = time.Now()
 
 		// Insert a new versioned row (ReplacingMergeTree(updated_at))
-		if err := db.insertChain(ctx, cur); err != nil {
+		if err := db.InsertChain(ctx, cur); err != nil {
 			return err
 		}
 	}
