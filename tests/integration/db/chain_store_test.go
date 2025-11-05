@@ -21,7 +21,7 @@ func TestChainStore_InitializeDB(t *testing.T) {
 	productionTables := []string{
 		"blocks", "txs", "block_summaries", "accounts", "events",
 		"pools", "orders", "dex_prices", "dex_orders", "dex_deposits",
-		"dex_withdrawals", "dex_pool_points_by_holder", "params",
+		"dex_withdrawals", "pool_points_by_holder", "params",
 		"validators", "validator_signing_info", "committees",
 		"committee_validators", "poll_snapshots", "genesis",
 	}
@@ -38,7 +38,7 @@ func TestChainStore_InitializeDB(t *testing.T) {
 		"accounts_staging", "events_staging", "pools_staging",
 		"orders_staging", "dex_prices_staging", "dex_orders_staging",
 		"dex_deposits_staging", "dex_withdrawals_staging",
-		"dex_pool_points_by_holder_staging", "params_staging",
+		"pool_points_by_holder_staging", "params_staging",
 		"validators_staging", "validator_signing_info_staging",
 		"committees_staging", "committee_validators_staging",
 		"poll_snapshots_staging",
@@ -306,23 +306,23 @@ func TestChainStore_InsertDexWithdrawalsStaging(t *testing.T) {
 	assert.Equal(t, uint64(2), count)
 }
 
-// TestChainStore_InsertDexPoolPointsByHolderStaging tests inserting dex pool points to staging.
-func TestChainStore_InsertDexPoolPointsByHolderStaging(t *testing.T) {
+// TestChainStore_InsertPoolPointsByHolderStaging tests inserting dex pool points to staging.
+func TestChainStore_InsertPoolPointsByHolderStaging(t *testing.T) {
 	chainDB := createChainStore(t, 20012)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	holders := []*indexermodels.DexPoolPointsByHolder{
-		generateDexPoolPointsByHolder("holder-1", 100),
-		generateDexPoolPointsByHolder("holder-2", 100),
+	holders := []*indexermodels.PoolPointsByHolder{
+		generatePoolPointsByHolder("holder-1", 100),
+		generatePoolPointsByHolder("holder-2", 100),
 	}
 
-	err := chainDB.InsertDexPoolPointsByHolderStaging(ctx, holders)
+	err := chainDB.InsertPoolPointsByHolderStaging(ctx, holders)
 	require.NoError(t, err)
 
 	// Verify pool points are in staging
 	var count uint64
-	query := `SELECT count(*) FROM dex_pool_points_by_holder_staging WHERE height = 100`
+	query := `SELECT count(*) FROM pool_points_by_holder_staging WHERE height = 100`
 	err = chainDB.Db.QueryRow(ctx, query).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), count)

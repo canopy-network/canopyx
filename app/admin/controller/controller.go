@@ -104,7 +104,11 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 
 	// Generic entity query endpoints
 	r.Handle("/api/chains/{id}/entity/{entity}", c.RequireAuth(http.HandlerFunc(c.HandleEntityQuery))).Methods(http.MethodGet)
-	r.Handle("/api/chains/{id}/entity/{entity}/{id_value}", c.RequireAuth(http.HandlerFunc(c.HandleEntityGet))).Methods(http.MethodGet)
+	// Note: HandleEntityGet now uses query parameters (property, value, height) instead of path parameter id_value
+	// This provides explicit column-based lookups without guessing the intent
+	r.Handle("/api/chains/{id}/entity/{entity}/lookup", c.RequireAuth(http.HandlerFunc(c.HandleEntityGet))).Methods(http.MethodGet)
+	// Entity schema endpoint - returns property names and types for dynamic form building
+	r.Handle("/api/chains/{id}/entity/{entity}/schema", c.RequireAuth(http.HandlerFunc(c.HandleEntitySchema))).Methods(http.MethodGet)
 
 	// WebSocket endpoint for real-time events (migrated from query service)
 	r.HandleFunc("/api/ws", c.HandleWebSocket).Methods(http.MethodGet)

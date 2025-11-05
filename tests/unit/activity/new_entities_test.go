@@ -495,145 +495,6 @@ func TestIndexDexBatch_NoBatch(t *testing.T) {
 }
 
 // ======================
-// IndexDexPoolPoints Tests
-// ======================
-
-func TestIndexDexPoolPoints_Success(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-
-	adminStore := &fakeAdminStore{
-		chain: &admin.Chain{
-			ChainID:      "chain-A",
-			RPCEndpoints: []string{"http://rpc.local"},
-		},
-	}
-
-	mockRPC := &mockNewEntitiesRPCClient{}
-
-	pools := []*rpc.RpcPool{
-		{
-			ID:              1,
-			ChainID:         2,
-			Amount:          10000,
-			TotalPoolPoints: 1000,
-			Points: []*rpc.RpcPoolPoint{
-				{Address: "0xholder1", Points: 600}, // 60% of pool
-				{Address: "0xholder2", Points: 400}, // 40% of pool
-			},
-		},
-		{
-			ID:              2,
-			ChainID:         3,
-			Amount:          5000,
-			TotalPoolPoints: 500,
-			Points: []*rpc.RpcPoolPoint{
-				{Address: "0xholder3", Points: 500}, // 100% of pool
-			},
-		},
-	}
-
-	mockRPC.On("PoolsByHeight", mock.Anything).Return(pools, nil)
-
-	mockChainStore := &mockNewEntitiesChainStore{
-		chainID:      "chain-A",
-		databaseName: "chain_a",
-	}
-
-	chainsMap := xsync.NewMap[string, *mockNewEntitiesChainStore]()
-	chainsMap.Store("chain-A", mockChainStore)
-
-	activityCtx := &activity.Context{
-		Logger:     logger,
-		AdminDB:    adminStore,
-		RPCFactory: &fakeRPCFactory{client: mockRPC},
-	}
-
-	suite := testsuite.WorkflowTestSuite{}
-	env := suite.NewTestActivityEnvironment()
-	env.RegisterActivity(activityCtx.IndexDexPoolPoints)
-
-	input := types.IndexDexPoolPointsInput{
-		ChainID:   1,
-		Height:    100,
-		BlockTime: time.Now().UTC(),
-	}
-
-	future, err := env.ExecuteActivity(activityCtx.IndexDexPoolPoints, input)
-	require.NoError(t, err)
-
-	var output types.ActivityIndexDexPoolPointsOutput
-	require.NoError(t, future.Get(&output))
-
-	assert.Equal(t, uint32(3), output.NumHolders) // 3 holders across 2 pools
-	assert.Greater(t, output.DurationMs, 0.0)
-	require.Len(t, mockChainStore.insertedPoolPointsByHolder, 3)
-
-	// Verify liquidity calculations
-	var holder1 *indexermodels.DexPoolPointsByHolder
-	for _, h := range mockChainStore.insertedPoolPointsByHolder {
-		if h.Address == "0xholder1" {
-			holder1 = h
-			break
-		}
-	}
-	require.NotNil(t, holder1)
-	// holder1 has 600 points out of 1000 total, pool has 10000 amount
-	// liquidity = 10000 * 600 / 1000 = 6000
-	assert.Equal(t, uint64(6000), holder1.LiquidityPoolPoints)
-
-	mockRPC.AssertExpectations(t)
-}
-
-func TestIndexDexPoolPoints_EmptyPools(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-
-	adminStore := &fakeAdminStore{
-		chain: &admin.Chain{
-			ChainID:      "chain-A",
-			RPCEndpoints: []string{"http://rpc.local"},
-		},
-	}
-
-	mockRPC := &mockNewEntitiesRPCClient{}
-	mockRPC.On("PoolsByHeight", mock.Anything).Return([]*rpc.RpcPool{}, nil)
-
-	mockChainStore := &mockNewEntitiesChainStore{
-		chainID:      "chain-A",
-		databaseName: "chain_a",
-	}
-
-	chainsMap := xsync.NewMap[string, *mockNewEntitiesChainStore]()
-	chainsMap.Store("chain-A", mockChainStore)
-
-	activityCtx := &activity.Context{
-		Logger:     logger,
-		AdminDB:    adminStore,
-		RPCFactory: &fakeRPCFactory{client: mockRPC},
-	}
-
-	suite := testsuite.WorkflowTestSuite{}
-	env := suite.NewTestActivityEnvironment()
-	env.RegisterActivity(activityCtx.IndexDexPoolPoints)
-
-	input := types.IndexDexPoolPointsInput{
-		ChainID:   1,
-		Height:    100,
-		BlockTime: time.Now().UTC(),
-	}
-
-	future, err := env.ExecuteActivity(activityCtx.IndexDexPoolPoints, input)
-	require.NoError(t, err)
-
-	var output types.ActivityIndexDexPoolPointsOutput
-	require.NoError(t, future.Get(&output))
-
-	assert.Equal(t, uint32(0), output.NumHolders)
-	assert.Empty(t, mockChainStore.insertedPoolPointsByHolder)
-
-	mockRPC.AssertExpectations(t)
-}
-
-// ======================
 // Mock Implementations
 // ======================
 
@@ -765,7 +626,7 @@ type mockNewEntitiesChainStore struct {
 	insertedDexOrders          []*indexermodels.DexOrder
 	insertedDexDeposits        []*indexermodels.DexDeposit
 	insertedDexWithdrawals     []*indexermodels.DexWithdrawal
-	insertedPoolPointsByHolder []*indexermodels.DexPoolPointsByHolder
+	insertedPoolPointsByHolder []*indexermodels.PoolPointsByHolder
 	eventsByType               map[string][]*indexermodels.Event
 }
 
@@ -797,7 +658,7 @@ func (m *mockNewEntitiesChainStore) InsertDexWithdrawalsStaging(ctx context.Cont
 	return nil
 }
 
-func (m *mockNewEntitiesChainStore) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error {
+func (m *mockNewEntitiesChainStore) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error {
 	m.insertedPoolPointsByHolder = append(m.insertedPoolPointsByHolder, holders...)
 	return nil
 }

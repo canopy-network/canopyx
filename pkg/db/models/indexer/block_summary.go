@@ -1,7 +1,7 @@
 package indexer
 
 import (
-	"time"
+    "time"
 )
 
 const BlockSummariesProductionTableName = "block_summaries"
@@ -14,116 +14,116 @@ const BlockSummariesStagingTableName = "block_summaries_staging"
 // This model tracks all 16 indexed entities with comprehensive field coverage (90+ fields).
 // All fields use individual typed columns (no maps) following the pattern from params.go.
 type BlockSummary struct {
-	// Block metadata
-	Height     uint64    `ch:"height" json:"height"`
-	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
+    // Block metadata
+    Height     uint64    `ch:"height" json:"height"`
+    HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 
-	// ========== Transactions (24 fields) ==========
-	NumTxs uint32 `ch:"num_txs" json:"num_txs"` // Total number of transactions
+    // ========== Transactions (24 fields) ==========
+    NumTxs uint32 `ch:"num_txs" json:"num_txs"` // Total number of transactions
 
-	// Transaction counts by message type (23 types)
-	NumTxsSend                 uint32 `ch:"num_txs_send" json:"num_txs_send"`
-	NumTxsDelegate             uint32 `ch:"num_txs_delegate" json:"num_txs_delegate"`
-	NumTxsUndelegate           uint32 `ch:"num_txs_undelegate" json:"num_txs_undelegate"`
-	NumTxsStake                uint32 `ch:"num_txs_stake" json:"num_txs_stake"`
-	NumTxsUnstake              uint32 `ch:"num_txs_unstake" json:"num_txs_unstake"`
-	NumTxsEditStake            uint32 `ch:"num_txs_edit_stake" json:"num_txs_edit_stake"`
-	NumTxsVote                 uint32 `ch:"num_txs_vote" json:"num_txs_vote"`
-	NumTxsProposal             uint32 `ch:"num_txs_proposal" json:"num_txs_proposal"`
-	NumTxsContract             uint32 `ch:"num_txs_contract" json:"num_txs_contract"`
-	NumTxsSystem               uint32 `ch:"num_txs_system" json:"num_txs_system"`
-	NumTxsUnknown              uint32 `ch:"num_txs_unknown" json:"num_txs_unknown"`
-	NumTxsPause                uint32 `ch:"num_txs_pause" json:"num_txs_pause"`
-	NumTxsUnpause              uint32 `ch:"num_txs_unpause" json:"num_txs_unpause"`
-	NumTxsChangeParameter      uint32 `ch:"num_txs_change_parameter" json:"num_txs_change_parameter"`
-	NumTxsDaoTransfer          uint32 `ch:"num_txs_dao_transfer" json:"num_txs_dao_transfer"`
-	NumTxsCertificateResults   uint32 `ch:"num_txs_certificate_results" json:"num_txs_certificate_results"`
-	NumTxsSubsidy              uint32 `ch:"num_txs_subsidy" json:"num_txs_subsidy"`
-	NumTxsCreateOrder          uint32 `ch:"num_txs_create_order" json:"num_txs_create_order"`
-	NumTxsEditOrder            uint32 `ch:"num_txs_edit_order" json:"num_txs_edit_order"`
-	NumTxsDeleteOrder          uint32 `ch:"num_txs_delete_order" json:"num_txs_delete_order"`
-	NumTxsDexLimitOrder        uint32 `ch:"num_txs_dex_limit_order" json:"num_txs_dex_limit_order"`
-	NumTxsDexLiquidityDeposit  uint32 `ch:"num_txs_dex_liquidity_deposit" json:"num_txs_dex_liquidity_deposit"`
-	NumTxsDexLiquidityWithdraw uint32 `ch:"num_txs_dex_liquidity_withdraw" json:"num_txs_dex_liquidity_withdraw"`
+    // Transaction counts by message type (23 types)
+    NumTxsSend                 uint32 `ch:"num_txs_send" json:"num_txs_send"`
+    NumTxsDelegate             uint32 `ch:"num_txs_delegate" json:"num_txs_delegate"`
+    NumTxsUndelegate           uint32 `ch:"num_txs_undelegate" json:"num_txs_undelegate"`
+    NumTxsStake                uint32 `ch:"num_txs_stake" json:"num_txs_stake"`
+    NumTxsUnstake              uint32 `ch:"num_txs_unstake" json:"num_txs_unstake"`
+    NumTxsEditStake            uint32 `ch:"num_txs_edit_stake" json:"num_txs_edit_stake"`
+    NumTxsVote                 uint32 `ch:"num_txs_vote" json:"num_txs_vote"`
+    NumTxsProposal             uint32 `ch:"num_txs_proposal" json:"num_txs_proposal"`
+    NumTxsContract             uint32 `ch:"num_txs_contract" json:"num_txs_contract"`
+    NumTxsSystem               uint32 `ch:"num_txs_system" json:"num_txs_system"`
+    NumTxsUnknown              uint32 `ch:"num_txs_unknown" json:"num_txs_unknown"`
+    NumTxsPause                uint32 `ch:"num_txs_pause" json:"num_txs_pause"`
+    NumTxsUnpause              uint32 `ch:"num_txs_unpause" json:"num_txs_unpause"`
+    NumTxsChangeParameter      uint32 `ch:"num_txs_change_parameter" json:"num_txs_change_parameter"`
+    NumTxsDaoTransfer          uint32 `ch:"num_txs_dao_transfer" json:"num_txs_dao_transfer"`
+    NumTxsCertificateResults   uint32 `ch:"num_txs_certificate_results" json:"num_txs_certificate_results"`
+    NumTxsSubsidy              uint32 `ch:"num_txs_subsidy" json:"num_txs_subsidy"`
+    NumTxsCreateOrder          uint32 `ch:"num_txs_create_order" json:"num_txs_create_order"`
+    NumTxsEditOrder            uint32 `ch:"num_txs_edit_order" json:"num_txs_edit_order"`
+    NumTxsDeleteOrder          uint32 `ch:"num_txs_delete_order" json:"num_txs_delete_order"`
+    NumTxsDexLimitOrder        uint32 `ch:"num_txs_dex_limit_order" json:"num_txs_dex_limit_order"`
+    NumTxsDexLiquidityDeposit  uint32 `ch:"num_txs_dex_liquidity_deposit" json:"num_txs_dex_liquidity_deposit"`
+    NumTxsDexLiquidityWithdraw uint32 `ch:"num_txs_dex_liquidity_withdraw" json:"num_txs_dex_liquidity_withdraw"`
 
-	// ========== Accounts (2 fields) ==========
-	NumAccounts    uint32 `ch:"num_accounts" json:"num_accounts"`         // Number of accounts that changed
-	NumAccountsNew uint32 `ch:"num_accounts_new" json:"num_accounts_new"` // Number of new accounts created
+    // ========== Accounts (2 fields) ==========
+    NumAccounts    uint32 `ch:"num_accounts" json:"num_accounts"`         // Number of accounts that changed
+    NumAccountsNew uint32 `ch:"num_accounts_new" json:"num_accounts_new"` // Number of new accounts created
 
-	// ========== Events (10 fields) ==========
-	NumEvents uint32 `ch:"num_events" json:"num_events"` // Total number of events
+    // ========== Events (10 fields) ==========
+    NumEvents uint32 `ch:"num_events" json:"num_events"` // Total number of events
 
-	// Event counts by type (9 types)
-	NumEventsReward                   uint32 `ch:"num_events_reward" json:"num_events_reward"`
-	NumEventsSlash                    uint32 `ch:"num_events_slash" json:"num_events_slash"`
-	NumEventsDexLiquidityDeposit      uint32 `ch:"num_events_dex_liquidity_deposit" json:"num_events_dex_liquidity_deposit"`
-	NumEventsDexLiquidityWithdraw     uint32 `ch:"num_events_dex_liquidity_withdraw" json:"num_events_dex_liquidity_withdraw"`
-	NumEventsDexSwap                  uint32 `ch:"num_events_dex_swap" json:"num_events_dex_swap"`
-	NumEventsOrderBookSwap            uint32 `ch:"num_events_order_book_swap" json:"num_events_order_book_swap"`
-	NumEventsAutomaticPause           uint32 `ch:"num_events_automatic_pause" json:"num_events_automatic_pause"`
-	NumEventsAutomaticBeginUnstaking  uint32 `ch:"num_events_automatic_begin_unstaking" json:"num_events_automatic_begin_unstaking"`
-	NumEventsAutomaticFinishUnstaking uint32 `ch:"num_events_automatic_finish_unstaking" json:"num_events_automatic_finish_unstaking"`
+    // Event counts by type (9 types)
+    NumEventsReward                   uint32 `ch:"num_events_reward" json:"num_events_reward"`
+    NumEventsSlash                    uint32 `ch:"num_events_slash" json:"num_events_slash"`
+    NumEventsDexLiquidityDeposit      uint32 `ch:"num_events_dex_liquidity_deposit" json:"num_events_dex_liquidity_deposit"`
+    NumEventsDexLiquidityWithdraw     uint32 `ch:"num_events_dex_liquidity_withdraw" json:"num_events_dex_liquidity_withdraw"`
+    NumEventsDexSwap                  uint32 `ch:"num_events_dex_swap" json:"num_events_dex_swap"`
+    NumEventsOrderBookSwap            uint32 `ch:"num_events_order_book_swap" json:"num_events_order_book_swap"`
+    NumEventsAutomaticPause           uint32 `ch:"num_events_automatic_pause" json:"num_events_automatic_pause"`
+    NumEventsAutomaticBeginUnstaking  uint32 `ch:"num_events_automatic_begin_unstaking" json:"num_events_automatic_begin_unstaking"`
+    NumEventsAutomaticFinishUnstaking uint32 `ch:"num_events_automatic_finish_unstaking" json:"num_events_automatic_finish_unstaking"`
 
-	// ========== Orders (6 fields) ==========
-	NumOrders          uint32 `ch:"num_orders" json:"num_orders"`                     // Total number of orders
-	NumOrdersNew       uint32 `ch:"num_orders_new" json:"num_orders_new"`             // Number of new orders
-	NumOrdersOpen      uint32 `ch:"num_orders_open" json:"num_orders_open"`           // Number of open orders
-	NumOrdersFilled    uint32 `ch:"num_orders_filled" json:"num_orders_filled"`       // Number of filled orders
-	NumOrdersCancelled uint32 `ch:"num_orders_cancelled" json:"num_orders_cancelled"` // Number of cancelled orders
-	NumOrdersExpired   uint32 `ch:"num_orders_expired" json:"num_orders_expired"`     // Number of expired orders
+    // ========== Orders (6 fields) ==========
+    NumOrders          uint32 `ch:"num_orders" json:"num_orders"`                     // Total number of orders
+    NumOrdersNew       uint32 `ch:"num_orders_new" json:"num_orders_new"`             // Number of new orders
+    NumOrdersOpen      uint32 `ch:"num_orders_open" json:"num_orders_open"`           // Number of open orders
+    NumOrdersFilled    uint32 `ch:"num_orders_filled" json:"num_orders_filled"`       // Number of filled orders
+    NumOrdersCancelled uint32 `ch:"num_orders_cancelled" json:"num_orders_cancelled"` // Number of cancelled orders
+    NumOrdersExpired   uint32 `ch:"num_orders_expired" json:"num_orders_expired"`     // Number of expired orders
 
-	// ========== PoolsByHeight (2 fields) ==========
-	NumPools    uint32 `ch:"num_pools" json:"num_pools"`         // Total number of pools
-	NumPoolsNew uint32 `ch:"num_pools_new" json:"num_pools_new"` // Number of new pools created
+    // ========== PoolsByHeight (2 fields) ==========
+    NumPools    uint32 `ch:"num_pools" json:"num_pools"`         // Total number of pools
+    NumPoolsNew uint32 `ch:"num_pools_new" json:"num_pools_new"` // Number of new pools created
 
-	// ========== DexPricesByHeight (1 field) ==========
-	NumDexPrices uint32 `ch:"num_dex_prices" json:"num_dex_prices"` // Number of DEX price records
+    // ========== DexPricesByHeight (1 field) ==========
+    NumDexPrices uint32 `ch:"num_dex_prices" json:"num_dex_prices"` // Number of DEX price records
 
-	// ========== DexOrders (6 fields) ==========
-	NumDexOrders         uint32 `ch:"num_dex_orders" json:"num_dex_orders"`                   // Total number of DEX orders
-	NumDexOrdersFuture   uint32 `ch:"num_dex_orders_future" json:"num_dex_orders_future"`     // Number of future DEX orders
-	NumDexOrdersLocked   uint32 `ch:"num_dex_orders_locked" json:"num_dex_orders_locked"`     // Number of locked DEX orders
-	NumDexOrdersComplete uint32 `ch:"num_dex_orders_complete" json:"num_dex_orders_complete"` // Number of complete DEX orders
-	NumDexOrdersSuccess  uint32 `ch:"num_dex_orders_success" json:"num_dex_orders_success"`   // Number of successful DEX orders
-	NumDexOrdersFailed   uint32 `ch:"num_dex_orders_failed" json:"num_dex_orders_failed"`     // Number of failed DEX orders
+    // ========== DexOrders (6 fields) ==========
+    NumDexOrders         uint32 `ch:"num_dex_orders" json:"num_dex_orders"`                   // Total number of DEX orders
+    NumDexOrdersFuture   uint32 `ch:"num_dex_orders_future" json:"num_dex_orders_future"`     // Number of future DEX orders
+    NumDexOrdersLocked   uint32 `ch:"num_dex_orders_locked" json:"num_dex_orders_locked"`     // Number of locked DEX orders
+    NumDexOrdersComplete uint32 `ch:"num_dex_orders_complete" json:"num_dex_orders_complete"` // Number of complete DEX orders
+    NumDexOrdersSuccess  uint32 `ch:"num_dex_orders_success" json:"num_dex_orders_success"`   // Number of successful DEX orders
+    NumDexOrdersFailed   uint32 `ch:"num_dex_orders_failed" json:"num_dex_orders_failed"`     // Number of failed DEX orders
 
-	// ========== DexDeposits (3 fields) ==========
-	NumDexDeposits         uint32 `ch:"num_dex_deposits" json:"num_dex_deposits"`                   // Total number of DEX deposits
-	NumDexDepositsPending  uint32 `ch:"num_dex_deposits_pending" json:"num_dex_deposits_pending"`   // Number of pending DEX deposits
-	NumDexDepositsComplete uint32 `ch:"num_dex_deposits_complete" json:"num_dex_deposits_complete"` // Number of complete DEX deposits
+    // ========== DexDeposits (3 fields) ==========
+    NumDexDeposits         uint32 `ch:"num_dex_deposits" json:"num_dex_deposits"`                   // Total number of DEX deposits
+    NumDexDepositsPending  uint32 `ch:"num_dex_deposits_pending" json:"num_dex_deposits_pending"`   // Number of pending DEX deposits
+    NumDexDepositsComplete uint32 `ch:"num_dex_deposits_complete" json:"num_dex_deposits_complete"` // Number of complete DEX deposits
 
-	// ========== DexWithdrawals (3 fields) ==========
-	NumDexWithdrawals         uint32 `ch:"num_dex_withdrawals" json:"num_dex_withdrawals"`                   // Total number of DEX withdrawals
-	NumDexWithdrawalsPending  uint32 `ch:"num_dex_withdrawals_pending" json:"num_dex_withdrawals_pending"`   // Number of pending DEX withdrawals
-	NumDexWithdrawalsComplete uint32 `ch:"num_dex_withdrawals_complete" json:"num_dex_withdrawals_complete"` // Number of complete DEX withdrawals
+    // ========== DexWithdrawals (3 fields) ==========
+    NumDexWithdrawals         uint32 `ch:"num_dex_withdrawals" json:"num_dex_withdrawals"`                   // Total number of DEX withdrawals
+    NumDexWithdrawalsPending  uint32 `ch:"num_dex_withdrawals_pending" json:"num_dex_withdrawals_pending"`   // Number of pending DEX withdrawals
+    NumDexWithdrawalsComplete uint32 `ch:"num_dex_withdrawals_complete" json:"num_dex_withdrawals_complete"` // Number of complete DEX withdrawals
 
-	// ========== DexPoolPointsByHolder (2 fields) ==========
-	NumDexPoolPointsHolders    uint32 `ch:"num_dex_pool_points_holders" json:"num_dex_pool_points_holders"`         // Total number of pool point holders
-	NumDexPoolPointsHoldersNew uint32 `ch:"num_dex_pool_points_holders_new" json:"num_dex_pool_points_holders_new"` // Number of new pool point holders
+    // ========== PoolPointsByHolder (2 fields) ==========
+    NumDexPoolPointsHolders    uint32 `ch:"num_pool_points_holders" json:"num_pool_points_holders"`         // Total number of pool point holders
+    NumDexPoolPointsHoldersNew uint32 `ch:"num_pool_points_holders_new" json:"num_pool_points_holders_new"` // Number of new pool point holders
 
-	// ========== Params (1 field) ==========
-	ParamsChanged bool `ch:"params_changed" json:"params_changed"` // Whether chain parameters changed at this height
+    // ========== Params (1 field) ==========
+    ParamsChanged bool `ch:"params_changed" json:"params_changed"` // Whether chain parameters changed at this height
 
-	// ========== Validators (5 fields) ==========
-	NumValidators          uint32 `ch:"num_validators" json:"num_validators"`                     // Total number of validators
-	NumValidatorsNew       uint32 `ch:"num_validators_new" json:"num_validators_new"`             // Number of new validators
-	NumValidatorsActive    uint32 `ch:"num_validators_active" json:"num_validators_active"`       // Number of active validators
-	NumValidatorsPaused    uint32 `ch:"num_validators_paused" json:"num_validators_paused"`       // Number of paused validators
-	NumValidatorsUnstaking uint32 `ch:"num_validators_unstaking" json:"num_validators_unstaking"` // Number of unstaking validators
+    // ========== Validators (5 fields) ==========
+    NumValidators          uint32 `ch:"num_validators" json:"num_validators"`                     // Total number of validators
+    NumValidatorsNew       uint32 `ch:"num_validators_new" json:"num_validators_new"`             // Number of new validators
+    NumValidatorsActive    uint32 `ch:"num_validators_active" json:"num_validators_active"`       // Number of active validators
+    NumValidatorsPaused    uint32 `ch:"num_validators_paused" json:"num_validators_paused"`       // Number of paused validators
+    NumValidatorsUnstaking uint32 `ch:"num_validators_unstaking" json:"num_validators_unstaking"` // Number of unstaking validators
 
-	// ========== ValidatorSigningInfo (2 fields) ==========
-	NumValidatorSigningInfo    uint32 `ch:"num_validator_signing_info" json:"num_validator_signing_info"`         // Total number of signing info records
-	NumValidatorSigningInfoNew uint32 `ch:"num_validator_signing_info_new" json:"num_validator_signing_info_new"` // Number of new signing info records
+    // ========== ValidatorSigningInfo (2 fields) ==========
+    NumValidatorSigningInfo    uint32 `ch:"num_validator_signing_info" json:"num_validator_signing_info"`         // Total number of signing info records
+    NumValidatorSigningInfoNew uint32 `ch:"num_validator_signing_info_new" json:"num_validator_signing_info_new"` // Number of new signing info records
 
-	// ========== Committees (4 fields) ==========
-	NumCommittees           uint32 `ch:"num_committees" json:"num_committees"`                       // Total number of committees
-	NumCommitteesNew        uint32 `ch:"num_committees_new" json:"num_committees_new"`               // Number of new committees
-	NumCommitteesSubsidized uint32 `ch:"num_committees_subsidized" json:"num_committees_subsidized"` // Number of subsidized committees
-	NumCommitteesRetired    uint32 `ch:"num_committees_retired" json:"num_committees_retired"`       // Number of retired committees
+    // ========== Committees (4 fields) ==========
+    NumCommittees           uint32 `ch:"num_committees" json:"num_committees"`                       // Total number of committees
+    NumCommitteesNew        uint32 `ch:"num_committees_new" json:"num_committees_new"`               // Number of new committees
+    NumCommitteesSubsidized uint32 `ch:"num_committees_subsidized" json:"num_committees_subsidized"` // Number of subsidized committees
+    NumCommitteesRetired    uint32 `ch:"num_committees_retired" json:"num_committees_retired"`       // Number of retired committees
 
-	// ========== CommitteeValidators (1 field) ==========
-	NumCommitteeValidators uint32 `ch:"num_committee_validators" json:"num_committee_validators"` // Number of committee-validator relationships
+    // ========== CommitteeValidators (1 field) ==========
+    NumCommitteeValidators uint32 `ch:"num_committee_validators" json:"num_committee_validators"` // Number of committee-validator relationships
 
-	// ========== PollSnapshots (1 field) ==========
-	NumPollSnapshots uint32 `ch:"num_poll_snapshots" json:"num_poll_snapshots"` // Number of poll snapshot records
+    // ========== PollSnapshots (1 field) ==========
+    NumPollSnapshots uint32 `ch:"num_poll_snapshots" json:"num_poll_snapshots"` // Number of poll snapshot records
 }

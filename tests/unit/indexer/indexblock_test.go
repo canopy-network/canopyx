@@ -220,7 +220,7 @@ func TestIndexBlockWorkflowAllEntitiesPromotion(t *testing.T) {
 		"dex_orders",
 		"dex_deposits",
 		"dex_withdrawals",
-		"dex_pool_points_by_holder",
+		"pool_points_by_holder",
 		"params",
 		"validators",
 		"validator_signing_info",
@@ -520,7 +520,7 @@ func (*wfFakeChainStore) InsertDexDepositsStaging(context.Context, []*indexermod
 func (*wfFakeChainStore) InsertDexWithdrawalsStaging(context.Context, []*indexermodels.DexWithdrawal) error {
 	return nil
 }
-func (*wfFakeChainStore) InsertDexPoolPointsByHolderStaging(context.Context, []*indexermodels.DexPoolPointsByHolder) error {
+func (*wfFakeChainStore) InsertPoolPointsByHolderStaging(context.Context, []*indexermodels.PoolPointsByHolder) error {
 	return nil
 }
 func (*wfFakeChainStore) InsertParamsStaging(context.Context, *indexermodels.Params) error {

@@ -85,3 +85,41 @@ type RpcNonSigner struct {
 	Address string `json:"address"` // Hex-encoded validator address
 	Counter uint64 `json:"counter"` // Number of blocks missed within the tracking window
 }
+
+// DoubleSignersByHeight returns all double-signers (validators with Byzantine behavior) at a specific block height.
+// The RPC endpoint returns double-signer information for validators that have signed multiple conflicting blocks
+// at the same height (Byzantine fault).
+//
+// The Canopy RPC endpoint /v1/query/double-signers supports:
+//   - height: uint64 - Block height to query (0 = latest)
+//   - pageNumber: int - Page number (1-indexed, default: 1)
+//   - perPage: int - Results per page (default: 1000, max: 1000)
+//
+// Parameters:
+//   - height: The block height to query double-signers for (0 = latest)
+//
+// Returns:
+//   - []*RpcDoubleSigner: All double-signers at the specified height
+//   - error: Empty list if the endpoint doesn't exist or returns an error
+//
+// This function fetches all pages in parallel for performance.
+// Note: Returns an empty list (not an error) if the endpoint is not available,
+// for backward compatibility with older Canopy versions.
+func (c *HTTPClient) DoubleSignersByHeight(ctx context.Context, height uint64) ([]*RpcDoubleSigner, error) {
+	req := NewQueryByHeightRequest(height)
+	doubleSigners, err := ListPaged[*RpcDoubleSigner](ctx, c, doubleSignersPath, req)
+	if err != nil {
+		// If the endpoint doesn't exist or returns an error, return empty list
+		// This handles cases where the RPC doesn't support this endpoint yet
+		return []*RpcDoubleSigner{}, nil
+	}
+	return doubleSigners, nil
+}
+
+// RpcDoubleSigner represents double-signing evidence returned from the RPC.
+// This matches the DoubleSigner protobuf structure from Canopy (fsm/byzantine.go).
+// Tracks validators that have signed multiple conflicting blocks at the same height (Byzantine fault).
+type RpcDoubleSigner struct {
+	Address           string   `json:"address"` // Hex-encoded validator address
+	InfractionHeights []uint64 `json:"heights"` // Block heights where double-signing occurred
+}

@@ -37,8 +37,9 @@ const (
 	govParamsPath = "/v1/query/gov-params"
 
 	// Validator queries
-	validatorsPath = "/v1/query/validators"
-	nonSignersPath = "/v1/query/non-signers"
+	validatorsPath    = "/v1/query/validators"
+	nonSignersPath    = "/v1/query/non-signers"
+	doubleSignersPath = "/v1/query/double-signers"
 
 	// Committee queries
 	committeesDataPath       = "/v1/query/committees-data"

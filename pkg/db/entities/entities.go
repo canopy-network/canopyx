@@ -115,10 +115,10 @@ const (
 	// Staging table: dex_withdrawals_staging
 	DexWithdrawals Entity = "dex_withdrawals"
 
-	// DexPoolPointsByHolder represents the DEX pool points by holder entity.
-	// Production table: dex_pool_points_by_holder
-	// Staging table: dex_pool_points_by_holder_staging
-	DexPoolPointsByHolder Entity = "dex_pool_points_by_holder"
+	// PoolPointsByHolder represents the pool points by holder entity.
+	// Production table: pool_points_by_holder
+	// Staging table: pool_points_by_holder_staging
+	PoolPointsByHolder Entity = "pool_points_by_holder"
 
 	// Params represents the chain parameters entity.
 	// Production table: params
@@ -134,6 +134,11 @@ const (
 	// Production table: validator_signing_info
 	// Staging table: validator_signing_info_staging
 	ValidatorSigningInfo Entity = "validator_signing_info"
+
+	// ValidatorDoubleSigningInfo represents the validator double signing info entity.
+	// Production table: validator_double_signing_info
+	// Staging table: validator_double_signing_info_staging
+	ValidatorDoubleSigningInfo Entity = "validator_double_signing_info"
 
 	// Committees represents the committee data entity.
 	// Production table: committees
@@ -171,10 +176,11 @@ var allEntities = []Entity{
 	DexOrders,
 	DexDeposits,
 	DexWithdrawals,
-	DexPoolPointsByHolder,
+	PoolPointsByHolder,
 	Params,
 	Validators,
 	ValidatorSigningInfo,
+	ValidatorDoubleSigningInfo,
 	Committees,
 	CommitteeValidators,
 	PollSnapshots,

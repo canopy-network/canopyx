@@ -881,6 +881,11 @@ function ExplorerTab({ chainId }: { chainId: string }) {
   const [lookupError, setLookupError] = useState('')
   const [lookupLoading, setLookupLoading] = useState(false)
 
+  // Schema-driven lookup state
+  const [entitySchema, setEntitySchema] = useState<Record<string, string>>({})
+  const [selectedProperty, setSelectedProperty] = useState<string>('')
+  const [lookupValue, setLookupValue] = useState('')
+
   // ID field configuration for different entities
   type EntityIdConfig = {
     field: string
@@ -970,6 +975,42 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     fetchEntities()
   }, [notify])
 
+  // Fetch entity schema when selected entity changes
+  useEffect(() => {
+    if (!selectedTable) return
+
+    // Reset fields when entity changes
+    setSelectedProperty('')
+    setLookupValue('')
+    setLookupHeight('')
+    setLookupResult(null)
+    setLookupError('')
+
+    const fetchEntitySchema = async () => {
+      try {
+        const response = await apiFetch(`/api/chains/${chainId}/entity/${selectedTable}/schema`)
+        if (!response.ok) {
+          throw new Error('Failed to fetch entity schema')
+        }
+        const data = await response.json()
+        setEntitySchema(data.properties || {})
+
+        // Auto-select first property
+        const properties = Object.keys(data.properties || {})
+        if (properties.length > 0) {
+          setSelectedProperty(properties[0])
+        }
+      } catch (err: any) {
+        console.error('Schema fetch error:', err)
+        // Fall back to empty schema
+        setEntitySchema({})
+        setSelectedProperty('')
+      }
+    }
+
+    fetchEntitySchema()
+  }, [selectedTable, chainId])
+
   // Fetch schema when table changes
   useEffect(() => {
     // Don't fetch if selectedTable hasn't been initialized yet
@@ -1053,40 +1094,39 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     setError('')
   }
 
-  // Single entity lookup handler
+  // Single entity lookup handler (schema-driven)
   const handleLookup = async () => {
     setLookupResult(null)
     setLookupError('')
     setLookupLoading(true)
 
-    const idConfig = entityIdFields[selectedTable]
-    if (!idConfig) {
-      setLookupError('Unknown entity type')
+    if (!selectedProperty) {
+      notify('Please select a property', 'error')
       setLookupLoading(false)
       return
     }
 
-    if (!lookupId) {
-      notify(`Please enter ${idConfig.label}`, 'error')
+    if (!lookupValue) {
+      notify(`Please enter a value for ${selectedProperty}`, 'error')
       setLookupLoading(false)
       return
     }
 
-    // Build URL based on entity type
+    // Build URL using new query parameter format
     try {
-      let url: string
-      // Use entity name directly - the generic entity endpoint expects entity names
+      const params = new URLSearchParams()
+      params.append('property', selectedProperty)
+      params.append('value', lookupValue)
 
-      // Check if the current entity has staging support (use hasStaging which is already computed)
-      const stagingParam = useStaging && hasStaging ? 'use_staging=true' : ''
+      if (lookupHeight) {
+        params.append('height', lookupHeight)
+      }
 
-      // Build query using generic entity endpoint
-      url = `/api/chains/${chainId}/entity/${selectedTable}/${lookupId}`
-      const params = []
-      if (lookupHeight) params.push(`height=${lookupHeight}`)
-      if (stagingParam) params.push(stagingParam)
-      if (params.length > 0) url += `?${params.join('&')}`
+      if (useStaging && hasStaging) {
+        params.append('use_staging', 'true')
+      }
 
+      const url = `/api/chains/${chainId}/entity/${selectedTable}/lookup?${params.toString()}`
       const response = await apiFetch(url)
 
       if (response.ok) {
@@ -1115,6 +1155,100 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     setItemsPerPage(newLimit)
     setCursors([null])
     setCurrentPageIndex(0)
+  }
+
+  // Render dynamic input based on property type
+  const renderValueInput = () => {
+    const propertyType = entitySchema[selectedProperty]
+
+    if (!propertyType) {
+      return (
+        <input
+          type="text"
+          value={lookupValue}
+          onChange={(e) => setLookupValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+          placeholder="Enter value"
+          className="input w-full"
+          disabled={lookupLoading}
+        />
+      )
+    }
+
+    // Numeric types
+    if (propertyType.includes('int') || propertyType.includes('uint') || propertyType.includes('float')) {
+      return (
+        <input
+          type="number"
+          value={lookupValue}
+          onChange={(e) => setLookupValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+          placeholder={`Enter ${selectedProperty} (${propertyType})`}
+          className="input w-full"
+          disabled={lookupLoading}
+        />
+      )
+    }
+
+    // Boolean type
+    if (propertyType === 'bool') {
+      return (
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="boolValue"
+              value="true"
+              checked={lookupValue === 'true'}
+              onChange={(e) => setLookupValue(e.target.value)}
+              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
+              disabled={lookupLoading}
+            />
+            <span className="text-sm text-slate-300">True</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="boolValue"
+              value="false"
+              checked={lookupValue === 'false'}
+              onChange={(e) => setLookupValue(e.target.value)}
+              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
+              disabled={lookupLoading}
+            />
+            <span className="text-sm text-slate-300">False</span>
+          </label>
+        </div>
+      )
+    }
+
+    // DateTime type
+    if (propertyType === 'datetime') {
+      return (
+        <input
+          type="datetime-local"
+          value={lookupValue}
+          onChange={(e) => setLookupValue(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+          placeholder={`Enter ${selectedProperty}`}
+          className="input w-full"
+          disabled={lookupLoading}
+        />
+      )
+    }
+
+    // Default: string input
+    return (
+      <input
+        type="text"
+        value={lookupValue}
+        onChange={(e) => setLookupValue(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+        placeholder={`Enter ${selectedProperty} (${propertyType})`}
+        className="input w-full"
+        disabled={lookupLoading}
+      />
+    )
   }
 
   const handleNextPage = () => {
@@ -1219,68 +1353,98 @@ function ExplorerTab({ chainId }: { chainId: string }) {
         </div>
       )}
 
-      {/* Single Entity Lookup Section */}
-      {!loadingEntities && entities.length > 0 && (
+      {/* Single Entity Lookup Section - Schema-Driven */}
+      {!loadingEntities && entities.length > 0 && Object.keys(entitySchema).length > 0 && (
         <div className="card border-indigo-500/20 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
           <div className="card-header">
             <h3 className="card-title">Quick Lookup</h3>
-            <p className="text-xs text-slate-500">Search for a specific {selectedTable} by ID</p>
+            <p className="text-xs text-slate-500">Search for a specific {selectedTable} by any property</p>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
-            <div className={selectedTable === 'accounts' ? 'md:col-span-8' : 'md:col-span-10'}>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                {entityIdFields[selectedTable]?.label || 'ID'}
-              </label>
-              <input
-                type={entityIdFields[selectedTable]?.type || 'text'}
-                value={lookupId}
-                onChange={(e) => setLookupId(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
-                placeholder={`Enter ${entityIdFields[selectedTable]?.label || 'ID'}`}
-                className="input w-full"
-                disabled={lookupLoading}
-              />
-            </div>
-
-            {selectedTable === 'accounts' && (
-              <div className="md:col-span-2">
+          <div className="space-y-4">
+            {/* Property Selector and Value Input */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+              <div className="md:col-span-4">
                 <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Height <span className="text-xs text-slate-500">(optional)</span>
+                  Property <span className="text-xs text-slate-500">({Object.keys(entitySchema).length} available)</span>
                 </label>
-                <input
-                  type="number"
-                  value={lookupHeight}
-                  onChange={(e) => setLookupHeight(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
-                  placeholder="Latest"
+                <select
+                  value={selectedProperty}
+                  onChange={(e) => {
+                    setSelectedProperty(e.target.value)
+                    setLookupValue('') // Reset value when property changes
+                  }}
                   className="input w-full"
                   disabled={lookupLoading}
-                />
+                >
+                  <option value="">Select property...</option>
+                  {Object.keys(entitySchema)
+                    .sort()
+                    .map((prop) => (
+                      <option key={prop} value={prop}>
+                        {prop} ({entitySchema[prop]})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="md:col-span-6">
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Value
+                  {selectedProperty && entitySchema[selectedProperty] && (
+                    <span className="text-xs text-slate-500 ml-2">
+                      Type: {entitySchema[selectedProperty]}
+                    </span>
+                  )}
+                </label>
+                {renderValueInput()}
+              </div>
+
+              <div className="md:col-span-2 flex items-end">
+                <button
+                  onClick={handleLookup}
+                  disabled={lookupLoading || !selectedProperty}
+                  className="btn w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {lookupLoading ? (
+                    <>
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
+                      Searching...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                      Search
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Optional Height Input - Only show for stateful entities */}
+            {selectedTable && !['blocks', 'txs', 'events'].includes(selectedTable) && (
+              <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="flex-1">
+                  <label className="text-xs font-medium text-slate-400">
+                    Height (optional) - Leave empty for latest
+                  </label>
+                  <input
+                    type="number"
+                    value={lookupHeight}
+                    onChange={(e) => setLookupHeight(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+                    placeholder="0 = latest, or specific height"
+                    className="input w-full mt-1 text-sm"
+                    disabled={lookupLoading}
+                  />
+                </div>
               </div>
             )}
-
-            <div className="md:col-span-2 flex items-end">
-              <button
-                onClick={handleLookup}
-                disabled={lookupLoading}
-                className="btn w-full disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {lookupLoading ? (
-                  <>
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
-                    Searching...
-                  </>
-                ) : (
-                  <>
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                    Search
-                  </>
-                )}
-              </button>
-            </div>
           </div>
 
           {/* Lookup Result Display */}

@@ -137,13 +137,13 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
-	db.Logger.Debug("Initialize dex_pool_points_by_holder model", zap.String("name", db.Name))
-	if err := db.initDexPoolPointsByHolder(ctx); err != nil {
+	db.Logger.Debug("Initialize pool_points_by_holder model", zap.String("name", db.Name))
+	if err := db.initPoolPointsByHolder(ctx); err != nil {
 		return err
 	}
 
-	db.Logger.Debug("Initialize dex_pool_points_created_height view", zap.String("name", db.Name))
-	if err := db.initDexPoolPointsCreatedHeightView(ctx); err != nil {
+	db.Logger.Debug("Initialize pool_points_created_height view", zap.String("name", db.Name))
+	if err := db.initPoolPointsCreatedHeightView(ctx); err != nil {
 		return err
 	}
 
@@ -159,6 +159,11 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 
 	db.Logger.Debug("Initialize validator_signing_info model", zap.String("name", db.Name))
 	if err := db.initValidatorSigningInfo(ctx); err != nil {
+		return err
+	}
+
+	db.Logger.Debug("Initialize validator_double_signing_info model", zap.String("name", db.Name))
+	if err := db.initValidatorDoubleSigningInfo(ctx); err != nil {
 		return err
 	}
 

@@ -593,7 +593,7 @@ func (*fakeChainStore) InsertDexWithdrawalsStaging(context.Context, []*indexermo
 	return nil
 }
 
-func (*fakeChainStore) InsertDexPoolPointsByHolderStaging(context.Context, []*indexermodels.DexPoolPointsByHolder) error {
+func (*fakeChainStore) InsertPoolPointsByHolderStaging(context.Context, []*indexermodels.PoolPointsByHolder) error {
 	return nil
 }
 

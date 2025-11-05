@@ -30,6 +30,8 @@ type EntityQueryResponse struct {
 
 // EntityGetRequest represents query parameters for single entity lookups
 type EntityGetRequest struct {
-	Height     *uint64 `json:"height,omitempty"`
+	Property   string  `json:"property"`         // Column name to query (hash, address, order_id, etc.) - REQUIRED
+	Value      string  `json:"value"`            // Value to search for - REQUIRED
+	Height     *uint64 `json:"height,omitempty"` // Optional - if 0 or omitted, get latest; if specified, get at that exact height
 	UseStaging bool    `json:"use_staging"`
 }

@@ -44,18 +44,22 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 
 	// Parallel RPC fetch using goroutines for performance
 	var (
-		currentValidators  []*rpc.RpcValidator
-		previousValidators []*rpc.RpcValidator
-		currentNonSigners  []*rpc.RpcNonSigner
-		previousNonSigners []*rpc.RpcNonSigner
-		currentErr         error
-		previousErr        error
-		nonSignersErr      error
-		prevNonSignersErr  error
-		wg                 sync.WaitGroup
+		currentValidators     []*rpc.RpcValidator
+		previousValidators    []*rpc.RpcValidator
+		currentNonSigners     []*rpc.RpcNonSigner
+		previousNonSigners    []*rpc.RpcNonSigner
+		currentDoubleSigners  []*rpc.RpcDoubleSigner
+		previousDoubleSigners []*rpc.RpcDoubleSigner
+		currentErr            error
+		previousErr           error
+		nonSignersErr         error
+		prevNonSignersErr     error
+		doubleSignersErr      error
+		prevDoubleSignersErr  error
+		wg                    sync.WaitGroup
 	)
 
-	wg.Add(4)
+	wg.Add(6)
 
 	// Worker 1: Fetch current height validators from RPC
 	go func() {
@@ -94,28 +98,43 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		}
 	}()
 
+	// Worker 5: Fetch current double-signers
+	go func() {
+		defer wg.Done()
+		currentDoubleSigners, doubleSignersErr = cli.DoubleSignersByHeight(ctx, input.Height)
+	}()
+
+	// Worker 6: Fetch previous double-signers
+	go func() {
+		defer wg.Done()
+		if input.Height == 1 {
+			previousDoubleSigners = make([]*rpc.RpcDoubleSigner, 0)
+		} else if input.Height > 1 {
+			previousDoubleSigners, prevDoubleSignersErr = cli.DoubleSignersByHeight(ctx, input.Height-1)
+		}
+	}()
+
 	// Wait for all workers to complete
 	wg.Wait()
 
-	// Check for errors
+	// Check for errors - all RPC calls must succeed to ensure data integrity
 	if currentErr != nil {
 		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch current validators at height %d: %w", input.Height, currentErr)
 	}
 	if previousErr != nil && input.Height > 1 {
 		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch previous validators at height %d: %w", input.Height-1, previousErr)
 	}
-	// Non-signer errors are non-fatal - the endpoint may not be available
 	if nonSignersErr != nil {
-		ac.Logger.Debug("Failed to fetch current non-signers (endpoint may not be available)",
-			zap.Uint64("height", input.Height),
-			zap.Error(nonSignersErr))
-		currentNonSigners = make([]*rpc.RpcNonSigner, 0)
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch current non-signers at height %d: %w", input.Height, nonSignersErr)
 	}
-	if prevNonSignersErr != nil {
-		ac.Logger.Debug("Failed to fetch previous non-signers (endpoint may not be available)",
-			zap.Uint64("height", input.Height-1),
-			zap.Error(prevNonSignersErr))
-		previousNonSigners = make([]*rpc.RpcNonSigner, 0)
+	if prevNonSignersErr != nil && input.Height > 1 {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch previous non-signers at height %d: %w", input.Height-1, prevNonSignersErr)
+	}
+	if doubleSignersErr != nil {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch current double-signers at height %d: %w", input.Height, doubleSignersErr)
+	}
+	if prevDoubleSignersErr != nil && input.Height > 1 {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch previous double-signers at height %d: %w", input.Height-1, prevDoubleSignersErr)
 	}
 
 	// Build previous state maps for O(1) lookups
@@ -293,6 +312,38 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		}
 	}
 
+	// Build previous double-signers map for O(1) lookups
+	prevDoubleSignersMap := make(map[string]uint64, len(previousDoubleSigners))
+	for _, ds := range previousDoubleSigners {
+		prevDoubleSignersMap[ds.Address] = uint64(len(ds.InfractionHeights))
+	}
+
+	// Compare and collect changed double-signing info
+	changedDoubleSigningInfos := make([]*indexer.ValidatorDoubleSigningInfo, 0)
+	for _, curr := range currentDoubleSigners {
+		currentCount := uint64(len(curr.InfractionHeights))
+		prevCount := prevDoubleSignersMap[curr.Address]
+
+		// Snapshot-on-change: only insert if evidence count changed
+		if currentCount != prevCount {
+			var firstHeight, lastHeight uint64
+			if len(curr.InfractionHeights) > 0 {
+				firstHeight = curr.InfractionHeights[0]
+				lastHeight = curr.InfractionHeights[len(curr.InfractionHeights)-1]
+			}
+
+			info := &indexer.ValidatorDoubleSigningInfo{
+				Address:             curr.Address,
+				EvidenceCount:       currentCount,
+				FirstEvidenceHeight: firstHeight,
+				LastEvidenceHeight:  lastHeight,
+				Height:              input.Height,
+				HeightTime:          input.BlockTime,
+			}
+			changedDoubleSigningInfos = append(changedDoubleSigningInfos, info)
+		}
+	}
+
 	// Build committee-validator junction table records for validators with committee changes
 	var committeeValidators []*indexer.CommitteeValidator
 	for _, v := range changedValidators {
@@ -329,6 +380,12 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		}
 	}
 
+	if len(changedDoubleSigningInfos) > 0 {
+		if err := chainDb.InsertValidatorDoubleSigningInfoStaging(ctx, changedDoubleSigningInfos); err != nil {
+			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validator double signing info staging: %w", err)
+		}
+	}
+
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 
 	ac.Logger.Info("Indexed validators",
@@ -339,6 +396,8 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		zap.Int("committeeValidators", len(committeeValidators)),
 		zap.Int("totalNonSigners", len(currentNonSigners)),
 		zap.Int("changedSigningInfos", len(changedSigningInfos)),
+		zap.Int("totalDoubleSigners", len(currentDoubleSigners)),
+		zap.Int("changedDoubleSigningInfos", len(changedDoubleSigningInfos)),
 		zap.Int("pauseEvents", len(pauseEvents)),
 		zap.Int("beginUnstakingEvents", len(beginUnstakingEvents)),
 		zap.Int("finishUnstakingEvents", len(finishUnstakingEvents)),
@@ -347,9 +406,10 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		zap.Float64("durationMs", durationMs))
 
 	return types.ActivityIndexValidatorsOutput{
-		NumValidators:   uint32(len(changedValidators)),
-		NumSigningInfos: uint32(len(changedSigningInfos)),
-		DurationMs:      durationMs,
+		NumValidators:         uint32(len(changedValidators)),
+		NumSigningInfos:       uint32(len(changedSigningInfos)),
+		NumDoubleSigningInfos: uint32(len(changedDoubleSigningInfos)),
+		DurationMs:            durationMs,
 	}, nil
 }
 

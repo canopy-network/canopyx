@@ -6,10 +6,10 @@ import (
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 )
 
-const DexPoolPointsByHolderProductionTableName = "dex_pool_points_by_holder"
-const DexPoolPointsByHolderStagingTableName = DexPoolPointsByHolderProductionTableName + entities.StagingSuffix
+const PoolPointsByHolderProductionTableName = "pool_points_by_holder"
+const PoolPointsByHolderStagingTableName = PoolPointsByHolderProductionTableName + entities.StagingSuffix
 
-// DexPoolPointsByHolder represents a versioned snapshot of a liquidity provider's pool points.
+// PoolPointsByHolder represents a versioned snapshot of a liquidity provider's pool points.
 // Pool points represent ownership shares in a DEX liquidity pool, determining the proportion
 // of trading fees earned and the amount received when withdrawing liquidity.
 //
@@ -26,9 +26,9 @@ const DexPoolPointsByHolderStagingTableName = DexPoolPointsByHolderProductionTab
 // - We don't rely on database state which may be incomplete during parallel indexing
 // - ReplacingMergeTree handles deduplication if the same height is indexed multiple times
 //
-// Note: Pool points holder creation time is tracked via the dex_pool_points_created_height
+// Note: Pool points holder creation time is tracked via the pool_points_created_height
 // materialized view, which calculates MIN(height) for each (address, pool_id) pair.
-type DexPoolPointsByHolder struct {
+type PoolPointsByHolder struct {
 	// Identity - composite key
 	Address string `ch:"address" json:"address"` // Hex string representation of holder address
 	PoolID  uint64 `ch:"pool_id" json:"pool_id"` // Calculated pool ID (committee + LiquidityPoolAddend)

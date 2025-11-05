@@ -29,6 +29,9 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build the Next.js application
+# Note: Build happens with NODE_ENV=production for optimizations
+# For Tilt local mode, we don't use this build - we use live_update instead
+ENV NODE_ENV=production
 RUN pnpm build
 
 # -------------------------

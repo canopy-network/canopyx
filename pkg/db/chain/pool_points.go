@@ -8,10 +8,10 @@ import (
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
-// initDexPoolPointsByHolder initializes the dex_pool_points_by_holder table and its staging table.
+// initPoolPointsByHolder initializes the pool_points_by_holder table and its staging table.
 // This table stores versioned snapshots of liquidity provider pool points using the snapshot-on-change pattern.
 // Uses ReplacingMergeTree(height) to deduplicate and keep the latest state at each height.
-func (db *DB) initDexPoolPointsByHolder(ctx context.Context) error {
+func (db *DB) initPoolPointsByHolder(ctx context.Context) error {
 	queryTemplate := `
         CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			address String CODEC(ZSTD(1)),
@@ -27,30 +27,30 @@ func (db *DB) initDexPoolPointsByHolder(ctx context.Context) error {
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPoolPointsByHolderProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolPointsByHolderProductionTableName)
 	if err := db.Exec(ctx, productionQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.DexPoolPointsByHolderProductionTableName, err)
+		return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPoolPointsByHolderStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolPointsByHolderStagingTableName)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.DexPoolPointsByHolderStagingTableName, err)
+		return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderStagingTableName, err)
 	}
 
 	return nil
 }
 
-// InsertDexPoolPointsByHolderStaging inserts pool points snapshots to the staging table.
+// InsertPoolPointsByHolderStaging inserts pool points snapshots to the staging table.
 // This follows the two-phase commit pattern for data consistency.
-func (db *DB) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error {
+func (db *DB) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error {
 	if len(holders) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(
 		`INSERT INTO %s (address, pool_id, height, height_time, committee, points, liquidity_pool_points, liquidity_pool_id) VALUES`,
-		indexermodels.DexPoolPointsByHolderStagingTableName,
+		indexermodels.PoolPointsByHolderStagingTableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
@@ -79,23 +79,23 @@ func (db *DB) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []
 	return batch.Send()
 }
 
-// initDexPoolPointsCreatedHeightView creates a materialized view to calculate the minimum height
+// initPoolPointsCreatedHeightView creates a materialized view to calculate the minimum height
 // at which each (address, pool_id) pair was created.
 //
-// The materialized view automatically updates as new data is inserted into the dex_pool_points_by_holder table,
+// The materialized view automatically updates as new data is inserted into the pool_points_by_holder table,
 // providing an efficient way to query when a holder first acquired points in a pool.
 //
-// Query usage: SELECT address, pool_id, created_height FROM dex_pool_points_created_height WHERE address = ? AND pool_id = ?
-func (db *DB) initDexPoolPointsCreatedHeightView(ctx context.Context) error {
+// Query usage: SELECT address, pool_id, created_height FROM pool_points_created_height WHERE address = ? AND pool_id = ?
+func (db *DB) initPoolPointsCreatedHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."dex_pool_points_created_height"
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."pool_points_created_height"
 		ENGINE = AggregatingMergeTree()
 		ORDER BY (address, pool_id)
 		AS SELECT
 			address,
 			pool_id,
 			min(height) as created_height
-		FROM "%s"."dex_pool_points_by_holder"
+		FROM "%s"."pool_points_by_holder"
 		GROUP BY address, pool_id
 	`, db.Name, db.Name)
 

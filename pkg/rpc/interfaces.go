@@ -22,6 +22,7 @@ type Client interface {
 	ValParamsByHeight(ctx context.Context, height uint64) (*ValidatorParams, error)
 	ValidatorsByHeight(ctx context.Context, height uint64) ([]*RpcValidator, error)
 	NonSignersByHeight(ctx context.Context, height uint64) ([]*RpcNonSigner, error)
+	DoubleSignersByHeight(ctx context.Context, height uint64) ([]*RpcDoubleSigner, error)
 	CommitteesDataByHeight(ctx context.Context, height uint64) ([]*RpcCommitteeData, error)
 	SubsidizedCommitteesByHeight(ctx context.Context, height uint64) ([]uint64, error)
 	RetiredCommitteesByHeight(ctx context.Context, height uint64) ([]uint64, error)

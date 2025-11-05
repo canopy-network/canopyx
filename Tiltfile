@@ -449,7 +449,18 @@ if components.get('admin', True):
             dockerfile="./Dockerfile.admin",
             entrypoint=["/app/admin"],
             live_update=[sync("bin/admin", "/app/admin")],
-            ignore=['web/', 'docs/*.md', '*.png', '*.md', 'deploy/'],
+            ignore=[
+                './web',
+                './scripts',
+                './docs',
+                './deploy',
+                './tests',
+                './*.md',
+                './Tiltfile',
+                './tilt-config.yaml',
+                './tilt-config.default.yaml',
+                './.git',
+            ],
         )
     else:
         # Shared mode: Production build without hot reload
@@ -457,7 +468,18 @@ if components.get('admin', True):
             "localhost:5001/canopyx-admin",
             ".",
             dockerfile="./Dockerfile.admin",
-            ignore=['web/', 'docs/*.md', '*.png', '*.md', 'deploy/'],
+            ignore=[
+                './web',
+                './scripts',
+                './docs',
+                './deploy',
+                './tests',
+                './*.md',
+                './Tiltfile',
+                './tilt-config.yaml',
+                './tilt-config.default.yaml',
+                './.git',
+            ],
         )
 
     # Load admin manifests and apply resource limits from profile
@@ -531,6 +553,19 @@ if components.get('admin_web', True):
             "localhost:5001/canopyx-admin-web",
             "./web/admin",
             dockerfile="./web/admin/Dockerfile",
+            ignore=[
+                '../../app',
+                '../../pkg',
+                '../../scripts',
+                '../../docs',
+                '../../deploy',
+                '../../tests',
+                '../../*.md',
+                '../../Tiltfile',
+                '../../tilt-config.yaml',
+                '../../tilt-config.default.yaml',
+                '../../.git',
+            ],
             live_update=[
                 fall_back_on(['./web/admin/package.json', './web/admin/pnpm-lock.yaml']),
                 sync('./web/admin/app', '/app/app'),
@@ -543,11 +578,25 @@ if components.get('admin_web', True):
             "localhost:5001/canopyx-admin-web",
             "./web/admin",
             dockerfile="./web/admin/Dockerfile",
+            ignore=[
+                '../../app',
+                '../../pkg',
+                '../../scripts',
+                '../../docs',
+                '../../deploy',
+                '../../tests',
+                '../../*.md',
+                '../../Tiltfile',
+                '../../tilt-config.yaml',
+                '../../tilt-config.default.yaml',
+                '../../.git',
+            ],
         )
 
     # Load admin-web manifests and apply resource limits from profile
     # Use mode-specific overlay (local vs shared)
-    admin_web_overlay = "local" if mode == 'local' else "shared"
+    # EXCEPTION: Production profile ALWAYS uses shared overlay (NODE_ENV=production)
+    admin_web_overlay = "shared" if profile == 'production' else ("local" if mode == 'local' else "shared")
     admin_web_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin-web/overlays/%s" % admin_web_overlay))
 
     for o in admin_web_objects:
@@ -642,7 +691,18 @@ if components.get('controller', True):
             dockerfile="./Dockerfile.controller",
             entrypoint=["/app/controller"],
             live_update=[sync("bin/controller", "/app/controller")],
-            ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
+            ignore=[
+                './web',
+                './scripts',
+                './docs',
+                './deploy',
+                './tests',
+                './*.md',
+                './Tiltfile',
+                './tilt-config.yaml',
+                './tilt-config.default.yaml',
+                './.git',
+            ],
         )
     else:
         # Shared mode: Production build without hot reload
@@ -650,7 +710,18 @@ if components.get('controller', True):
             "localhost:5001/canopyx-controller",
             ".",
             dockerfile="./Dockerfile.controller",
-            ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
+            ignore=[
+                './web',
+                './scripts',
+                './docs',
+                './deploy',
+                './tests',
+                './*.md',
+                './Tiltfile',
+                './tilt-config.yaml',
+                './tilt-config.default.yaml',
+                './.git',
+            ],
         )
 
     # Load controller manifests and apply resource limits from profile

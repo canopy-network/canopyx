@@ -387,7 +387,7 @@ func (m *mockGenesisChainDB) InsertDexWithdrawalsStaging(ctx context.Context, wi
 	return nil
 }
 
-func (m *mockGenesisChainDB) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error {
+func (m *mockGenesisChainDB) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error {
 	return nil
 }
 

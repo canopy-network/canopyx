@@ -19,9 +19,3 @@ type ActivityIndexOrdersOutput struct {
 	NumOrders  uint32  `json:"numOrders"`  // Number of changed orders (snapshots created)
 	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
 }
-
-// ActivityIndexDexPoolPointsOutput contains the number of indexed pool point holders along with execution duration.
-type ActivityIndexDexPoolPointsOutput struct {
-	NumHolders uint32  `json:"numHolders"` // Number of pool point holders indexed
-	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
-}

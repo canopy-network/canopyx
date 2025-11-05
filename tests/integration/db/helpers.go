@@ -310,9 +310,9 @@ func generateDexWithdrawal(withdrawalID string, height uint64) *indexermodels.De
 	}
 }
 
-// generateDexPoolPointsByHolder creates a test DexPoolPointsByHolder.
-func generateDexPoolPointsByHolder(holderAddress string, height uint64) *indexermodels.DexPoolPointsByHolder {
-	return &indexermodels.DexPoolPointsByHolder{
+// generatePoolPointsByHolder creates a test PoolPointsByHolder.
+func generatePoolPointsByHolder(holderAddress string, height uint64) *indexermodels.PoolPointsByHolder {
+	return &indexermodels.PoolPointsByHolder{
 		Address:             holderAddress,
 		PoolID:              indexermodels.LiquidityPoolAddend + 1, // Committee 1
 		Committee:           1,

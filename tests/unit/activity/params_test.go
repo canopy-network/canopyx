@@ -517,7 +517,7 @@ func (m *mockParamsChainStore) InsertDexDepositsStaging(ctx context.Context, dep
 func (m *mockParamsChainStore) InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error {
 	return nil
 }
-func (m *mockParamsChainStore) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error {
+func (m *mockParamsChainStore) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error {
 	return nil
 }
 func (m *mockParamsChainStore) InsertGenesis(ctx context.Context, height uint64, data string, fetchedAt time.Time) error {

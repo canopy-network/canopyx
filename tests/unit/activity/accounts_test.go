@@ -297,7 +297,7 @@ func (m *mockAccountsChainStore) InsertDexWithdrawalsStaging(ctx context.Context
 	return nil
 }
 
-func (m *mockAccountsChainStore) InsertDexPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.DexPoolPointsByHolder) error {
+func (m *mockAccountsChainStore) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error {
 	return nil
 }
 

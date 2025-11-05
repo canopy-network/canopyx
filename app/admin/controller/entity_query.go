@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -95,16 +96,17 @@ func (c *Controller) HandleEntityQuery(w http.ResponseWriter, r *http.Request) {
 	c.writeJSON(w, http.StatusOK, resp)
 }
 
-// HandleEntityGet handles single entity lookups by ID with optional historical queries.
-// GET /api/chains/{id}/entity/{entity}/{id_value}?height=123&use_staging=false
+// HandleEntityGet handles single entity lookups with explicit property/value query parameters.
+// GET /api/chains/{id}/entity/{entity}?property=hash&value=73529c...&height=123&use_staging=false
 //
 // Path Parameters:
 //   - id: Chain ID
 //   - entity: Entity name (e.g., "blocks", "accounts", "txs")
-//   - id_value: Primary key value (typically height or address)
 //
 // Query Parameters:
-//   - height: Optional height for historical queries (queries at specific height)
+//   - property: Column name to query (hash, address, order_id, id, etc.) - REQUIRED
+//   - value: Value to search for - REQUIRED
+//   - height: Optional - if 0 or omitted, get latest (ORDER BY height DESC LIMIT 1); if specified, get at that exact height
 //   - use_staging: Query staging table instead of production (default: false)
 //
 // Response: Single entity object or 404 if not found
@@ -113,9 +115,8 @@ func (c *Controller) HandleEntityGet(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	chainID := vars["id"]
 	entityName := vars["entity"]
-	idValue := vars["id_value"]
 
-	// Parse request parameters
+	// Parse request parameters (includes property and value)
 	req, err := c.parseEntityGetRequest(r)
 	if err != nil {
 		c.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request parameters: %v", err))
@@ -142,13 +143,14 @@ func (c *Controller) HandleEntityGet(w http.ResponseWriter, r *http.Request) {
 		tableName = entity.StagingTableName()
 	}
 
-	// Execute the query
-	result, err := c.getEntityByID(ctx, store, tableName, idValue, req.Height)
+	// Execute the query using the explicit property and value
+	result, err := c.getEntityByID(ctx, store, tableName, req.Property, req.Value, req.Height)
 	if err != nil {
 		c.App.Logger.Error("Failed to get entity by ID",
 			zap.String("chainID", chainID),
 			zap.String("entity", entityName),
-			zap.String("idValue", idValue),
+			zap.String("property", req.Property),
+			zap.String("value", req.Value),
 			zap.Error(err),
 		)
 		c.writeError(w, http.StatusInternalServerError, "failed to get entity")
@@ -228,6 +230,18 @@ func (c *Controller) parseEntityGetRequest(r *http.Request) (types.EntityGetRequ
 		UseStaging: false,
 	}
 
+	// Parse property (required)
+	req.Property = r.URL.Query().Get("property")
+	if req.Property == "" {
+		return req, fmt.Errorf("property parameter is required")
+	}
+
+	// Parse value (required)
+	req.Value = r.URL.Query().Get("value")
+	if req.Value == "" {
+		return req, fmt.Errorf("value parameter is required")
+	}
+
 	// Parse height (optional)
 	if heightStr := r.URL.Query().Get("height"); heightStr != "" {
 		height, err := strconv.ParseUint(heightStr, 10, 64)
@@ -274,14 +288,16 @@ func createEntitySlice(entity entities.Entity) interface{} {
 		return &[]indexermodels.DexDeposit{}
 	case entities.DexWithdrawals:
 		return &[]indexermodels.DexWithdrawal{}
-	case entities.DexPoolPointsByHolder:
-		return &[]indexermodels.DexPoolPointsByHolder{}
+	case entities.PoolPointsByHolder:
+		return &[]indexermodels.PoolPointsByHolder{}
 	case entities.Params:
 		return &[]indexermodels.Params{}
 	case entities.Validators:
 		return &[]indexermodels.Validator{}
 	case entities.ValidatorSigningInfo:
 		return &[]indexermodels.ValidatorSigningInfo{}
+	case entities.ValidatorDoubleSigningInfo:
+		return &[]indexermodels.ValidatorDoubleSigningInfo{}
 	case entities.Committees:
 		return &[]indexermodels.Committee{}
 	case entities.CommitteeValidators:
@@ -393,12 +409,13 @@ func (c *Controller) queryEntityData(
 	return rawResults, nextCursor, nil
 }
 
-// getEntityByID retrieves a single entity by its primary key value
+// getEntityByID retrieves a single entity by its primary key value using explicit property and value parameters
 func (c *Controller) getEntityByID(
 	ctx context.Context,
 	store db.ChainStore,
 	tableName string,
-	idValue string,
+	property string,
+	value string,
 	height *uint64,
 ) (map[string]interface{}, error) {
 	// Get the entity from table name
@@ -411,56 +428,26 @@ func (c *Controller) getEntityByID(
 	var query string
 	var args []interface{}
 
-	// For most entities, the primary key is 'height'
-	// For entities like accounts, orders, validators, it's a combination of address/id and height
-	// We'll try to detect the appropriate WHERE clause based on the idValue and height parameters
-
-	if height != nil {
-		// If height is provided, assume idValue is a non-height key (like address)
-		// and we're doing a point-in-time lookup
+	// Build query based on whether height is specified
+	if height == nil || *height == 0 {
+		// Get latest - ORDER BY height DESC LIMIT 1
 		query = fmt.Sprintf(`
 			SELECT *
 			FROM "%s"."%s" FINAL
-			WHERE height = ?
+			WHERE %s = ?
+			ORDER BY height DESC
 			LIMIT 1
-		`, store.DatabaseName(), tableName)
-		args = []interface{}{*height}
-
-		// If idValue is provided and it's not a number, add address/id filter
-		if _, err := strconv.ParseUint(idValue, 10, 64); err != nil {
-			// idValue is not a number, assume it's an address or other identifier
-			// Try common column names
-			query = fmt.Sprintf(`
-				SELECT *
-				FROM "%s"."%s" FINAL
-				WHERE address = ? AND height = ?
-				LIMIT 1
-			`, store.DatabaseName(), tableName)
-			args = []interface{}{idValue, *height}
-		}
+		`, store.DatabaseName(), tableName, property)
+		args = []interface{}{value}
 	} else {
-		// No height provided - try to parse idValue as height
-		if heightVal, err := strconv.ParseUint(idValue, 10, 64); err == nil {
-			// idValue is a valid height
-			query = fmt.Sprintf(`
-				SELECT *
-				FROM "%s"."%s" FINAL
-				WHERE height = ?
-				LIMIT 1
-			`, store.DatabaseName(), tableName)
-			args = []interface{}{heightVal}
-		} else {
-			// idValue is not a height - assume it's an address or other identifier
-			// Get the latest version for this entity
-			query = fmt.Sprintf(`
-				SELECT *
-				FROM "%s"."%s" FINAL
-				WHERE address = ?
-				ORDER BY height DESC
-				LIMIT 1
-			`, store.DatabaseName(), tableName)
-			args = []interface{}{idValue}
-		}
+		// Get at specific height - exact height match with the property
+		query = fmt.Sprintf(`
+			SELECT *
+			FROM "%s"."%s" FINAL
+			WHERE %s = ? AND height = ?
+			LIMIT 1
+		`, store.DatabaseName(), tableName, property)
+		args = []interface{}{value, *height}
 	}
 
 	// Create a slice to hold the result (we expect 1 item)
@@ -498,6 +485,148 @@ func (c *Controller) writeJSON(w http.ResponseWriter, statusCode int, data inter
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+// HandleEntitySchema returns the schema (column names and types) for an entity.
+// GET /api/chains/{id}/entity/{entity}/schema
+//
+// Path Parameters:
+//   - id: Chain ID
+//   - entity: Entity name (e.g., "blocks", "accounts", "txs")
+//
+// Response:
+//
+//	{
+//	  "properties": {
+//	    "hash": "string",
+//	    "height": "uint64",
+//	    "amount": "uint64",
+//	    ...
+//	  }
+//	}
+func (c *Controller) HandleEntitySchema(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	entityName := vars["entity"]
+
+	// Validate and get entity
+	entity, err := entities.FromString(entityName)
+	if err != nil {
+		c.writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid entity: %v", err))
+		return
+	}
+
+	// Extract schema from the indexer model using reflection
+	schema := c.getEntitySchemaProperties(entity)
+	if schema == nil {
+		c.writeError(w, http.StatusInternalServerError, "failed to extract entity schema")
+		return
+	}
+
+	c.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"properties": schema,
+	})
+}
+
+// getEntitySchemaProperties extracts field names and types from the indexer model using reflection.
+// It reads the `ch` struct tags which define the ClickHouse column names and field types.
+func (c *Controller) getEntitySchemaProperties(entity entities.Entity) map[string]string {
+	var model interface{}
+
+	// Map entity to its corresponding indexer model
+	switch entity {
+	case entities.Blocks:
+		model = indexermodels.Block{}
+	case entities.Transactions:
+		model = indexermodels.Transaction{}
+	case entities.BlockSummaries:
+		model = indexermodels.BlockSummary{}
+	case entities.Accounts:
+		model = indexermodels.Account{}
+	case entities.Events:
+		model = indexermodels.Event{}
+	case entities.Orders:
+		model = indexermodels.Order{}
+	case entities.Pools:
+		model = indexermodels.Pool{}
+	case entities.DexPrices:
+		model = indexermodels.DexPrice{}
+	case entities.DexOrders:
+		model = indexermodels.DexOrder{}
+	case entities.DexDeposits:
+		model = indexermodels.DexDeposit{}
+	case entities.DexWithdrawals:
+		model = indexermodels.DexWithdrawal{}
+	case entities.PoolPointsByHolder:
+		model = indexermodels.PoolPointsByHolder{}
+	case entities.Params:
+		model = indexermodels.Params{}
+	case entities.Validators:
+		model = indexermodels.Validator{}
+	case entities.ValidatorSigningInfo:
+		model = indexermodels.ValidatorSigningInfo{}
+	case entities.ValidatorDoubleSigningInfo:
+		model = indexermodels.ValidatorDoubleSigningInfo{}
+	case entities.Committees:
+		model = indexermodels.Committee{}
+	case entities.CommitteeValidators:
+		model = indexermodels.CommitteeValidator{}
+	case entities.PollSnapshots:
+		model = indexermodels.PollSnapshot{}
+	default:
+		return nil
+	}
+
+	return extractSchemaFromStruct(model)
+}
+
+// extractSchemaFromStruct uses reflection to extract field names and types from a struct.
+// It reads the `ch` struct tag to get the ClickHouse column name and returns a map of column names to type strings.
+func extractSchemaFromStruct(s interface{}) map[string]string {
+	t := reflect.TypeOf(s)
+	properties := make(map[string]string)
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		chTag := field.Tag.Get("ch")
+
+		// Skip fields without a `ch` tag
+		if chTag == "" {
+			continue
+		}
+
+		// Get the field type as a string
+		fieldType := getFieldTypeString(field.Type)
+		properties[chTag] = fieldType
+	}
+
+	return properties
+}
+
+// getFieldTypeString converts a reflect.Type to a user-friendly type string for the UI.
+func getFieldTypeString(t reflect.Type) string {
+	// Handle pointer types
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	switch t.Kind() {
+	case reflect.String:
+		return "string"
+	case reflect.Bool:
+		return "bool"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return "int64"
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "uint64"
+	case reflect.Float32, reflect.Float64:
+		return "float64"
+	default:
+		// For complex types like time.Time, return the type name
+		if t.String() == "time.Time" {
+			return "datetime"
+		}
+		return t.String()
+	}
 }
 
 // writeError writes an error response
