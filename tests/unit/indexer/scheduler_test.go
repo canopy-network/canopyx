@@ -52,7 +52,7 @@ func TestSchedulerWorkflow_InitialMainnetCatchup(t *testing.T) {
 
 	// Note: In a real test, we'd simulate only a subset for performance
 	// For demonstration, we'll test with 10k blocks to verify the pattern
-	testInput := types.SchedulerInput{
+	testInput := types.WorkflowSchedulerInput{
 		ChainID:      1,
 		StartHeight:  690001,
 		EndHeight:    700000,
@@ -253,7 +253,7 @@ func TestSchedulerWorkflow_MixedPriorityDistribution(t *testing.T) {
 	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute workflow with 10k block range
-	input := types.SchedulerInput{
+	input := types.WorkflowSchedulerInput{
 		ChainID:      1,
 		StartHeight:  90001,
 		EndHeight:    100000,
@@ -330,7 +330,7 @@ func TestSchedulerWorkflow_ContinueAsNewChain(t *testing.T) {
 	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// For testing, we'll simulate with smaller threshold
-	input := types.SchedulerInput{
+	input := types.WorkflowSchedulerInput{
 		ChainID:      1,
 		StartHeight:  1,
 		EndHeight:    50000,
@@ -441,7 +441,7 @@ func TestSchedulerWorkflow_RateLimiting(t *testing.T) {
 	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
 	// Execute with 1000 blocks to test rate limiting
-	input := types.SchedulerInput{
+	input := types.WorkflowSchedulerInput{
 		ChainID:      1,
 		StartHeight:  1,
 		EndHeight:    1000,
@@ -499,7 +499,7 @@ func TestSchedulerWorkflow_ErrorHandling(t *testing.T) {
 	env.RegisterActivity(mock.StartIndexWorkflow)
 	env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
-	input := types.SchedulerInput{
+	input := types.WorkflowSchedulerInput{
 		ChainID:      1,
 		StartHeight:  1,
 		EndHeight:    10,
@@ -550,7 +550,7 @@ func BenchmarkSchedulerWorkflow_LargeScale(b *testing.B) {
 		env.RegisterActivity(mock.StartIndexWorkflow)
 		env.RegisterActivity(mock.StartIndexWorkflowBatch)
 
-		input := types.SchedulerInput{
+		input := types.WorkflowSchedulerInput{
 			ChainID:      1,
 			StartHeight:  uint64(100000*i + 1),
 			EndHeight:    uint64(100000 * (i + 1)),

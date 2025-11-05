@@ -343,7 +343,7 @@ func (m *mockGenesisChainDB) Close() error {
 	return nil
 }
 
-func (m *mockGenesisChainDB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, eventTypes ...string) ([]*indexermodels.Event, error) {
+func (m *mockGenesisChainDB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, staging bool, eventTypes ...string) ([]*indexermodels.Event, error) {
 	return nil, nil
 }
 
@@ -515,7 +515,7 @@ func TestEnsureGenesisCached_RPCFailure(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
 
@@ -617,7 +617,7 @@ func TestEnsureGenesisCached_InvalidChain(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
 

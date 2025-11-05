@@ -739,7 +739,7 @@ func TestChainStore_GetEventsByTypeAndHeight(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get only transfer events
-	transfers, err := chainDB.GetEventsByTypeAndHeight(ctx, 100, "transfer")
+	transfers, err := chainDB.GetEventsByTypeAndHeight(ctx, 100, true, "transfer")
 	require.NoError(t, err)
 	assert.Len(t, transfers, 2)
 	for _, e := range transfers {
@@ -747,7 +747,7 @@ func TestChainStore_GetEventsByTypeAndHeight(t *testing.T) {
 	}
 
 	// Get stake events
-	stakes, err := chainDB.GetEventsByTypeAndHeight(ctx, 100, "stake")
+	stakes, err := chainDB.GetEventsByTypeAndHeight(ctx, 100, true, "stake")
 	require.NoError(t, err)
 	assert.Len(t, stakes, 1)
 	assert.Equal(t, "stake", stakes[0].EventType)

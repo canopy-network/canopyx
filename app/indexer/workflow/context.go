@@ -5,15 +5,18 @@ import (
 	"github.com/canopy-network/canopyx/pkg/temporal"
 )
 
-type Context struct {
-	TemporalClient  *temporal.Client
-	ActivityContext *activity.Context
-	Config          Config
-}
-
+// Config holds the workflow configuration.
 type Config struct {
 	CatchupThreshold        uint64
 	DirectScheduleBatchSize uint64
 	SchedulerBatchSize      uint64
 	BlockTimeSeconds        uint64
+}
+
+// Context holds the workflow context.
+type Context struct {
+	ChainID         uint64
+	TemporalClient  *temporal.Client
+	ActivityContext *activity.Context
+	Config          Config
 }

@@ -21,12 +21,12 @@ make tilt-up
 ## Architecture
 
 - **Node 1** (Chain ID 1) - Root Chain
-  - RPC: http://canopy-node-1.default.svc.cluster.local:50002
+  - RPC: http://node-1.default.svc.cluster.local:50002
   - Ports: 50000-50003, 9001, 9090
   - Pool ID: 32769
 
 - **Node 2** (Chain ID 2) - Subchain
-  - RPC: http://canopy-node-2.default.svc.cluster.local:40002
+  - RPC: http://node-2.default.svc.cluster.local:40002
   - Ports: 40000-40003, 9001, 9091
   - Pool ID: 32768
 
@@ -67,20 +67,20 @@ curl http://localhost:40002/v1/query/height
 
 ```bash
 # From Node 1
-kubectl exec -it deployment/canopy-node-1 -- curl http://canopy-node-2.default.svc.cluster.local:40002/v1/query/height
+kubectl exec -it deployment/node-1 -- curl http://node-2.default.svc.cluster.local:40002/v1/query/height
 
 # From Node 2
-kubectl exec -it deployment/canopy-node-2 -- curl http://canopy-node-1.default.svc.cluster.local:50002/v1/query/height
+kubectl exec -it deployment/node-2 -- curl http://node-1.default.svc.cluster.local:50002/v1/query/height
 ```
 
 ### View Logs
 
 ```bash
 # Node 1
-kubectl logs -f deployment/canopy-node-1
+kubectl logs -f deployment/node-1
 
 # Node 2
-kubectl logs -f deployment/canopy-node-2
+kubectl logs -f deployment/node-2
 ```
 
 ### Check Indexing
@@ -106,7 +106,7 @@ All configurations are generated from:
 
 ### Nodes Can't Find Each Other
 - Check P2P port (9001) is accessible
-- Verify DNS resolution: `kubectl exec deployment/canopy-node-1 -- nslookup canopy-node-2.default.svc.cluster.local`
+- Verify DNS resolution: `kubectl exec deployment/node-1 -- nslookup node-2.default.svc.cluster.local`
 - Check `dialPeers` configuration in ConfigMaps
 
 ### Port Conflicts

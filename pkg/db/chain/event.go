@@ -91,17 +91,17 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 }
 
 // GetEventsByTypeAndHeight retrieves events at a specific height filtered by event types.
-// This method queries the staging table to get fresh events for entity processing.
+// This method queries the table to get fresh events for entity processing.
 // Event types are matched using OR logic: (event_type = 'type1' OR event_type = 'type2' ...)
 //
 // Example usage:
 //
-//	events, err := db.GetEventsByTypeAndHeight(ctx, 1000, "EventDexSwap", "EventDexLiquidityDeposit")
+//	events, err: = db.GetEventsByTypeAndHeight(ctx, 1000, "EventDexSwap", "EventDexLiquidityDeposit")
 //
 // This is used by the events-first architecture where IndexEvents stores events to staging,
 // then entity-specific activities (IndexDexBatch, etc.) query relevant events to avoid
 // duplicate RPC calls.
-func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, eventTypes ...string) ([]*indexermodels.Event, error) {
+func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, staging bool, eventTypes ...string) ([]*indexermodels.Event, error) {
 	if len(eventTypes) == 0 {
 		return []*indexermodels.Event{}, nil
 	}
@@ -119,6 +119,11 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, event
 		typeClause += ")"
 	}
 
+	tableName := indexermodels.EventsStagingTableName
+	if !staging {
+		tableName = indexermodels.EventsProductionTableName
+	}
+
 	query := fmt.Sprintf(`
 		SELECT
 			height, chain_id, address, reference, event_type,
@@ -127,7 +132,7 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, event
 		FROM "%s"."%s" FINAL
 		WHERE height = ? AND %s
 		ORDER BY reference, event_type
-	`, db.Name, indexermodels.EventsStagingTableName, typeClause)
+	`, db.Name, tableName, typeClause)
 
 	// Build args: height + eventTypes
 	args := make([]interface{}, 0, len(eventTypes)+1)
@@ -173,6 +178,3 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, event
 
 	return events, nil
 }
-
-// QueryEvents retrieves a paginated list of events ordered by height.
-// Delegates to QueryEventsWithFilter with an empty event type filter.

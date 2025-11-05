@@ -16,27 +16,24 @@ import (
 // Params are only inserted when they differ from the previous height to maintain a sparse historical record.
 // This follows the RPC(H) vs RPC(H-1) pattern for change detection, never querying the database.
 // Returns output indicating whether params changed and execution duration in milliseconds.
-func (c *Context) IndexParams(ctx context.Context, in types.IndexParamsInput) (types.IndexParamsOutput, error) {
+func (ac *Context) IndexParams(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexParamsOutput, error) {
 	start := time.Now()
 
-	ch, err := c.AdminDB.GetChain(ctx, in.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexParamsOutput{}, err
+		return types.ActivityIndexParamsOutput{}, err
 	}
 
 	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := c.NewChainDb(ctx, in.ChainID)
+	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
 	if chainDbErr != nil {
-		return types.IndexParamsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
+		return types.ActivityIndexParamsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
-
-	// Fetch params at both H and H-1 from RPC
-	cli := c.rpcClient(ch.RPCEndpoints)
 
 	// Fetch params at the current height (H)
 	paramsAtH, err := cli.AllParamsByHeight(ctx, in.Height)
 	if err != nil {
-		return types.IndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height, err)
+		return types.ActivityIndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height, err)
 	}
 
 	// Convert RPC params at H to an entity model
@@ -47,22 +44,22 @@ func (c *Context) IndexParams(ctx context.Context, in types.IndexParamsInput) (t
 	if in.Height == 1 {
 		// Genesis block: always insert params
 		paramsChanged = true
-		c.Logger.Debug("IndexParams genesis block - inserting initial params",
+		ac.Logger.Debug("IndexParams genesis block - inserting initial params",
 			zap.Uint64("height", in.Height))
 	} else {
 		// Fetch params at the previous height (H-1)
 		paramsAtH1, err := cli.AllParamsByHeight(ctx, in.Height-1)
 		if err != nil {
-			return types.IndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height-1, err)
+			return types.ActivityIndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height-1, err)
 		}
 
-		// Convert RPC params at H-1 to entity model (using dummy time since we only compare values)
+		// Convert RPC params at H-1 to an entity model (using dummy time since we only compare values)
 		prevParams := convertRpcParamsToEntity(paramsAtH1, in.Height-1, time.Time{})
 
 		// Compare all 31 fields between H and H-1
 		paramsChanged = !paramsEqual(prevParams, currentParams)
 
-		c.Logger.Debug("IndexParams compared RPC(H) vs RPC(H-1)",
+		ac.Logger.Debug("IndexParams compared RPC(H) vs RPC(H-1)",
 			zap.Uint64("height", in.Height),
 			zap.Bool("paramsChanged", paramsChanged))
 	}
@@ -70,15 +67,15 @@ func (c *Context) IndexParams(ctx context.Context, in types.IndexParamsInput) (t
 	// Only insert if params changed (sparse insert)
 	if paramsChanged {
 		if err := chainDb.InsertParamsStaging(ctx, currentParams); err != nil {
-			return types.IndexParamsOutput{}, err
+			return types.ActivityIndexParamsOutput{}, err
 		}
-		c.Logger.Info("Params changed, inserted to staging",
+		ac.Logger.Info("Params changed, inserted to staging",
 			zap.Uint64("height", in.Height),
-			zap.Uint64("chainID", in.ChainID))
+			zap.Uint64("chainID", ac.ChainID))
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.IndexParamsOutput{
+	return types.ActivityIndexParamsOutput{
 		ParamsChanged: paramsChanged,
 		DurationMs:    durationMs,
 	}, nil

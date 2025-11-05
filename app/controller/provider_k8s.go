@@ -80,6 +80,8 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 	tag := utils.Env("INDEXER_TAG", "")
 
 	replicas := int32FromEnv("INDEXER_REPLICAS", 1)
+	// HPA is something that we may want to delete and move to use KEDA and expose
+	// prometheus metrics that will lead the scaling.
 	enableHPA := boolFromEnv("INDEXER_ENABLE_HPA", false)
 	hpaMin := int32FromEnv("INDEXER_HPA_MIN", 1)
 	hpaMax := int32FromEnv("INDEXER_HPA_MAX", 5)
@@ -88,31 +90,27 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 
 	// Container env (common + per-chain overrides later).
 	env := []corev1.EnvVar{
-		{Name: "CHAIN_ID", Value: ""}, // set per chain
-		{Name: "TASK_QUEUE", Value: ""},
-
+		{Name: "CHAIN_ID", Value: ""},
 		{Name: "TEMPORAL_HOSTPORT", Value: mustEnv("TEMPORAL_HOSTPORT")},
 		{Name: "TEMPORAL_NAMESPACE", Value: mustEnv("TEMPORAL_NAMESPACE")},
-
 		{Name: "CLICKHOUSE_ADDR", Value: mustEnv("CLICKHOUSE_ADDR")},
-
 		{Name: "REDIS_HOST", Value: mustEnv("REDIS_HOST")},
+		{Name: "REDIS_PORT", Value: mustEnv("REDIS_PORT")},
+		//@TODO: Allow to customize the ones below - Now sets defaults so indexer will do his best
+		{Name: "SCHEDULER_CATCHUP_THRESHOLD", Value: ""},
+		{Name: "DIRECT_SCHEDULE_BATCH_SIZE", Value: ""},
+		{Name: "SCHEDULER_BATCH_SIZE", Value: ""},
+		{Name: "BLOCK_TIME_SECONDS", Value: ""},
+		{Name: "SCHEDULER_BATCH_MAX_PARALLELISM", Value: ""},
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "LOG_LEVEL", Value: v})
 	}
-	if v := os.Getenv("CHDEBUG"); v != "" {
-		env = append(env, corev1.EnvVar{Name: "CHDEBUG", Value: v})
-	}
+	// admin db
 	if v := os.Getenv("INDEXER_DB"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "INDEXER_DB", Value: v})
 	}
-	if v := os.Getenv("REPORTS_DB"); v != "" {
-		env = append(env, corev1.EnvVar{Name: "REPORTS_DB", Value: v})
-	}
-	if v := os.Getenv("REDIS_PORT"); v != "" {
-		env = append(env, corev1.EnvVar{Name: "REDIS_PORT", Value: v})
-	}
+
 	// REDIS_PASSWORD: Read from Kubernetes secret for security
 	env = append(env, corev1.EnvVar{
 		Name: "REDIS_PASSWORD",
@@ -201,12 +199,6 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		switch e.Name {
 		case "CHAIN_ID":
 			env = append(env, corev1.EnvVar{Name: "CHAIN_ID", Value: c.ID})
-		case "TASK_QUEUE":
-			queueName := c.TaskQueue
-			if queueName == "" {
-				queueName = p.tqPrefix + c.ID
-			}
-			env = append(env, corev1.EnvVar{Name: "TASK_QUEUE", Value: queueName})
 		default:
 			env = append(env, e)
 		}
@@ -242,6 +234,7 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		Spec: appsv1.DeploymentSpec{
 			Replicas: int32Ptr(replicas),
 			Selector: &meta.LabelSelector{MatchLabels: labels},
+			// @TODO: we need to add nodeSelector/affinity/anty-affinity support
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: meta.ObjectMeta{
 					Labels: labels,
@@ -251,8 +244,9 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Name:            "indexer",
-						Image:           image,
+						Name:  "indexer",
+						Image: image,
+						// @TODO: this needs to be change for production by env
 						ImagePullPolicy: corev1.PullAlways,
 						Env:             env,
 						Resources: func() corev1.ResourceRequirements {

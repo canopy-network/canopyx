@@ -47,7 +47,7 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: rpcClient},
 	}
 
@@ -62,7 +62,7 @@ func TestIndexTransactionsInsertsAllTxs(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var output types.IndexTransactionsOutput
+	var output types.ActivityIndexTransactionsOutput
 	require.NoError(t, future.Get(&output))
 	require.Equal(t, uint32(2), output.NumTxs)
 	require.GreaterOrEqual(t, output.DurationMs, 0.0)
@@ -89,13 +89,13 @@ func TestFetchBlockFromRPC(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: rpcClient},
 	}
 
 	// Call the activity directly (not through Temporal test framework)
 	// This avoids serialization issues with interface{} types
-	input := types.IndexBlockInput{
+	input := types.WorkflowIndexBlockInput{
 		ChainID: 1,
 		Height:  42,
 	}
@@ -126,13 +126,13 @@ func TestSaveBlock(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: &fakeRPCClient{}},
 	}
 
 	// Call the activity directly (not through Temporal test framework)
 	block := &indexermodels.Block{Height: 42, Hash: "xyz789"}
-	input := types.SaveBlockInput{
+	input := types.ActivitySaveBlockInput{
 		ChainID: 1,
 		Height:  42,
 		Block:   block, // Now using concrete type *indexermodels.Block
@@ -169,14 +169,14 @@ func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	ctx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: rpcClient},
 	}
 
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestActivityEnvironment()
 
-	input := types.IndexBlockInput{
+	input := types.WorkflowIndexBlockInput{
 		ChainID: 1,
 		Height:  42,
 	}
@@ -185,7 +185,7 @@ func TestIndexBlockPersistsBlockWithoutSummary(t *testing.T) {
 	future, err := env.ExecuteActivity(ctx.IndexBlock, input)
 	require.NoError(t, err)
 
-	var output types.IndexBlockOutput
+	var output types.ActivitySaveBlockOutput
 	require.NoError(t, future.Get(&output))
 	require.Equal(t, uint64(42), output.Height)
 	require.GreaterOrEqual(t, output.DurationMs, 0.0)
@@ -209,14 +209,14 @@ func TestSaveBlockSummary(t *testing.T) {
 	ctx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: &fakeRPCClient{}},
 	}
 
 	suite := testsuite.WorkflowTestSuite{}
 	env := suite.NewTestActivityEnvironment()
 
-	input := types.SaveBlockSummaryInput{
+	input := types.ActivitySaveBlockSummaryInput{
 		ChainID: 1,
 		Height:  42,
 		Summaries: types.BlockSummaries{
@@ -228,7 +228,7 @@ func TestSaveBlockSummary(t *testing.T) {
 	future, err := env.ExecuteActivity(ctx.SaveBlockSummary, input)
 	require.NoError(t, err)
 
-	var output types.SaveBlockSummaryOutput
+	var output types.ActivitySaveBlockSummaryOutput
 	require.NoError(t, future.Get(&output))
 	require.GreaterOrEqual(t, output.DurationMs, 0.0)
 	require.Equal(t, 1, chainStore.insertBlockSummariesStagingCalls)
@@ -247,7 +247,7 @@ func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: &fakeRPCClient{}},
 	}
 
@@ -255,8 +255,8 @@ func TestPrepareIndexBlockSkipsWhenExists(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
 
-	var output types.PrepareIndexBlockOutput
-	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: 1, Height: 10})
+	var output types.ActivityPrepareIndexBlockOutput
+	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.WorkflowIndexBlockInput{ChainID: 1, Height: 10})
 	require.NoError(t, err)
 	require.NoError(t, future.Get(&output))
 	require.True(t, output.Skip)
@@ -275,7 +275,7 @@ func TestPrepareIndexBlockDeletesOnReindex(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: &fakeRPCClient{}},
 	}
 
@@ -283,8 +283,8 @@ func TestPrepareIndexBlockDeletesOnReindex(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivity(activityCtx.PrepareIndexBlock)
 
-	var output types.PrepareIndexBlockOutput
-	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.IndexBlockInput{ChainID: 1, Height: 42, Reindex: true})
+	var output types.ActivityPrepareIndexBlockOutput
+	future, err := env.ExecuteActivity(activityCtx.PrepareIndexBlock, types.WorkflowIndexBlockInput{ChainID: 1, Height: 42, Reindex: true})
 	require.NoError(t, err)
 	require.NoError(t, future.Get(&output))
 	require.False(t, output.Skip)
@@ -561,7 +561,7 @@ func (*fakeChainStore) GetOrderCreatedHeight(context.Context, string) uint64 {
 	return 0
 }
 
-func (*fakeChainStore) GetEventsByTypeAndHeight(context.Context, uint64, ...string) ([]*indexermodels.Event, error) {
+func (*fakeChainStore) GetEventsByTypeAndHeight(context.Context, uint64, bool, ...string) ([]*indexermodels.Event, error) {
 	return nil, nil
 }
 

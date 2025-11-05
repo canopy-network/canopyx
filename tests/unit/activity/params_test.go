@@ -133,7 +133,7 @@ func TestIndexParams_Success_ParamsChanged(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get output
-	var output types.IndexParamsOutput
+	var output types.ActivityIndexParamsOutput
 	require.NoError(t, future.Get(&output))
 
 	// Assertions
@@ -209,7 +209,7 @@ func TestIndexParams_Success_NoChanges(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexParams, input)
 	require.NoError(t, err)
 
-	var output types.IndexParamsOutput
+	var output types.ActivityIndexParamsOutput
 	require.NoError(t, future.Get(&output))
 
 	// Params should not have changed
@@ -280,7 +280,7 @@ func TestIndexParams_GenesisBlock(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexParams, input)
 	require.NoError(t, err)
 
-	var output types.IndexParamsOutput
+	var output types.ActivityIndexParamsOutput
 	require.NoError(t, future.Get(&output))
 
 	// Genesis block should always insert params
@@ -332,7 +332,7 @@ func TestIndexParams_RPCError(t *testing.T) {
 
 	future, execErr := env.ExecuteActivity(activityCtx.IndexParams, input)
 
-	var output types.IndexParamsOutput
+	var output types.ActivityIndexParamsOutput
 	var actErr error
 	if execErr != nil {
 		actErr = execErr
@@ -475,7 +475,7 @@ func (m *mockParamsChainStore) InsertParamsStaging(ctx context.Context, params *
 	return nil
 }
 
-func (m *mockParamsChainStore) GetEventsByTypeAndHeight(ctx context.Context, height uint64, eventTypes ...string) ([]*indexermodels.Event, error) {
+func (m *mockParamsChainStore) GetEventsByTypeAndHeight(ctx context.Context, height uint64, staging bool, eventTypes ...string) ([]*indexermodels.Event, error) {
 	return nil, nil
 }
 

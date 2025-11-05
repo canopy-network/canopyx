@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
@@ -11,15 +12,9 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-// CleanupStagingInput contains the parameters for cleanup staging workflow.
-type CleanupStagingInput struct {
-	ChainID uint64 `json:"chainId"`
-	Height  uint64 `json:"height"`
-}
-
 // IndexBlockWorkflow kicks off indexing of a block for a given chain in a separate workflow at `index:<chain>` queue.
 // It tracks the execution time of each activity and records detailed timing metrics.
-func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockInput) error {
+func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowIndexBlockInput) error {
 	// TODO: add checks for chainId and height values at `in` param, also verify database exists (it should)
 	//  check if the current options are good enough for indexing the block
 	retry := &temporal.RetryPolicy{
@@ -47,7 +42,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	timings := make(map[string]float64)
 
 	// 1. PrepareIndexBlock - check if block needs indexing
-	var prepareOut types.PrepareIndexBlockOutput
+	var prepareOut types.ActivityPrepareIndexBlockOutput
 	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.PrepareIndexBlock, in).Get(ctx, &prepareOut); err != nil {
 		return err
 	}
@@ -57,8 +52,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	if prepareOut.Skip {
 		// Even for skipped blocks, we record that we checked them
 		detailBytes, _ := json.Marshal(timings)
-		recordInput := types.RecordIndexedInput{
-			ChainID:        in.ChainID,
+		recordInput := types.ActivityRecordIndexedInput{
 			Height:         in.Height,
 			IndexingTimeMs: prepareOut.DurationMs,
 			IndexingDetail: string(detailBytes),
@@ -70,7 +64,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	// This uses a local activity to retry quickly when waiting for block propagation
 	// Timeout: 5 minutes to allow ~150 retry attempts (2s interval) for blocks not ready yet
 	// With 20s block time, worst case is waiting ~60s for a block to become available
-	var fetchOut types.FetchBlockOutput
+	var fetchOut types.ActivityFetchBlockOutput
 	localActivityOpts := workflow.LocalActivityOptions{
 		StartToCloseTimeout: 5 * time.Minute, // Allow enough time for blocks to become available
 		RetryPolicy:         retry,           // Use the same fast retry policy
@@ -84,113 +78,62 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	// 3. EnsureGenesisCached - cache genesis state BEFORE indexing height 1
 	// Height 1 requires comparing RPC(1) vs Genesis(0), so genesis must be cached first
 	if in.Height == 1 {
-		genesisErr := workflow.ExecuteActivity(ctx, wc.ActivityContext.EnsureGenesisCached, types.EnsureGenesisCachedInput{
-			ChainID: in.ChainID,
-		}).Get(ctx, nil)
+		genesisErr := workflow.ExecuteActivity(ctx, wc.ActivityContext.EnsureGenesisCached).Get(ctx, nil)
 		if genesisErr != nil {
 			return genesisErr
 		}
 	}
 
-	// Phase 1: Save block and index all entities in parallel
+	heightTime := time.UnixMicro(fetchOut.Block.BlockHeader.Time)
+
+	var eventsOut types.ActivityIndexEventsOutput
+	indexAtHeight := types.ActivityIndexAtHeight{
+		Height:    in.Height,
+		BlockTime: heightTime,
+	}
+
+	// save events first so the other indexing process can list and filter by type
+	eventsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexEvents, indexAtHeight)
+	if err := eventsFuture.Get(ctx, &eventsOut); err != nil {
+		return err
+	}
+	timings["index_events_ms"] = eventsOut.DurationMs
+
 	// All activities run concurrently for maximum throughput
 	// Each activity writes to its own staging table to avoid conflicts
 	var (
-		saveBlockOut     types.IndexBlockOutput
-		txOut            types.IndexTransactionsOutput
-		accountsOut      types.IndexAccountsOutput
-		eventsOut        types.IndexEventsOutput
-		poolsOut         types.IndexPoolsOutput
-		ordersOut        types.IndexOrdersOutput
-		pricesOut        types.IndexDexPricesOutput
-		paramsOut        types.IndexParamsOutput
-		validatorsOut    types.IndexValidatorsOutput
-		committeesOut    types.IndexCommitteesOutput
-		pollOut          types.IndexPollOutput
-		dexBatchOut      types.IndexDexBatchOutput
-		dexPoolPointsOut types.IndexDexPoolPointsOutput
+		saveBlockOut     types.ActivitySaveBlockOutput
+		txOut            types.ActivityIndexTransactionsOutput
+		accountsOut      types.ActivityIndexAccountsOutput
+		poolsOut         types.ActivityIndexPoolsOutput
+		ordersOut        types.ActivityIndexOrdersOutput
+		pricesOut        types.ActivityIndexDexPricesOutput
+		paramsOut        types.ActivityIndexParamsOutput
+		validatorsOut    types.ActivityIndexValidatorsOutput
+		committeesOut    types.ActivityIndexCommitteesOutput
+		pollOut          types.ActivityIndexPollOutput
+		dexBatchOut      types.ActivityIndexDexBatchOutput
+		dexPoolPointsOut types.ActivityIndexDexPoolPointsOutput
 	)
 
 	// Create futures for all parallel operations
-	saveBlockInput := types.SaveBlockInput{
-		ChainID: in.ChainID,
-		Height:  in.Height,
-		Block:   fetchOut.Block,
-	}
-	indexTxInput := types.IndexTransactionsInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexAccountsInput := types.IndexAccountsInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexEventsInput := types.IndexEventsInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexPoolsInput := types.IndexPoolsInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexOrdersInput := types.IndexOrdersInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexPricesInput := types.IndexDexPricesInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexParamsInput := types.IndexParamsInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexValidatorsInput := types.IndexValidatorsInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexCommitteesInput := types.IndexCommitteesInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexPollInput := types.IndexPollInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexDexBatchInput := types.IndexDexBatchInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-	}
-	indexDexPoolPointsInput := types.IndexDexPoolPointsInput{
-		ChainID:   in.ChainID,
-		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
+	saveBlockInput := types.ActivitySaveBlockInput{
+		Height: in.Height,
+		Block:  fetchOut.Block,
 	}
 
 	saveBlockFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlock, saveBlockInput)
-	txFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexTxInput)
-	accountsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexAccounts, indexAccountsInput)
-	eventsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexEvents, indexEventsInput)
-	poolsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexPools, indexPoolsInput)
-	ordersFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexOrders, indexOrdersInput)
-	pricesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexPrices, indexPricesInput)
-	paramsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexParams, indexParamsInput)
-	validatorsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexValidators, indexValidatorsInput)
-	committeesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexCommittees, indexCommitteesInput)
-	pollFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexPoll, indexPollInput)
-	dexBatchFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexBatch, indexDexBatchInput)
-	dexPoolPointsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexPoolPoints, indexDexPoolPointsInput)
+	txFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexAtHeight)
+	accountsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexAccounts, indexAtHeight)
+	poolsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexPools, indexAtHeight)
+	ordersFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexOrders, indexAtHeight)
+	pricesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexPrices, indexAtHeight)
+	paramsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexParams, indexAtHeight)
+	validatorsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexValidators, indexAtHeight)
+	committeesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexCommittees, indexAtHeight)
+	pollFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexPoll, indexAtHeight)
+	dexBatchFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexBatch, indexAtHeight)
+	dexPoolPointsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexPoolPoints, indexAtHeight)
 
 	// Wait for all parallel operations to complete
 	if err := saveBlockFuture.Get(ctx, &saveBlockOut); err != nil {
@@ -261,83 +204,92 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	// Collect all summaries for aggregation from all 16 indexed entities
 	// Note: Some detailed breakdowns (e.g., NumOrdersNew, NumOrdersOpen) are not yet
 	// returned by activity outputs and will remain zero until those activities are enhanced.
-	summaries := types.BlockSummaries{
-		// Transactions (includes type breakdown from activity)
-		NumTxs:         txOut.NumTxs,
-		TxCountsByType: txOut.TxCountsByType, // Maps to individual fields in SaveBlockSummary
-
-		// Accounts (currently only total count available)
-		NumAccounts:    accountsOut.NumAccounts,
-		NumAccountsNew: 0, // TODO: Enhance IndexAccounts activity to return this
-
-		// Events (includes type breakdown from activity)
-		NumEvents:         eventsOut.NumEvents,
-		EventCountsByType: eventsOut.EventCountsByType, // Maps to individual fields in SaveBlockSummary
-
-		// Orders (currently only total count available)
-		NumOrders:          ordersOut.NumOrders,
-		NumOrdersNew:       0, // TODO: Enhance IndexOrders activity to return detailed breakdowns
-		NumOrdersOpen:      0,
-		NumOrdersFilled:    0,
-		NumOrdersCancelled: 0,
-		NumOrdersExpired:   0,
-
-		// PoolsByHeight (currently only total count available)
-		NumPools:    poolsOut.NumPools,
-		NumPoolsNew: 0, // TODO: Enhance IndexPools activity to return this
-
-		// DexPricesByHeight
-		NumDexPrices: pricesOut.NumPrices,
-
-		// DexOrders, DexDeposits, DexWithdrawals from IndexDexBatch
-		NumDexOrders:              dexBatchOut.NumOrders,
-		NumDexOrdersFuture:        0, // TODO: Enhance IndexDexBatch to return detailed status breakdowns
-		NumDexOrdersLocked:        0,
-		NumDexOrdersComplete:      0,
-		NumDexOrdersSuccess:       0,
-		NumDexOrdersFailed:        0,
-		NumDexDeposits:            dexBatchOut.NumDeposits,
-		NumDexDepositsPending:     0, // TODO: Enhance IndexDexBatch to return status breakdowns
-		NumDexDepositsComplete:    0,
-		NumDexWithdrawals:         dexBatchOut.NumWithdrawals,
-		NumDexWithdrawalsPending:  0, // TODO: Enhance IndexDexBatch to return status breakdowns
-		NumDexWithdrawalsComplete: 0,
-
-		// DexPoolPointsByHolder
-		NumDexPoolPointsHolders:    dexPoolPointsOut.NumHolders,
-		NumDexPoolPointsHoldersNew: 0, // TODO: Enhance IndexDexPoolPoints to return this
-
-		// Params
-		ParamsChanged: paramsOut.ParamsChanged,
-
-		// Validators and ValidatorSigningInfo
-		NumValidators:              validatorsOut.NumValidators,
-		NumValidatorsNew:           0, // TODO: Enhance IndexValidators to return detailed breakdowns
-		NumValidatorsActive:        0,
-		NumValidatorsPaused:        0,
-		NumValidatorsUnstaking:     0,
-		NumValidatorSigningInfo:    validatorsOut.NumSigningInfos,
-		NumValidatorSigningInfoNew: 0, // TODO: Enhance IndexValidators to return this
-
-		// Committees and CommitteeValidators
-		NumCommittees:           committeesOut.NumCommittees,
-		NumCommitteesNew:        0, // TODO: Enhance IndexCommittees to return detailed breakdowns
-		NumCommitteesSubsidized: 0,
-		NumCommitteesRetired:    0,
-		NumCommitteeValidators:  0, // TODO: Enhance IndexCommittees to return this
-
-		// PollSnapshots
-		NumPollSnapshots: pollOut.NumProposals, // Poll snapshots correspond to proposals
+	summary := &indexermodels.BlockSummary{
+		Height:     in.Height,
+		HeightTime: heightTime,
+		// @TODO: map all this, add more, review everyone
+		NumTxs:                            txOut.NumTxs,
+		NumTxsSend:                        txOut.TxCountsByType["send"], // repeat...
+		NumTxsDelegate:                    0,
+		NumTxsUndelegate:                  0,
+		NumTxsStake:                       0,
+		NumTxsUnstake:                     0,
+		NumTxsEditStake:                   0,
+		NumTxsVote:                        0,
+		NumTxsProposal:                    0,
+		NumTxsContract:                    0,
+		NumTxsSystem:                      0,
+		NumTxsUnknown:                     0,
+		NumTxsPause:                       0,
+		NumTxsUnpause:                     0,
+		NumTxsChangeParameter:             0,
+		NumTxsDaoTransfer:                 0,
+		NumTxsCertificateResults:          0,
+		NumTxsSubsidy:                     0,
+		NumTxsCreateOrder:                 0,
+		NumTxsEditOrder:                   0,
+		NumTxsDeleteOrder:                 0,
+		NumTxsDexLimitOrder:               0,
+		NumTxsDexLiquidityDeposit:         0,
+		NumTxsDexLiquidityWithdraw:        0,
+		NumAccounts:                       accountsOut.NumAccounts,
+		NumAccountsNew:                    0,
+		NumEvents:                         eventsOut.NumEvents,
+		NumEventsReward:                   eventsOut.EventCountsByType["reward"],
+		NumEventsSlash:                    0,
+		NumEventsDexLiquidityDeposit:      0,
+		NumEventsDexLiquidityWithdraw:     0,
+		NumEventsDexSwap:                  0,
+		NumEventsOrderBookSwap:            0,
+		NumEventsAutomaticPause:           0,
+		NumEventsAutomaticBeginUnstaking:  0,
+		NumEventsAutomaticFinishUnstaking: 0,
+		NumOrders:                         ordersOut.NumOrders,
+		NumOrdersNew:                      0,
+		NumOrdersOpen:                     0,
+		NumOrdersFilled:                   0,
+		NumOrdersCancelled:                0,
+		NumOrdersExpired:                  0,
+		NumPools:                          poolsOut.NumPools,
+		NumPoolsNew:                       0,
+		NumDexPrices:                      pricesOut.NumPrices,
+		NumDexOrders:                      dexBatchOut.NumOrders,
+		NumDexOrdersFuture:                0,
+		NumDexOrdersLocked:                0,
+		NumDexOrdersComplete:              0,
+		NumDexOrdersSuccess:               0,
+		NumDexOrdersFailed:                0,
+		NumDexDeposits:                    dexBatchOut.NumDeposits,
+		NumDexDepositsPending:             0,
+		NumDexDepositsComplete:            0,
+		NumDexWithdrawals:                 dexBatchOut.NumWithdrawals,
+		NumDexWithdrawalsPending:          0,
+		NumDexWithdrawalsComplete:         0,
+		NumDexPoolPointsHolders:           0,
+		NumDexPoolPointsHoldersNew:        0,
+		ParamsChanged:                     paramsOut.ParamsChanged,
+		NumValidators:                     validatorsOut.NumValidators,
+		NumValidatorsNew:                  0,
+		NumValidatorsActive:               0,
+		NumValidatorsPaused:               0,
+		NumValidatorsUnstaking:            0,
+		NumValidatorSigningInfo:           validatorsOut.NumSigningInfos,
+		NumValidatorSigningInfoNew:        0,
+		NumCommittees:                     committeesOut.NumCommittees,
+		NumCommitteesNew:                  0,
+		NumCommitteesSubsidized:           0,
+		NumCommitteesRetired:              0,
+		NumCommitteeValidators:            0,
+		NumPollSnapshots:                  pollOut.NumProposals,
 	}
 
 	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries
-	saveInput := types.SaveBlockSummaryInput{
-		ChainID:   in.ChainID,
+	saveInput := types.ActivitySaveBlockSummaryInput{
 		Height:    in.Height,
-		BlockTime: fetchOut.Block.Time,
-		Summaries: summaries,
+		BlockTime: heightTime,
+		Summary:   summary,
 	}
-	var saveSummaryOut types.SaveBlockSummaryOutput
+	var saveSummaryOut types.ActivitySaveBlockSummaryOutput
 	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlockSummary, saveInput).Get(ctx, &saveSummaryOut); err != nil {
 		return err
 	}
@@ -368,10 +320,9 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	promoteFutures := make([]workflow.Future, 0, len(promoteEntities))
 
 	for _, entity := range promoteEntities {
-		f := workflow.ExecuteActivity(ctx, wc.ActivityContext.PromoteData, types.PromoteDataInput{
-			ChainID: in.ChainID,
-			Entity:  entity,
-			Height:  in.Height,
+		f := workflow.ExecuteActivity(ctx, wc.ActivityContext.PromoteData, types.ActivityPromoteDataInput{
+			Entity: entity,
+			Height: in.Height,
 		})
 		promoteFutures = append(promoteFutures, f)
 	}
@@ -379,7 +330,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	// Wait for all promotions to complete
 	var promoteTimingsTotal float64
 	for _, f := range promoteFutures {
-		var out types.PromoteDataOutput
+		var out types.ActivityPromoteDataOutput
 		if err := f.Get(ctx, &out); err != nil {
 			return err
 		}
@@ -389,8 +340,8 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 
 	// Phase 4: Trigger async cleanup workflow (fire-and-forget)
 	// Cleanup runs on ops queue to avoid blocking indexing queue
-	cleanupWorkflowID := wc.TemporalClient.GetCleanupStagingWorkflowID(in.ChainID, in.Height)
-	opsQueue := wc.TemporalClient.GetIndexerOpsQueue(in.ChainID)
+	cleanupWorkflowID := wc.TemporalClient.GetCleanupStagingWorkflowID(wc.ChainID, in.Height)
+	opsQueue := wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID)
 
 	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
 		WorkflowID:        cleanupWorkflowID,
@@ -399,9 +350,8 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	})
 
 	// Start cleanup workflow and wait only for it to start, not complete
-	cleanupFuture := workflow.ExecuteChildWorkflow(childCtx, wc.CleanupStagingWorkflow, CleanupStagingInput{
-		ChainID: in.ChainID,
-		Height:  in.Height,
+	cleanupFuture := workflow.ExecuteChildWorkflow(childCtx, wc.CleanupStagingWorkflow, types.WorkflowCleanupStagingInput{
+		Height: in.Height,
 	})
 
 	// Wait for cleanup workflow to start (not complete)
@@ -424,8 +374,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 	}
 
 	// Phase 5: RecordIndexed - persist indexing progress with timing metrics
-	recordInput := types.RecordIndexedInput{
-		ChainID:        in.ChainID,
+	recordInput := types.ActivityRecordIndexedInput{
 		Height:         in.Height,
 		IndexingTimeMs: totalMs,
 		IndexingDetail: string(detailBytes),
@@ -443,7 +392,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.IndexBlockI
 // - Non-critical: Failures are logged but don't affect indexing
 // - Idempotent: Safe to retry or run multiple times
 // - Async: Runs on ops queue to avoid blocking high-throughput indexing queue
-func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input CleanupStagingInput) error {
+func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input types.WorkflowCleanupStagingInput) error {
 	// Configure activity options for cleanup operations
 	// Cleanup is non-critical, so we use shorter timeouts and limited retries
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
@@ -461,7 +410,7 @@ func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input CleanupSta
 	allEntities := entities.All()
 
 	workflow.GetLogger(ctx).Info("Starting staging cleanup",
-		"chainId", input.ChainID,
+		"chainId", wc.ChainID,
 		"height", input.Height,
 		"numEntities", len(allEntities))
 
@@ -470,17 +419,16 @@ func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input CleanupSta
 	var successCount, failureCount int
 
 	for _, entity := range allEntities {
-		var output types.CleanPromotedDataOutput
-		err := workflow.ExecuteActivity(ctx, wc.ActivityContext.CleanPromotedData, types.CleanPromotedDataInput{
-			ChainID: input.ChainID,
-			Entity:  entity.String(),
-			Height:  input.Height,
+		var output types.ActivityCleanPromotedDataOutput
+		err := workflow.ExecuteActivity(ctx, wc.ActivityContext.CleanPromotedData, types.ActivityCleanPromotedDataInput{
+			Entity: entity.String(),
+			Height: input.Height,
 		}).Get(ctx, &output)
 
 		if err != nil {
 			workflow.GetLogger(ctx).Warn("Failed to clean staging data for entity",
 				"entity", entity.String(),
-				"chainId", input.ChainID,
+				"chainId", wc.ChainID,
 				"height", input.Height,
 				"error", err)
 			failureCount++
@@ -488,7 +436,7 @@ func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input CleanupSta
 		} else {
 			workflow.GetLogger(ctx).Debug("Successfully cleaned staging data",
 				"entity", entity.String(),
-				"chainId", input.ChainID,
+				"chainId", wc.ChainID,
 				"height", input.Height,
 				"durationMs", output.DurationMs)
 			successCount++
@@ -496,7 +444,7 @@ func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input CleanupSta
 	}
 
 	workflow.GetLogger(ctx).Info("Completed staging cleanup",
-		"chainId", input.ChainID,
+		"chainId", wc.ChainID,
 		"height", input.Height,
 		"success", successCount,
 		"failures", failureCount)

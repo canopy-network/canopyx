@@ -54,7 +54,7 @@ func TestIndexTransactions_MixedTypes(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: rpcClient},
 	}
 
@@ -71,7 +71,7 @@ func TestIndexTransactions_MixedTypes(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexTransactions, input)
 	require.NoError(t, err)
 
-	var output types.IndexTransactionsOutput
+	var output types.ActivityIndexTransactionsOutput
 	require.NoError(t, future.Get(&output))
 
 	// Verify total count
@@ -209,7 +209,7 @@ func TestIndexTransactions_CountsByType(t *testing.T) {
 			activityCtx := &activity.Context{
 				Logger:     logger,
 				AdminDB:    adminStore,
-				ChainsDB:   chainsMap,
+				ChainDB:    chainsMap,
 				RPCFactory: &fakeRPCFactory{client: rpcClient},
 			}
 
@@ -260,7 +260,7 @@ func TestIndexTransactions_EmptyBlock(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: rpcClient},
 	}
 
@@ -314,7 +314,7 @@ func TestIndexTransactions_SingleType(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: rpcClient},
 	}
 
@@ -372,7 +372,7 @@ func TestIndexTransactions_AllTypes(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: rpcClient},
 	}
 
@@ -434,7 +434,7 @@ func TestIndexTransactions_HeightTimePopulation(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: rpcClient},
 	}
 

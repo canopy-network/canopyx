@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: canopy-node-2
+  name: node-2
   labels:
     app: canopy-node
     node-id: "2"
@@ -91,13 +91,13 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: canopy-node-2-config
+            name: node-2-config
         - name: genesis
           configMap:
-            name: canopy-node-2-genesis
+            name: node-2-genesis
         - name: keystore-files
           configMap:
-            name: canopy-node-2-keystore
+            name: node-2-keystore
         - name: data
           emptyDir: {}
         - name: writable-keystore

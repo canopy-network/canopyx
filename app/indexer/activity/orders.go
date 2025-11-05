@@ -34,31 +34,19 @@ import (
 // Note: This implementation assumes the chainID parameter needed for RPC calls can be derived
 // from the chain configuration. If a numeric chain ID is needed, it should be added to the
 // admin.Chain model or passed as a parameter.
-func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput) (types.IndexOrdersOutput, error) {
+func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtHeight) (types.ActivityIndexOrdersOutput, error) {
 	start := time.Now()
 
-	// Get chain metadata
-	ch, err := c.AdminDB.GetChain(ctx, input.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexOrdersOutput{}, err
+		return types.ActivityIndexOrdersOutput{}, err
 	}
 
 	// Get chain database
-	chainDb, err := c.NewChainDb(ctx, input.ChainID)
+	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
 	if err != nil {
-		return types.IndexOrdersOutput{}, err
+		return types.ActivityIndexOrdersOutput{}, err
 	}
-
-	// Create RPC client
-	cli := c.rpcClient(ch.RPCEndpoints)
-
-	// IMPORTANT: The RPC OrdersByHeight method requires a numeric chainID parameter.
-	// This should be extracted from chain configuration or passed as input.
-	// For now, we use a placeholder value of 1. This should be updated based on
-	// the actual chain configuration structure.
-	//
-	// TODO: Add numeric chain_id field to admin.Chain model or pass it in IndexOrdersInput
-	var numericChainID uint64 = 1 // PLACEHOLDER - should come from chain config
 
 	// Parallel RPC fetch using goroutines for performance
 	var (
@@ -74,7 +62,7 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 	// Worker 1: Fetch current height orders from RPC
 	go func() {
 		defer wg.Done()
-		currentOrders, currentErr = cli.OrdersByHeight(ctx, input.Height, numericChainID)
+		currentOrders, currentErr = cli.OrdersByHeight(ctx, input.Height, ac.ChainID)
 	}()
 
 	// Worker 2: Fetch previous height orders from RPC
@@ -83,7 +71,7 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 	go func() {
 		defer wg.Done()
 		if input.Height > 1 {
-			previousOrders, previousErr = cli.OrdersByHeight(ctx, input.Height-1, numericChainID)
+			previousOrders, previousErr = cli.OrdersByHeight(ctx, input.Height-1, ac.ChainID)
 		}
 	}()
 
@@ -92,10 +80,10 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 
 	// Check for errors
 	if currentErr != nil {
-		return types.IndexOrdersOutput{}, fmt.Errorf("fetch current orders at height %d: %w", input.Height, currentErr)
+		return types.ActivityIndexOrdersOutput{}, fmt.Errorf("fetch current orders at height %d: %w", input.Height, currentErr)
 	}
 	if previousErr != nil && input.Height > 1 {
-		return types.IndexOrdersOutput{}, fmt.Errorf("fetch previous orders at height %d: %w", input.Height-1, previousErr)
+		return types.ActivityIndexOrdersOutput{}, fmt.Errorf("fetch previous orders at height %d: %w", input.Height-1, previousErr)
 	}
 
 	// Build previous state map for O(1) lookups
@@ -107,9 +95,12 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 
 	// Query order lifecycle events from staging table (event-driven state tracking)
 	// EventOrderBookSwap events indicate when an order transitions to "filled" state
-	orderEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height, "EventOrderBookSwap")
+	orderEvents, err := chainDb.GetEventsByTypeAndHeight(
+		ctx, input.Height, true,
+		rpc.EventTypeAsStr(rpc.EventTypeOrderBookSwap),
+	)
 	if err != nil {
-		return types.IndexOrdersOutput{}, fmt.Errorf("query order events at height %d: %w", input.Height, err)
+		return types.ActivityIndexOrdersOutput{}, fmt.Errorf("query order events at height %d: %w", input.Height, err)
 	}
 
 	// Build event map by order ID for O(1) lookup
@@ -128,11 +119,11 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 	for _, curr := range currentOrders {
 		prev, existed := prevMap[curr.OrderID]
 
-		// Check if order has a swap event (state transition to "filled")
+		// Check if the order has a swap event (state transition to "filled")
 		_, hasSwapEvent := swapEvents[curr.OrderID]
 
 		// Determine if order state changed
-		// We check all significant fields: amount, status, buyer, deadline
+		// We check all significant fields: amount, status, buyer, deadline,
 		// OR if there's a swap event indicating state transition
 		hasChanged := !existed || hasSwapEvent || orderStateChanged(prev, curr)
 
@@ -155,21 +146,21 @@ func (c *Context) IndexOrders(ctx context.Context, input types.IndexOrdersInput)
 	// Insert to staging table
 	if len(changedOrders) > 0 {
 		if err := chainDb.InsertOrdersStaging(ctx, changedOrders); err != nil {
-			return types.IndexOrdersOutput{}, fmt.Errorf("insert orders staging: %w", err)
+			return types.ActivityIndexOrdersOutput{}, fmt.Errorf("insert orders staging: %w", err)
 		}
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 
-	c.Logger.Info("Indexed orders",
-		zap.Uint64("chainId", input.ChainID),
+	ac.Logger.Info("Indexed orders",
+		zap.Uint64("chainId", ac.ChainID),
 		zap.Uint64("height", input.Height),
 		zap.Int("totalOrders", len(currentOrders)),
 		zap.Int("changedOrders", len(changedOrders)),
 		zap.Int("swapEvents", len(swapEvents)),
 		zap.Float64("durationMs", durationMs))
 
-	return types.IndexOrdersOutput{
+	return types.ActivityIndexOrdersOutput{
 		NumOrders:  uint32(len(changedOrders)),
 		DurationMs: durationMs,
 	}, nil

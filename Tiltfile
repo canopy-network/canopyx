@@ -21,6 +21,7 @@ if not os.path.exists(config_file):
 # Load configuration
 cfg = read_yaml(config_file)
 profile = cfg.get('profile', 'development')
+mode = cfg.get('mode', 'local')
 components = cfg.get('components', {})
 resources_cfg = cfg.get('resources', {}).get(profile, {})
 monitoring_cfg = cfg.get('monitoring', {})
@@ -31,6 +32,7 @@ chains_cfg = cfg.get('chains', [])
 env_cfg = cfg.get('env', {})
 
 print("Tilt Profile: %s" % profile)
+print("Tilt Mode: %s" % mode)
 print("Components enabled: %s" % ', '.join([k for k, v in components.items() if v]))
 
 # Helper function to get port from config with default fallback
@@ -164,8 +166,12 @@ if temporal_cfg.get('history_replicas'):
 if temporal_cfg.get('cassandra_replicas'):
     temporal_flags.append('--set=cassandra.config.cluster_size=%s' % temporal_cfg['cassandra_replicas'])
     temporal_flags.append('--set=cassandra.replicas=%s' % temporal_cfg['cassandra_replicas'])
+    # Disable pod anti-affinity for single-node clusters (allows multiple replicas on same node)
+    temporal_flags.append('--set=cassandra.affinity=null')
 if temporal_cfg.get('elasticsearch_replicas'):
     temporal_flags.append('--set=elasticsearch.replicas=%s' % temporal_cfg['elasticsearch_replicas'])
+    # Disable pod anti-affinity for single-node clusters (allows multiple replicas on same node)
+    temporal_flags.append('--set=elasticsearch.antiAffinity=soft')  # or null for complete disable
 
 # Cassandra resource limits
 cass_mem_limit = temporal_cfg.get('cassandra_memory_limit', '8G')
@@ -175,8 +181,17 @@ temporal_flags.append('--set=cassandra.config.max_heap_size=%s' % cass_heap)
 # Elasticsearch resource limits
 if temporal_cfg.get('elasticsearch_memory_limit'):
     temporal_flags.append('--set=elasticsearch.resources.limits.memory=%s' % temporal_cfg['elasticsearch_memory_limit'])
+    # Set requests to match limits to avoid validation errors
+    temporal_flags.append('--set=elasticsearch.resources.requests.memory=%s' % temporal_cfg['elasticsearch_memory_limit'])
 if temporal_cfg.get('elasticsearch_cpu_limit'):
     temporal_flags.append('--set=elasticsearch.resources.limits.cpu=%s' % temporal_cfg['elasticsearch_cpu_limit'])
+    # Set CPU request to half of limit for better scheduling
+    cpu_value = temporal_cfg['elasticsearch_cpu_limit']
+    if 'm' in cpu_value:
+        cpu_request = str(int(cpu_value.replace('m', '')) // 2) + 'm'
+    else:
+        cpu_request = str(float(cpu_value) / 2)
+    temporal_flags.append('--set=elasticsearch.resources.requests.cpu=%s' % cpu_request)
 
 print("Temporal resources: History replicas=%s, Cassandra replicas=%s, ES replicas=%s" % (
     temporal_cfg.get('history_replicas', 'default'),
@@ -425,14 +440,25 @@ else:
 if components.get('admin', True):
     print("Admin API enabled")
 
-    docker_build_with_restart(
-        "localhost:5001/canopyx-admin",
-        ".",
-        dockerfile="./Dockerfile.admin",
-        entrypoint=["/app/admin"],
-        live_update=[sync("bin/admin", "/app/admin")],
-        ignore=['web/', 'docs/*.md', '*.png', '*.md', 'deploy/'],
-    )
+    # Choose build mode based on mode setting
+    if mode == 'local':
+        # Local mode: Enable hot reload with live binary sync
+        docker_build_with_restart(
+            "localhost:5001/canopyx-admin",
+            ".",
+            dockerfile="./Dockerfile.admin",
+            entrypoint=["/app/admin"],
+            live_update=[sync("bin/admin", "/app/admin")],
+            ignore=['web/', 'docs/*.md', '*.png', '*.md', 'deploy/'],
+        )
+    else:
+        # Shared mode: Production build without hot reload
+        docker_build(
+            "localhost:5001/canopyx-admin",
+            ".",
+            dockerfile="./Dockerfile.admin",
+            ignore=['web/', 'docs/*.md', '*.png', '*.md', 'deploy/'],
+        )
 
     # Load admin manifests and apply resource limits from profile
     admin_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin/overlays/local"))
@@ -498,19 +524,31 @@ else:
 if components.get('admin_web', True):
     print("Admin Web UI enabled")
 
-    docker_build(
-        "localhost:5001/canopyx-admin-web",
-        "./web/admin",
-        dockerfile="./web/admin/Dockerfile",
-        live_update=[
-            fall_back_on(['./web/admin/package.json', './web/admin/pnpm-lock.yaml']),
-            sync('./web/admin/app', '/app/app'),
-            sync('./web/admin/public', '/app/public'),
-        ],
-    )
+    # Choose build mode based on mode setting
+    if mode == 'local':
+        # Local mode: Enable hot reload with live_update
+        docker_build(
+            "localhost:5001/canopyx-admin-web",
+            "./web/admin",
+            dockerfile="./web/admin/Dockerfile",
+            live_update=[
+                fall_back_on(['./web/admin/package.json', './web/admin/pnpm-lock.yaml']),
+                sync('./web/admin/app', '/app/app'),
+                sync('./web/admin/public', '/app/public'),
+            ],
+        )
+    else:
+        # Shared mode: Production build without hot reload
+        docker_build(
+            "localhost:5001/canopyx-admin-web",
+            "./web/admin",
+            dockerfile="./web/admin/Dockerfile",
+        )
 
     # Load admin-web manifests and apply resource limits from profile
-    admin_web_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin-web/overlays/local"))
+    # Use mode-specific overlay (local vs shared)
+    admin_web_overlay = "local" if mode == 'local' else "shared"
+    admin_web_objects = decode_yaml_stream(kustomize("./deploy/k8s/admin-web/overlays/%s" % admin_web_overlay))
 
     for o in admin_web_objects:
         if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopyx-admin-web':
@@ -595,14 +633,25 @@ else:
 if components.get('controller', True):
     print("Controller enabled")
 
-    docker_build_with_restart(
-        "localhost:5001/canopyx-controller",
-        ".",
-        dockerfile="./Dockerfile.controller",
-        entrypoint=["/app/controller"],
-        live_update=[sync("bin/controller", "/app/controller")],
-        ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
-    )
+    # Choose build mode based on mode setting
+    if mode == 'local':
+        # Local mode: Enable hot reload with live binary sync
+        docker_build_with_restart(
+            "localhost:5001/canopyx-controller",
+            ".",
+            dockerfile="./Dockerfile.controller",
+            entrypoint=["/app/controller"],
+            live_update=[sync("bin/controller", "/app/controller")],
+            ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
+        )
+    else:
+        # Shared mode: Production build without hot reload
+        docker_build(
+            "localhost:5001/canopyx-controller",
+            ".",
+            dockerfile="./Dockerfile.controller",
+            ignore=['web/', 'docs/', '*.png', '*.md', '*.json', 'deploy/'],
+        )
 
     # Load controller manifests and apply resource limits from profile
     controller_objects = decode_yaml_stream(kustomize("./deploy/k8s/controller/overlays/local"))
@@ -682,11 +731,11 @@ if canopy_mode == 'dual':
 
         # Node 1 resource (Chain ID 1)
         k8s_resource(
-            "canopy-node-1",
+            "node-1",
             objects=[
-                "canopy-node-1-config:configmap",
-                "canopy-node-1-genesis:configmap",
-                "canopy-node-1-keystore:configmap"
+                "node-1-config:configmap",
+                "node-1-genesis:configmap",
+                "node-1-keystore:configmap"
             ],
             port_forwards=[
                 "%s:50000" % get_port('canopy1_wallet', 50000),
@@ -701,11 +750,11 @@ if canopy_mode == 'dual':
 
         # Node 2 resource (Chain ID 2)
         k8s_resource(
-            "canopy-node-2",
+            "node-2",
             objects=[
-                "canopy-node-2-config:configmap",
-                "canopy-node-2-genesis:configmap",
-                "canopy-node-2-keystore:configmap"
+                "node-2-config:configmap",
+                "node-2-genesis:configmap",
+                "node-2-keystore:configmap"
             ],
             port_forwards=[
                 "%s:40000" % get_port('canopy2_wallet', 40000),
@@ -720,11 +769,11 @@ if canopy_mode == 'dual':
 
         # Node 3 resource (Chain ID 1 - second validator)
         k8s_resource(
-            "canopy-node-3",
+            "node-3",
             objects=[
-                "canopy-node-3-config:configmap",
-                "canopy-node-3-genesis:configmap",
-                "canopy-node-3-keystore:configmap"
+                "node-3-config:configmap",
+                "node-3-genesis:configmap",
+                "node-3-keystore:configmap"
             ],
             port_forwards=[
                 "%s:30000" % get_port('canopy3_wallet', 30000),
@@ -780,7 +829,13 @@ else:
 
 # Use indexer tag from config
 idx_repo = dev_cfg.get('indexer_tag', 'localhost:5001/canopyx-indexer:dev')
-idx_build_mode = TRIGGER_MODE_AUTO if dev_cfg.get('indexer_build_mode', 'auto') == 'auto' else TRIGGER_MODE_MANUAL
+
+# In shared mode, always use auto trigger regardless of config
+# In local mode, respect the config setting
+if mode == 'shared':
+    idx_build_mode = TRIGGER_MODE_AUTO
+else:
+    idx_build_mode = TRIGGER_MODE_AUTO if dev_cfg.get('indexer_build_mode', 'auto') == 'auto' else TRIGGER_MODE_MANUAL
 
 idx_deps = [
   "Dockerfile.indexer",
@@ -809,7 +864,9 @@ if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
         print("Auto-registering dual Canopy chains")
 
         # Build resource_deps dynamically
-        register_deps = ["canopy-node-1", "canopy-node-2", "canopy-node-3"]
+        register_deps = ["node-1", "node-2",
+        #"node-3"
+        ]
         if components.get('admin', True):
             register_deps.append("canopyx-admin")
 
@@ -830,7 +887,7 @@ if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
             # Wait for Canopy Node 1 to produce at least one block
             echo "Waiting for Canopy Node 1 to produce blocks..."
             for i in {1..60}; do
-              CHAIN_ID=$(curl -s -X POST http://canopy-node-1.default.svc.cluster.local:50002/v1/query/cert-by-height \\
+              CHAIN_ID=$(curl -s -X POST http://node-1.default.svc.cluster.local:50002/v1/query/cert-by-height \\
                 -H 'Content-Type: application/json' \\
                 -d '{"height":0}' 2>/dev/null | grep -o '"chainId":[0-9]*' | cut -d: -f2)
               if [ ! -z "$CHAIN_ID" ] && [ "$CHAIN_ID" != "0" ]; then
@@ -844,7 +901,7 @@ if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
             # Wait for Canopy Node 2 to produce at least one block
             echo "Waiting for Canopy Node 2 to produce blocks..."
             for i in {1..60}; do
-              CHAIN_ID=$(curl -s -X POST http://canopy-node-2.default.svc.cluster.local:40002/v1/query/cert-by-height \\
+              CHAIN_ID=$(curl -s -X POST http://node-2.default.svc.cluster.local:40002/v1/query/cert-by-height \\
                 -H 'Content-Type: application/json' \\
                 -d '{"height":0}' 2>/dev/null | grep -o '"chainId":[0-9]*' | cut -d: -f2)
               if [ ! -z "$CHAIN_ID" ] && [ "$CHAIN_ID" != "0" ]; then
@@ -861,7 +918,7 @@ if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
             if curl -X POST -f http://localhost:3000/api/chains \\
               -H 'Authorization: Bearer devtoken' \\
               -H 'Content-Type: application/json' \\
-              -d '{"rpc_endpoints":["http://canopy-node-1.default.svc.cluster.local:50002"], "chain_name":"Canopy Chain 1","image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
+              -d '{"rpc_endpoints":["http://node-1.default.svc.cluster.local:50002"], "chain_name":"Canopy Chain 1","image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
               echo "✓ Successfully registered Canopy Chain 1"
             else
               echo "✗ Failed to register Canopy Chain 1 (may already exist or still starting)"
@@ -875,7 +932,7 @@ if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
             if curl -X POST -f http://localhost:3000/api/chains \\
               -H 'Authorization: Bearer devtoken' \\
               -H 'Content-Type: application/json' \\
-              -d '{"rpc_endpoints":["http://canopy-node-2.default.svc.cluster.local:40002"], "chain_name":"Canopy Chain 2","image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
+              -d '{"rpc_endpoints":["http://node-2.default.svc.cluster.local:40002"], "chain_name":"Canopy Chain 2","image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
               echo "✓ Successfully registered Canopy Chain 2"
             else
               echo "✗ Failed to register Canopy Chain 2 (may already exist or still starting)"

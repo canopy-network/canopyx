@@ -45,24 +45,12 @@ func DetectMessageType(msgType string, msg map[string]interface{}) MessageType {
 	switch msgType {
 	case "send", "Send", "SEND":
 		return MsgTypeSend
-	case "delegate", "Delegate", "DELEGATE":
-		return MsgTypeDelegate
-	case "undelegate", "Undelegate", "UNDELEGATE":
-		return MsgTypeUndelegate
 	case "stake", "Stake", "STAKE":
 		return MsgTypeStake
 	case "unstake", "Unstake", "UNSTAKE":
 		return MsgTypeUnstake
 	case "edit_stake", "EditStake", "EDIT_STAKE":
 		return MsgTypeEditStake
-	case "vote", "Vote", "VOTE":
-		return MsgTypeVote
-	case "proposal", "Proposal", "PROPOSAL":
-		return MsgTypeProposal
-	case "contract", "Contract", "CONTRACT":
-		return MsgTypeContract
-	case "system", "System", "SYSTEM":
-		return MsgTypeSystem
 	case "pause", "Pause", "PAUSE":
 		return MsgTypePause
 	case "unpause", "Unpause", "UNPAUSE":
@@ -132,22 +120,11 @@ func DetectMessageType(msgType string, msg map[string]interface{}) MessageType {
 	if _, ok := msg["toAddress"]; ok {
 		return MsgTypeSend
 	}
-	if _, ok := msg["validatorAddress"]; ok {
-		if _, ok := msg["delegator"]; ok {
-			return MsgTypeDelegate
-		}
-		return MsgTypeUndelegate
-	}
 	if _, ok := msg["pool"]; ok {
 		if _, ok := msg["staker"]; ok {
 			return MsgTypeStake
 		}
 		return MsgTypeUnstake
-	}
-	if _, ok := msg["proposalId"]; ok {
-		if _, ok := msg["voter"]; ok {
-			return MsgTypeVote
-		}
 	}
 
 	return MsgTypeUnknown
@@ -167,21 +144,6 @@ func ParseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 			Memo:        GetStringField(msgData, "memo"),
 		}, nil
 
-	case MsgTypeDelegate:
-		return &DelegateMessage{
-			Delegator:        GetStringField(msgData, "delegator"),
-			ValidatorAddress: GetStringField(msgData, "validatorAddress"),
-			Amount:           uint64(GetIntField(msgData, "amount")),
-			Memo:             GetStringField(msgData, "memo"),
-		}, nil
-
-	case MsgTypeUndelegate:
-		return &UndelegateMessage{
-			Delegator:        GetStringField(msgData, "delegator"),
-			ValidatorAddress: GetStringField(msgData, "validatorAddress"),
-			Amount:           uint64(GetIntField(msgData, "amount")),
-		}, nil
-
 	case MsgTypeStake:
 		lockPeriod := GetOptionalUint32Field(msgData, "lockPeriod")
 		return &StakeMessage{
@@ -196,43 +158,6 @@ func ParseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 			Staker: GetStringField(msgData, "staker"),
 			Pool:   GetStringField(msgData, "pool"),
 			Amount: uint64(GetIntField(msgData, "amount")),
-		}, nil
-
-	case MsgTypeVote:
-		return &VoteMessage{
-			Voter:      GetStringField(msgData, "voter"),
-			ProposalID: uint64(GetIntField(msgData, "proposalId")),
-			Option:     GetStringField(msgData, "option"),
-			Memo:       GetStringField(msgData, "memo"),
-		}, nil
-
-	case MsgTypeProposal:
-		return &ProposalMessage{
-			Proposer:    GetStringField(msgData, "proposer"),
-			Title:       GetStringField(msgData, "title"),
-			Description: GetStringField(msgData, "description"),
-			Deposit:     uint64(GetIntField(msgData, "deposit")),
-		}, nil
-
-	case MsgTypeContract:
-		value := GetOptionalUint64Field(msgData, "value")
-		return &ContractMessage{
-			Caller:          GetStringField(msgData, "caller"),
-			ContractAddress: GetStringField(msgData, "contractAddress"),
-			Method:          GetStringField(msgData, "method"),
-			CallData:        GetStringField(msgData, "callData"),
-			Value:           value,
-		}, nil
-
-	case MsgTypeSystem:
-		params := make(map[string]interface{})
-		if p, ok := msgData["params"].(map[string]interface{}); ok {
-			params = p
-		}
-		return &SystemMessage{
-			Executor: GetStringField(msgData, "executor"),
-			Action:   GetStringField(msgData, "action"),
-			Params:   params,
 		}, nil
 
 	case MsgTypePause:

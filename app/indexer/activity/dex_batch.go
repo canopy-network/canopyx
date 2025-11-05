@@ -37,29 +37,25 @@ import (
 // Event Processing Pattern:
 // Events at height H describe entities from height H-1. When processing EventDexSwap at H,
 // we query DexBatch at H-1 to find the order that was executed. The snapshot we create
-// uses height H (when the event occurred) but entity data comes from RPC(H-1).
+// uses height H (when the event occurred), but entity data comes from RPC(H-1).
 //
 // Performance:
 // - Parallel RPC fetching reduces latency by ~50% (2 concurrent requests)
 // - Events are queried from staging DB (already indexed by IndexEvents activity)
 // - Only changed entities are stored (snapshot-on-change pattern)
-func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput) (types.IndexDexBatchOutput, error) {
+func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexDexBatchOutput, error) {
 	start := time.Now()
 
-	// Get chain configuration
-	ch, err := c.AdminDB.GetChain(ctx, in.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexDexBatchOutput{}, err
+		return types.ActivityIndexDexBatchOutput{}, err
 	}
 
 	// Acquire chain database
-	chainDb, err := c.NewChainDb(ctx, in.ChainID)
+	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
 	if err != nil {
-		return types.IndexDexBatchOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
+		return types.ActivityIndexDexBatchOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
 	}
-
-	// Create RPC client
-	cli := c.rpcClient(ch.RPCEndpoints)
 
 	// Parallel RPC fetch: ALL DexBatches(H) and ALL NextDexBatches(H) in a single call each
 	// Using committee=0 returns all committees' batches
@@ -88,22 +84,23 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 	// Wait for both workers
 	wg.Wait()
 
-	// Check for errors (empty batches is acceptable - means no batches at this height)
+	// Check for errors (empty batches are acceptable - means no batches at this height)
 	if currentErr != nil {
-		return types.IndexDexBatchOutput{}, fmt.Errorf("fetch all dex batches at height %d: %w", in.Height, currentErr)
+		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("fetch all dex batches at height %d: %w", in.Height, currentErr)
 	}
 	if nextErr != nil {
-		return types.IndexDexBatchOutput{}, fmt.Errorf("fetch all next dex batches at height %d: %w", in.Height, nextErr)
+		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("fetch all next dex batches at height %d: %w", in.Height, nextErr)
 	}
 
-	// Query events from staging table
-	events, err := chainDb.GetEventsByTypeAndHeight(ctx, in.Height,
-		"EventDexSwap",
-		"EventDexLiquidityDeposit",
-		"EventDexLiquidityWithdrawal",
+	// Query events from the staging table
+	events, err := chainDb.GetEventsByTypeAndHeight(
+		ctx, in.Height, true,
+		rpc.EventTypeAsStr(rpc.EventTypeDexSwap),
+		rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit),
+		rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw),
 	)
 	if err != nil {
-		return types.IndexDexBatchOutput{}, fmt.Errorf("query events at height %d: %w", in.Height, err)
+		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("query events at height %d: %w", in.Height, err)
 	}
 
 	// Build event maps for O(1) lookups
@@ -119,6 +116,8 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 		orderID := *event.OrderID
 
 		switch event.EventType {
+		// TBD: Can the same orderID have more than one event of the same type in the same height?
+		//   if no, then this is ok.
 		case "EventDexSwap":
 			swapEvents[orderID] = event
 		case "EventDexLiquidityDeposit":
@@ -131,7 +130,7 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 	// Process orders from ALL committees
 	orders := make([]*indexer.DexOrder, 0)
 
-	// Process current batch orders (state=locked or state=complete if event exists)
+	// Process current batch orders (state=locked or state=complete if the event exists)
 	for _, currentBatch := range currentBatches {
 		for _, rpcOrder := range currentBatch.Orders {
 			order := &indexer.DexOrder{
@@ -209,7 +208,7 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 				if depositEvent.LocalOrigin != nil {
 					deposit.LocalOrigin = *depositEvent.LocalOrigin
 				}
-				// Note: PointsReceived should be calculated from pool state change
+				// @TODO: PointsReceived should be calculated from pool state change
 				// For now, we leave it as 0 - this will be improved when pool points tracking is added
 			}
 
@@ -259,7 +258,7 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 				if withdrawalEvent.RemoteAmount != nil {
 					withdrawal.RemoteAmount = *withdrawalEvent.RemoteAmount
 				}
-				// Note: PointsBurned should be calculated from pool state change
+				// @TODO: PointsBurned should be calculated from pool state change
 				// For now, we leave it as 0 - this will be improved when pool points tracking is added
 			}
 
@@ -286,26 +285,26 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 	// Insert to staging tables
 	if len(orders) > 0 {
 		if err := chainDb.InsertDexOrdersStaging(ctx, orders); err != nil {
-			return types.IndexDexBatchOutput{}, fmt.Errorf("insert dex orders staging: %w", err)
+			return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("insert dex orders staging: %w", err)
 		}
 	}
 
 	if len(deposits) > 0 {
 		if err := chainDb.InsertDexDepositsStaging(ctx, deposits); err != nil {
-			return types.IndexDexBatchOutput{}, fmt.Errorf("insert dex deposits staging: %w", err)
+			return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("insert dex deposits staging: %w", err)
 		}
 	}
 
 	if len(withdrawals) > 0 {
 		if err := chainDb.InsertDexWithdrawalsStaging(ctx, withdrawals); err != nil {
-			return types.IndexDexBatchOutput{}, fmt.Errorf("insert dex withdrawals staging: %w", err)
+			return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("insert dex withdrawals staging: %w", err)
 		}
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 
-	c.Logger.Info("Indexed DEX batches (all committees)",
-		zap.Uint64("chainId", in.ChainID),
+	ac.Logger.Info("Indexed DEX batches (all committees)",
+		zap.Uint64("chainId", ac.ChainID),
 		zap.Uint64("height", in.Height),
 		zap.Int("committees", len(currentBatches)+len(nextBatches)),
 		zap.Int("orders", len(orders)),
@@ -313,10 +312,11 @@ func (c *Context) IndexDexBatch(ctx context.Context, in types.IndexDexBatchInput
 		zap.Int("withdrawals", len(withdrawals)),
 		zap.Float64("durationMs", durationMs))
 
-	return types.IndexDexBatchOutput{
+	return types.ActivityIndexDexBatchOutput{
 		NumOrders:      uint32(len(orders)),
 		NumDeposits:    uint32(len(deposits)),
 		NumWithdrawals: uint32(len(withdrawals)),
-		DurationMs:     durationMs,
+		// @TODO: Separate them into success/fail future/lock/completed - but leave the "total" for the block visibility
+		DurationMs: durationMs,
 	}, nil
 }

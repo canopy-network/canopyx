@@ -2,20 +2,21 @@ package indexer
 
 import (
 	"context"
-	"strconv"
-	"time"
-
 	"github.com/canopy-network/canopyx/app/indexer/activity"
 	"github.com/canopy-network/canopyx/app/indexer/workflow"
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/canopy-network/canopyx/pkg/temporal"
+	"github.com/canopy-network/canopyx/pkg/temporal/indexer"
 	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.temporal.io/sdk/worker"
 	temporalworkflow "go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
+	"strconv"
+	"time"
 )
 
 const (
@@ -71,9 +72,19 @@ func Initialize(ctx context.Context) *App {
 		logger.Fatal("Unable to initialize indexer database", zap.Error(err))
 	}
 
-	chainsDb, chainsDbErr := indexerDb.EnsureChainsDbs(ctx)
-	if chainsDbErr != nil {
-		logger.Fatal("Unable to initialize chains database", zap.Error(chainsDbErr))
+	chainID := utils.Env("CHAIN_ID", "")
+	if chainID == "" {
+		logger.Fatal("CHAIN_ID environment variable is required")
+	}
+	// Parse chainID to uint64 for Temporal queue names
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		logger.Fatal("CHAIN_ID must be a valid unsigned integer", zap.String("chain_id", chainID), zap.Error(parseErr))
+	}
+
+	chainDb, chainDbErr := chainstore.New(ctx, logger, chainIDUint)
+	if chainDbErr != nil {
+		logger.Fatal("Unable to initialize chain database", zap.Error(chainDbErr))
 	}
 
 	temporalClient, err := temporal.NewClient(ctx, logger)
@@ -90,16 +101,6 @@ func Initialize(ctx context.Context) *App {
 	redisClient, err := redis.NewClient(ctx, logger)
 	if err != nil {
 		logger.Fatal("Unable to establish Redis connection", zap.Error(err))
-	}
-
-	chainID := utils.Env("CHAIN_ID", "")
-	if chainID == "" {
-		logger.Fatal("CHAIN_ID environment variable is required")
-	}
-	// Parse chainID to uint64 for Temporal queue names
-	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
-	if parseErr != nil {
-		logger.Fatal("CHAIN_ID must be a valid unsigned integer", zap.String("chain_id", chainID), zap.Error(parseErr))
 	}
 
 	// RPC rate limiting: Configured for high-throughput parallel block indexing (700k+ blocks)
@@ -128,9 +129,10 @@ func Initialize(ctx context.Context) *App {
 	}
 
 	activityContext := &activity.Context{
+		ChainID:                 chainIDUint,
 		Logger:                  logger,
 		AdminDB:                 indexerDb,
-		ChainsDB:                chainsDb,
+		ChainDB:                 chainDb,
 		RPCFactory:              rpc.NewHTTPFactory(rpcOpts),
 		RPCOpts:                 rpcOpts,
 		TemporalClient:          temporalClient,
@@ -138,6 +140,7 @@ func Initialize(ctx context.Context) *App {
 		SchedulerMaxParallelism: utils.EnvInt("SCHEDULER_BATCH_MAX_PARALLELISM", 0),
 	}
 	workflowContext := workflow.Context{
+		ChainID:         chainIDUint,
 		TemporalClient:  temporalClient,
 		ActivityContext: activityContext,
 		Config: workflow.Config{
@@ -182,13 +185,13 @@ func Initialize(ctx context.Context) *App {
 	liveWorker.RegisterWorkflowWithOptions(
 		workflowContext.IndexBlockWorkflow,
 		temporalworkflow.RegisterOptions{
-			Name: workflow.IndexBlockWorkflowName,
+			Name: indexer.IndexBlockWorkflowName,
 		},
 	)
 	historicalWorker.RegisterWorkflowWithOptions(
 		workflowContext.IndexBlockWorkflow,
 		temporalworkflow.RegisterOptions{
-			Name: workflow.IndexBlockWorkflowName,
+			Name: indexer.IndexBlockWorkflowName,
 		},
 	)
 
@@ -197,7 +200,6 @@ func Initialize(ctx context.Context) *App {
 		w.RegisterActivity(activityContext.PrepareIndexBlock)
 		w.RegisterActivity(activityContext.FetchBlockFromRPC)
 		w.RegisterActivity(activityContext.SaveBlock)
-		w.RegisterActivity(activityContext.IndexBlock)
 		w.RegisterActivity(activityContext.IndexTransactions)
 		w.RegisterActivity(activityContext.IndexAccounts)
 		w.RegisterActivity(activityContext.IndexEvents)
@@ -228,15 +230,19 @@ func Initialize(ctx context.Context) *App {
 
 	opsWorker.RegisterWorkflowWithOptions(
 		workflowContext.HeadScan,
-		temporalworkflow.RegisterOptions{Name: workflow.HeadScanWorkflowName},
+		temporalworkflow.RegisterOptions{Name: indexer.HeadScanWorkflowName},
 	)
 	opsWorker.RegisterWorkflowWithOptions(
 		workflowContext.GapScanWorkflow,
-		temporalworkflow.RegisterOptions{Name: workflow.GapScanWorkflowName},
+		temporalworkflow.RegisterOptions{Name: indexer.GapScanWorkflowName},
 	)
 	opsWorker.RegisterWorkflowWithOptions(
 		workflowContext.SchedulerWorkflow,
-		temporalworkflow.RegisterOptions{Name: workflow.SchedulerWorkflowName},
+		temporalworkflow.RegisterOptions{Name: indexer.SchedulerWorkflowName},
+	)
+	opsWorker.RegisterWorkflowWithOptions(
+		workflowContext.CleanupStagingWorkflow,
+		temporalworkflow.RegisterOptions{Name: indexer.CleanupStagingWorkflowName},
 	)
 	opsWorker.RegisterWorkflow(workflowContext.CleanupStagingWorkflow)
 	opsWorker.RegisterActivity(activityContext.GetLatestHead)

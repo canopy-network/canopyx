@@ -23,6 +23,7 @@ resources:
   - node-3-deployment.yaml
   - node-3-service.yaml
 
-commonLabels:
-  app.kubernetes.io/component: blockchain
-  app.kubernetes.io/part-of: canopyx
+labels:
+  - pairs:
+      app.kubernetes.io/component: blockchain
+      app.kubernetes.io/part-of: canopyx

@@ -15,6 +15,10 @@ const (
 	EventTypeAutomaticFinishUnstaking EventType = "automatic-finish-unstaking"
 )
 
+func EventTypeAsStr(evt EventType) string {
+	return string(evt)
+}
+
 // EventMessage is the interface all event types implement.
 // This enables polymorphic handling of different event types while
 // extracting common queryable fields (address, amounts, success flags).

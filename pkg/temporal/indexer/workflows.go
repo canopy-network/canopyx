@@ -1,6 +1,6 @@
 package indexer
 
-// Workflow names for Temporal
+// Indexer Workflow names
 const (
 	IndexBlockWorkflowName     = "IndexBlockWorkflow"
 	HeadScanWorkflowName       = "HeadScanWorkflow"

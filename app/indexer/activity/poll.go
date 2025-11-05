@@ -20,27 +20,26 @@ import (
 //
 // This means we snapshot the current poll state at each height, even if it hasn't changed.
 // This is a necessary architectural exception due to RPC endpoint limitations.
-func (c *Context) IndexPoll(ctx context.Context, in types.IndexPollInput) (types.IndexPollOutput, error) {
+func (ac *Context) IndexPoll(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexPollOutput, error) {
 	start := time.Now()
 
 	// Get chain configuration
-	ch, err := c.AdminDB.GetChain(ctx, in.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexPollOutput{}, err
+		return types.ActivityIndexPollOutput{}, err
 	}
 
 	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := c.NewChainDb(ctx, in.ChainID)
+	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
 	if chainDbErr != nil {
-		return types.IndexPollOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
+		return types.ActivityIndexPollOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
 	// Fetch current poll state from RPC
 	// NOTE: This endpoint does NOT support height parameter - always returns current state
-	cli := c.rpcClient(ch.RPCEndpoints)
 	rpcPoll, err := cli.Poll(ctx)
 	if err != nil {
-		return types.IndexPollOutput{}, err
+		return types.ActivityIndexPollOutput{}, err
 	}
 
 	// Convert RPC poll results to database models
@@ -76,18 +75,18 @@ func (c *Context) IndexPoll(ctx context.Context, in types.IndexPollInput) (types
 	}
 
 	numProposals := uint32(len(snapshots))
-	c.Logger.Debug("IndexPoll fetched from RPC",
+	ac.Logger.Debug("IndexPoll fetched from RPC",
 		zap.Uint64("height", in.Height),
 		zap.Uint32("numProposals", numProposals))
 
-	// Insert poll snapshots to staging table (two-phase commit pattern)
+	// Insert poll snapshots to the staging table (two-phase commit pattern)
 	// Note: This may be an empty slice if no active proposals, which is valid
 	if err := chainDb.InsertPollSnapshotsStaging(ctx, snapshots); err != nil {
-		return types.IndexPollOutput{}, err
+		return types.ActivityIndexPollOutput{}, err
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.IndexPollOutput{
+	return types.ActivityIndexPollOutput{
 		NumProposals: numProposals,
 		DurationMs:   durationMs,
 	}, nil

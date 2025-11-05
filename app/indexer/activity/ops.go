@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/canopy-network/canopyx/app/indexer/utils"
 	"sync/atomic"
 	"time"
 
@@ -27,69 +28,68 @@ type HeadResult struct {
 
 // PrepareIndexBlock determines whether a block needs reindexing and performs cleanup if required.
 // Returns output containing skip flag and execution duration in milliseconds.
-func (c *Context) PrepareIndexBlock(ctx context.Context, in types.IndexBlockInput) (types.PrepareIndexBlockOutput, error) {
+func (ac *Context) PrepareIndexBlock(ctx context.Context, in types.ActivityIndexBlockInput) (types.ActivityPrepareIndexBlockOutput, error) {
 	start := time.Now()
 
-	chainDb, err := c.NewChainDb(ctx, in.ChainID)
+	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
 	if err != nil {
-		return types.PrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
+		return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
 	}
 
 	exists, err := chainDb.HasBlock(ctx, in.Height)
 	if err != nil {
-		return types.PrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("block_lookup_failed", "chain_db_error", err)
+		return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("block_lookup_failed", "chain_db_error", err)
 	}
 
 	if !in.Reindex && exists {
 		durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-		return types.PrepareIndexBlockOutput{Skip: true, DurationMs: durationMs}, nil
+		return types.ActivityPrepareIndexBlockOutput{Skip: true, DurationMs: durationMs}, nil
 	}
 
 	if in.Reindex {
 		if err := chainDb.DeleteTransactions(ctx, in.Height); err != nil {
-			return types.PrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("delete_transactions_failed", "chain_db_error", err)
+			return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("delete_transactions_failed", "chain_db_error", err)
 		}
 		if err := chainDb.DeleteBlock(ctx, in.Height); err != nil {
-			return types.PrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("delete_block_failed", "chain_db_error", err)
+			return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("delete_block_failed", "chain_db_error", err)
 		}
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.PrepareIndexBlockOutput{Skip: false, DurationMs: durationMs}, nil
+	return types.ActivityPrepareIndexBlockOutput{Skip: false, DurationMs: durationMs}, nil
 }
 
 // GetLastIndexed returns the last indexed block height for the given chain.
-func (c *Context) GetLastIndexed(ctx context.Context, in *types.ChainIdInput) (uint64, error) {
-	return c.AdminDB.LastIndexed(ctx, in.ChainID)
+func (ac *Context) GetLastIndexed(ctx context.Context) (uint64, error) {
+	return ac.AdminDB.LastIndexed(ctx, ac.ChainID)
 }
 
 // GetLatestHead returns the latest block height for the given chain by hitting RPC endpoints.
 // It also updates the RPC health status in the database based on the success/failure of the RPC call.
 // NOTE: /v1/height may return blocks before they're ready, causing IndexBlock workflows to hang.
 // We verify block availability by attempting to fetch the block. If unavailable, we return head-1.
-func (c *Context) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (uint64, error) {
+func (ac *Context) GetLatestHead(ctx context.Context) (uint64, error) {
 	logger := activity.GetLogger(ctx)
 
-	ch, err := c.AdminDB.GetChain(ctx, in.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
 		return 0, err
 	}
 
-	cli := c.rpcClient(ch.RPCEndpoints)
 	head, err := cli.ChainHead(ctx)
 
 	// Update RPC health status based on the result
 	if err != nil {
 		// RPC call failed - mark as unreachable
-		healthErr := c.AdminDB.UpdateRPCHealth(
+		healthErr := ac.AdminDB.UpdateRPCHealth(
 			ctx,
-			in.ChainID,
+			ac.ChainID,
 			"unreachable",
 			fmt.Sprintf("RPC endpoints failed x: %v", err),
 		)
 		if healthErr != nil {
 			logger.Warn("failed to update RPC health status",
-				zap.Uint64("chain_id", in.ChainID),
+				zap.Uint64("chain_id", ac.ChainID),
 				zap.Error(healthErr),
 			)
 		}
@@ -103,7 +103,7 @@ func (c *Context) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (ui
 		if err != nil {
 			// Head block not available yet, use head-1 instead
 			logger.Debug("Head block not yet available, using head-1",
-				zap.Uint64("chain_id", in.ChainID),
+				zap.Uint64("chain_id", ac.ChainID),
 				zap.Uint64("reported_head", head),
 				zap.Uint64("adjusted_head", head-1),
 				zap.Error(err),
@@ -113,15 +113,15 @@ func (c *Context) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (ui
 	}
 
 	// RPC call succeeded - mark as healthy
-	healthErr := c.AdminDB.UpdateRPCHealth(
+	healthErr := ac.AdminDB.UpdateRPCHealth(
 		ctx,
-		in.ChainID,
+		ac.ChainID,
 		"healthy",
 		fmt.Sprintf("RPC endpoints responding, head at block %d", head),
 	)
 	if healthErr != nil {
 		logger.Warn("failed to update RPC health status",
-			zap.Uint64("chain_id", in.ChainID),
+			zap.Uint64("chain_id", ac.ChainID),
 			zap.Error(healthErr),
 		)
 	}
@@ -130,19 +130,19 @@ func (c *Context) GetLatestHead(ctx context.Context, in *types.ChainIdInput) (ui
 }
 
 // FindGaps identifies and retrieves missing height ranges (gaps) in the indexing progress for a chain.
-func (c *Context) FindGaps(ctx context.Context, in *types.ChainIdInput) ([]adminmodels.Gap, error) {
-	return c.AdminDB.FindGaps(ctx, in.ChainID)
+func (ac *Context) FindGaps(ctx context.Context) ([]adminmodels.Gap, error) {
+	return ac.AdminDB.FindGaps(ctx, ac.ChainID)
 }
 
 // StartIndexWorkflow starts (or resumes) a top-level indexing workflow for a given height.
 // Routes workflows to either the live or historical queue based on block age.
 // NOTE: This is a local activity, so it accepts a value type (not pointer) for proper serialization.
-func (c *Context) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInput) error {
+func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityIndexBlockInput) error {
 	logger := activity.GetLogger(ctx)
 	// TODO: ensure chain exists before triggering workflows.
 
 	// Get latest head to determine queue routing
-	latest, err := c.GetLatestHead(ctx, &types.ChainIdInput{ChainID: in.ChainID})
+	latest, err := ac.GetLatestHead(ctx)
 	if err != nil {
 		logger.Warn("Failed to get latest head for queue routing, using historical queue",
 			zap.Error(err),
@@ -152,15 +152,15 @@ func (c *Context) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInp
 
 	// Determine target queue based on block age
 	var taskQueue string
-	if types.IsLiveBlock(latest, in.Height) {
-		taskQueue = c.TemporalClient.GetIndexerLiveQueue(in.ChainID)
+	if utils.IsLiveBlock(latest, in.Height) {
+		taskQueue = ac.TemporalClient.GetIndexerLiveQueue(ac.ChainID)
 		logger.Debug("Routing to live queue",
 			zap.String("task_queue", taskQueue),
 			zap.Uint64("latest", latest),
 			zap.Uint64("height", in.Height),
 		)
 	} else {
-		taskQueue = c.TemporalClient.GetIndexerHistoricalQueue(in.ChainID)
+		taskQueue = ac.TemporalClient.GetIndexerHistoricalQueue(ac.ChainID)
 		logger.Debug("Routing to historical queue",
 			zap.String("task_queue", taskQueue),
 			zap.Uint64("latest", latest),
@@ -168,7 +168,7 @@ func (c *Context) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInp
 		)
 	}
 
-	wfID := c.TemporalClient.GetIndexBlockWorkflowId(in.ChainID, in.Height)
+	wfID := ac.TemporalClient.GetIndexBlockWorkflowId(ac.ChainID, in.Height)
 	options := client.StartWorkflowOptions{
 		ID:        wfID,
 		TaskQueue: taskQueue, // UPDATED: Dynamic queue selection based on block age
@@ -183,7 +183,7 @@ func (c *Context) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInp
 		options.Priority = sdktemporal.Priority{PriorityKey: in.PriorityKey}
 	}
 
-	_, err = c.TemporalClient.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", in)
+	_, err = ac.TemporalClient.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", in)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if errors.As(err, &alreadyStarted) {
@@ -198,13 +198,13 @@ func (c *Context) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInp
 // IsSchedulerWorkflowRunning checks if the SchedulerWorkflow is currently running for a given chain.
 // This activity uses Temporal's DescribeWorkflowExecution API to check the workflow status.
 // Returns true if the workflow is running, false otherwise.
-func (c *Context) IsSchedulerWorkflowRunning(ctx context.Context, in *types.ChainIdInput) (bool, error) {
+func (ac *Context) IsSchedulerWorkflowRunning(ctx context.Context) (bool, error) {
 	logger := activity.GetLogger(ctx)
 
-	wfID := c.TemporalClient.GetSchedulerWorkflowID(in.ChainID)
+	wfID := ac.TemporalClient.GetSchedulerWorkflowID(ac.ChainID)
 
 	// Query the workflow execution status
-	desc, err := c.TemporalClient.TClient.DescribeWorkflowExecution(ctx, wfID, "")
+	desc, err := ac.TemporalClient.TClient.DescribeWorkflowExecution(ctx, wfID, "")
 	if err != nil {
 		// If workflow not found, it's not running
 		var notFound *serviceerror.NotFound
@@ -212,7 +212,7 @@ func (c *Context) IsSchedulerWorkflowRunning(ctx context.Context, in *types.Chai
 			return false, nil
 		}
 		logger.Warn("failed to describe scheduler workflow",
-			zap.Uint64("chain_id", in.ChainID),
+			zap.Uint64("chain_id", ac.ChainID),
 			zap.String("workflow_id", wfID),
 			zap.Error(err),
 		)
@@ -229,7 +229,7 @@ func (c *Context) IsSchedulerWorkflowRunning(ctx context.Context, in *types.Chai
 	isRunning := workflowInfo.CloseTime == nil
 
 	logger.Debug("Scheduler workflow status checked",
-		"chain_id", in.ChainID,
+		"chain_id", ac.ChainID,
 		"workflow_id", wfID,
 		"is_running", isRunning,
 	)
@@ -242,12 +242,12 @@ func (c *Context) IsSchedulerWorkflowRunning(ctx context.Context, in *types.Chai
 // Splits batches that cross the live/historical boundary.
 // This activity reduces Temporal API overhead by batching workflow start calls.
 // Returns summary of scheduled/failed workflows and execution duration.
-func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchScheduleInput) (types.BatchScheduleOutput, error) {
+func (ac *Context) StartIndexWorkflowBatch(ctx context.Context, in types.ActivityBatchScheduleInput) (types.ActivityBatchScheduleOutput, error) {
 	logger := activity.GetLogger(ctx)
 	start := time.Now()
 
 	logger.Info("Starting batch workflow scheduling",
-		zap.Uint64("chain_id", in.ChainID),
+		zap.Uint64("chain_id", ac.ChainID),
 		zap.Uint64("start_height", in.StartHeight),
 		zap.Uint64("end_height", in.EndHeight),
 		zap.Int("batch_size", int(in.EndHeight-in.StartHeight+1)),
@@ -258,14 +258,14 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 	if totalHeights <= 0 {
 		durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 		logger.Info("Batch workflow scheduling completed",
-			zap.Uint64("chain_id", in.ChainID),
+			zap.Uint64("chain_id", ac.ChainID),
 			zap.Int("scheduled", 0),
 			zap.Int("failed", 0),
 			zap.Float64("duration_ms", durationMs),
 			zap.Float64("workflows_per_sec", 0),
 		)
 
-		return types.BatchScheduleOutput{
+		return types.ActivityBatchScheduleOutput{
 			Scheduled:  0,
 			Failed:     0,
 			DurationMs: durationMs,
@@ -273,7 +273,7 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 	}
 
 	// Get latest head to determine queue routing
-	latest, err := c.GetLatestHead(ctx, &types.ChainIdInput{ChainID: in.ChainID})
+	latest, err := ac.GetLatestHead(ctx)
 	if err != nil {
 		logger.Warn("Failed to get latest head for batch routing, using historical queue",
 			zap.Error(err),
@@ -282,8 +282,8 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 	}
 
 	// Determine if this batch is entirely live, entirely historical, or mixed
-	batchIsLive := types.IsLiveBlock(latest, in.StartHeight) && types.IsLiveBlock(latest, in.EndHeight)
-	batchIsHistorical := !types.IsLiveBlock(latest, in.StartHeight) && !types.IsLiveBlock(latest, in.EndHeight)
+	batchIsLive := utils.IsLiveBlock(latest, in.StartHeight) && utils.IsLiveBlock(latest, in.EndHeight)
+	batchIsHistorical := !utils.IsLiveBlock(latest, in.StartHeight) && !utils.IsLiveBlock(latest, in.EndHeight)
 
 	// Handle mixed batches - split at the boundary
 	if !batchIsLive && !batchIsHistorical {
@@ -295,8 +295,8 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 
 		// Find the boundary: latest - LiveBlockThreshold
 		var boundary uint64
-		if latest > types.LiveBlockThreshold {
-			boundary = latest - types.LiveBlockThreshold
+		if latest > utils.LiveBlockThreshold {
+			boundary = latest - utils.LiveBlockThreshold
 		} else {
 			boundary = 0
 		}
@@ -310,8 +310,7 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 				histEnd = in.EndHeight
 			}
 
-			histBatch := types.BatchScheduleInput{
-				ChainID:     in.ChainID,
+			histBatch := types.ActivityBatchScheduleInput{
 				StartHeight: in.StartHeight,
 				EndHeight:   histEnd,
 				PriorityKey: in.PriorityKey,
@@ -323,7 +322,7 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 				zap.Int("count", int(histBatch.EndHeight-histBatch.StartHeight+1)),
 			)
 
-			histResult, err := c.scheduleBatchToQueue(ctx, histBatch, c.TemporalClient.GetIndexerHistoricalQueue(in.ChainID))
+			histResult, err := ac.scheduleBatchToQueue(ctx, histBatch, ac.TemporalClient.GetIndexerHistoricalQueue(ac.ChainID))
 			if err != nil {
 				logger.Error("Failed to schedule historical portion", zap.Error(err))
 			} else {
@@ -339,8 +338,7 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 				liveStart = in.StartHeight
 			}
 
-			liveBatch := types.BatchScheduleInput{
-				ChainID:     in.ChainID,
+			liveBatch := types.ActivityBatchScheduleInput{
 				StartHeight: liveStart,
 				EndHeight:   in.EndHeight,
 				PriorityKey: in.PriorityKey,
@@ -352,7 +350,7 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 				zap.Int("count", int(liveBatch.EndHeight-liveBatch.StartHeight+1)),
 			)
 
-			liveResult, err := c.scheduleBatchToQueue(ctx, liveBatch, c.TemporalClient.GetIndexerLiveQueue(in.ChainID))
+			liveResult, err := ac.scheduleBatchToQueue(ctx, liveBatch, ac.TemporalClient.GetIndexerLiveQueue(ac.ChainID))
 			if err != nil {
 				logger.Error("Failed to schedule live portion", zap.Error(err))
 			} else {
@@ -365,13 +363,13 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 
 		overallDuration := float64(time.Since(start).Microseconds()) / 1000.0
 		logger.Info("Split batch workflow scheduling completed",
-			zap.Uint64("chain_id", in.ChainID),
+			zap.Uint64("chain_id", ac.ChainID),
 			zap.Int("total_scheduled", totalScheduled),
 			zap.Int("total_failed", totalFailed),
 			zap.Float64("overall_duration_ms", overallDuration),
 		)
 
-		return types.BatchScheduleOutput{
+		return types.ActivityBatchScheduleOutput{
 			Scheduled:  totalScheduled,
 			Failed:     totalFailed,
 			DurationMs: overallDuration,
@@ -381,14 +379,14 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 	// Single-queue batch (either entirely live or entirely historical)
 	var taskQueue string
 	if batchIsLive {
-		taskQueue = c.TemporalClient.GetIndexerLiveQueue(in.ChainID)
+		taskQueue = ac.TemporalClient.GetIndexerLiveQueue(ac.ChainID)
 		logger.Info("Batch routing to live queue",
 			zap.String("task_queue", taskQueue),
 			zap.Uint64("start", in.StartHeight),
 			zap.Uint64("end", in.EndHeight),
 		)
 	} else {
-		taskQueue = c.TemporalClient.GetIndexerHistoricalQueue(in.ChainID)
+		taskQueue = ac.TemporalClient.GetIndexerHistoricalQueue(ac.ChainID)
 		logger.Info("Batch routing to historical queue",
 			zap.String("task_queue", taskQueue),
 			zap.Uint64("start", in.StartHeight),
@@ -396,12 +394,12 @@ func (c *Context) StartIndexWorkflowBatch(ctx context.Context, in types.BatchSch
 		)
 	}
 
-	return c.scheduleBatchToQueue(ctx, in, taskQueue)
+	return ac.scheduleBatchToQueue(ctx, in, taskQueue)
 }
 
 // scheduleBatchToQueue is a helper function that schedules a batch of workflows to a specific queue.
 // This function contains the core batch scheduling logic extracted from StartIndexWorkflowBatch.
-func (c *Context) scheduleBatchToQueue(ctx context.Context, in types.BatchScheduleInput, taskQueue string) (types.BatchScheduleOutput, error) {
+func (ac *Context) scheduleBatchToQueue(ctx context.Context, in types.ActivityBatchScheduleInput, taskQueue string) (types.ActivityBatchScheduleOutput, error) {
 	logger := activity.GetLogger(ctx)
 	start := time.Now()
 
@@ -410,14 +408,14 @@ func (c *Context) scheduleBatchToQueue(ctx context.Context, in types.BatchSchedu
 
 	totalHeights := int(in.EndHeight - in.StartHeight + 1)
 	if totalHeights <= 0 {
-		return types.BatchScheduleOutput{
+		return types.ActivityBatchScheduleOutput{
 			Scheduled:  0,
 			Failed:     0,
 			DurationMs: 0,
 		}, nil
 	}
 
-	pool := c.schedulerBatchPool(totalHeights)
+	pool := ac.schedulerBatchPool(totalHeights)
 	group := pool.NewGroupContext(ctx)
 	groupCtx := group.Context()
 
@@ -429,7 +427,7 @@ func (c *Context) scheduleBatchToQueue(ctx context.Context, in types.BatchSchedu
 				return
 			}
 
-			wfID := c.TemporalClient.GetIndexBlockWorkflowId(in.ChainID, h)
+			wfID := ac.TemporalClient.GetIndexBlockWorkflowId(ac.ChainID, h)
 			options := client.StartWorkflowOptions{
 				ID:        wfID,
 				TaskQueue: taskQueue, // Use the provided task queue
@@ -444,8 +442,7 @@ func (c *Context) scheduleBatchToQueue(ctx context.Context, in types.BatchSchedu
 				options.Priority = sdktemporal.Priority{PriorityKey: in.PriorityKey}
 			}
 
-			_, err := c.TemporalClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.IndexBlockInput{
-				ChainID:     in.ChainID,
+			_, err := ac.TemporalClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
 				Height:      h,
 				PriorityKey: in.PriorityKey,
 			})
@@ -469,7 +466,7 @@ func (c *Context) scheduleBatchToQueue(ctx context.Context, in types.BatchSchedu
 
 	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
 		logger.Warn("batch scheduling group encountered error",
-			zap.Uint64("chain_id", in.ChainID),
+			zap.Uint64("chain_id", ac.ChainID),
 			zap.String("queue", taskQueue),
 			zap.Error(err),
 		)
@@ -484,13 +481,13 @@ func (c *Context) scheduleBatchToQueue(ctx context.Context, in types.BatchSchedu
 		rate = float64(totalProcessed) / (durationMs / 1000.0)
 	}
 
-	parallelism := c.SchedulerPoolSize()
+	parallelism := ac.SchedulerPoolSize()
 	if totalHeights < parallelism {
 		parallelism = totalHeights
 	}
 
 	logger.Info("Batch workflow scheduling to queue completed",
-		zap.Uint64("chain_id", in.ChainID),
+		zap.Uint64("chain_id", ac.ChainID),
 		zap.String("queue", taskQueue),
 		zap.Int("scheduled", scheduledValue),
 		zap.Int("failed", failedValue),
@@ -499,7 +496,7 @@ func (c *Context) scheduleBatchToQueue(ctx context.Context, in types.BatchSchedu
 		zap.Int("parallelism", parallelism),
 	)
 
-	return types.BatchScheduleOutput{
+	return types.ActivityBatchScheduleOutput{
 		Scheduled:  scheduledValue,
 		Failed:     failedValue,
 		DurationMs: durationMs,

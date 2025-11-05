@@ -34,19 +34,19 @@ import (
 // Created Height Tracking:
 // Holder creation heights are tracked via the dex_pool_points_created_height materialized view,
 // which automatically calculates MIN(height) for each (address, pool_id) pair.
-func (c *Context) IndexDexPoolPoints(ctx context.Context, in types.IndexDexPoolPointsInput) (types.IndexDexPoolPointsOutput, error) {
+func (ac *Context) IndexDexPoolPoints(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexDexPoolPointsOutput, error) {
 	start := time.Now()
 
 	// Get chain configuration
-	ch, err := c.AdminDB.GetChain(ctx, in.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexDexPoolPointsOutput{}, err
+		return types.ActivityIndexDexPoolPointsOutput{}, err
 	}
 
 	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := c.NewChainDb(ctx, in.ChainID)
+	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
 	if chainDbErr != nil {
-		return types.IndexDexPoolPointsOutput{}, temporal.NewApplicationErrorWithCause(
+		return types.ActivityIndexDexPoolPointsOutput{}, temporal.NewApplicationErrorWithCause(
 			"unable to acquire chain database",
 			"chain_db_error",
 			chainDbErr,
@@ -56,10 +56,9 @@ func (c *Context) IndexDexPoolPoints(ctx context.Context, in types.IndexDexPoolP
 	// Fetch all pools from RPC
 	// Note: This returns pools at the current chain head, not at the specific height
 	// Future improvement: Add height-based pool queries to RPC for true snapshot-on-change
-	cli := c.rpcClient(ch.RPCEndpoints)
 	rpcPools, err := cli.PoolsByHeight(ctx, in.Height)
 	if err != nil {
-		return types.IndexDexPoolPointsOutput{}, fmt.Errorf("fetch pools: %w", err)
+		return types.ActivityIndexDexPoolPointsOutput{}, fmt.Errorf("fetch pools: %w", err)
 	}
 
 	// Flatten pool points into individual holder snapshots
@@ -105,7 +104,7 @@ func (c *Context) IndexDexPoolPoints(ctx context.Context, in types.IndexDexPoolP
 
 	numHolders := uint32(len(holders))
 
-	c.Logger.Debug("IndexDexPoolPoints extracted from pools",
+	ac.Logger.Debug("IndexDexPoolPoints extracted from pools",
 		zap.Uint64("height", in.Height),
 		zap.Int("numPools", len(rpcPools)),
 		zap.Uint32("numHolders", numHolders))
@@ -113,12 +112,12 @@ func (c *Context) IndexDexPoolPoints(ctx context.Context, in types.IndexDexPoolP
 	// Insert pool points holders to staging table (two-phase commit pattern)
 	if len(holders) > 0 {
 		if err := chainDb.InsertDexPoolPointsByHolderStaging(ctx, holders); err != nil {
-			return types.IndexDexPoolPointsOutput{}, fmt.Errorf("insert pool points staging: %w", err)
+			return types.ActivityIndexDexPoolPointsOutput{}, fmt.Errorf("insert pool points staging: %w", err)
 		}
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.IndexDexPoolPointsOutput{
+	return types.ActivityIndexDexPoolPointsOutput{
 		NumHolders: numHolders,
 		DurationMs: durationMs,
 	}, nil

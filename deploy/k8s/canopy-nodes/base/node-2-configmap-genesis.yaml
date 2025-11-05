@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: canopy-node-2-genesis
+  name: node-2-genesis
   labels:
     app: canopy-node
     node-id: "2"
@@ -39,7 +39,7 @@ data:
           "committees": [
             1,2
           ],
-          "netAddress": "tcp://canopy-node-1.default.svc.cluster.local",
+          "netAddress": "tcp://node-1.default.svc.cluster.local",
           "stakedAmount": 1000000000,
           "output": "851e90eaef1fa27debaee2c2591503bdeec1d123"
         }

@@ -3,9 +3,10 @@ kind: Kustomization
 
 namespace: default
 
-bases:
+resources:
   - ../../base
 
 # Additional customizations for local development
-commonLabels:
-  environment: local
+labels:
+  - pairs:
+      environment: local

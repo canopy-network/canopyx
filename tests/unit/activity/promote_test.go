@@ -289,15 +289,15 @@ func TestPromoteData_Success(t *testing.T) {
 
 	// Create activity context
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: chainsDB,
+		Logger:  logger,
+		ChainDB: chainsDB,
 	}
 
 	// Setup expectations
 	mockChainStore.On("PromoteEntity", ctx, entities.Blocks, uint64(1000)).Return(nil)
 
 	// Test input
-	input := types.PromoteDataInput{
+	input := types.ActivityPromoteDataInput{
 		ChainID: "test-chain",
 		Entity:  "blocks",
 		Height:  1000,
@@ -322,12 +322,12 @@ func TestPromoteData_InvalidEntity(t *testing.T) {
 
 	// Create activity context
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: xsync.NewMap[string, chainstore.Store](),
+		Logger:  logger,
+		ChainDB: xsync.NewMap[string, chainstore.Store](),
 	}
 
 	// Test input with invalid entity
-	input := types.PromoteDataInput{
+	input := types.ActivityPromoteDataInput{
 		ChainID: "test-chain",
 		Entity:  "invalid_entity",
 		Height:  1000,
@@ -353,8 +353,8 @@ func TestPromoteData_DatabaseError(t *testing.T) {
 
 	// Create activity context
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: chainsDB,
+		Logger:  logger,
+		ChainDB: chainsDB,
 	}
 
 	// Setup expectations - promotion fails
@@ -362,7 +362,7 @@ func TestPromoteData_DatabaseError(t *testing.T) {
 	mockChainStore.On("PromoteEntity", ctx, entities.Blocks, uint64(1000)).Return(dbError)
 
 	// Test input
-	input := types.PromoteDataInput{
+	input := types.ActivityPromoteDataInput{
 		ChainID: "test-chain",
 		Entity:  "blocks",
 		Height:  1000,
@@ -385,12 +385,12 @@ func TestPromoteData_ChainNotFound(t *testing.T) {
 
 	// Create activity context with empty chains map
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: xsync.NewMap[string, chainstore.Store](),
+		Logger:  logger,
+		ChainDB: xsync.NewMap[string, chainstore.Store](),
 	}
 
 	// Test input
-	input := types.PromoteDataInput{
+	input := types.ActivityPromoteDataInput{
 		ChainID: "unknown-chain",
 		Entity:  "blocks",
 		Height:  1000,
@@ -416,15 +416,15 @@ func TestCleanPromotedData_Success(t *testing.T) {
 
 	// Create activity context
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: chainsDB,
+		Logger:  logger,
+		ChainDB: chainsDB,
 	}
 
 	// Setup expectations
 	mockChainStore.On("CleanEntityStaging", ctx, entities.Blocks, uint64(1000)).Return(nil)
 
 	// Test input
-	input := types.CleanPromotedDataInput{
+	input := types.ActivityCleanPromotedDataInput{
 		ChainID: "test-chain",
 		Entity:  "blocks",
 		Height:  1000,
@@ -449,12 +449,12 @@ func TestCleanPromotedData_InvalidEntity(t *testing.T) {
 
 	// Create activity context
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: xsync.NewMap[string, chainstore.Store](),
+		Logger:  logger,
+		ChainDB: xsync.NewMap[string, chainstore.Store](),
 	}
 
 	// Test input with invalid entity
-	input := types.CleanPromotedDataInput{
+	input := types.ActivityCleanPromotedDataInput{
 		ChainID: "test-chain",
 		Entity:  "invalid_entity",
 		Height:  1000,
@@ -480,8 +480,8 @@ func TestCleanPromotedData_NonCriticalFailure(t *testing.T) {
 
 	// Create activity context
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: chainsDB,
+		Logger:  logger,
+		ChainDB: chainsDB,
 	}
 
 	// Setup expectations - cleanup fails
@@ -489,7 +489,7 @@ func TestCleanPromotedData_NonCriticalFailure(t *testing.T) {
 	mockChainStore.On("CleanEntityStaging", ctx, entities.Blocks, uint64(1000)).Return(cleanupError)
 
 	// Test input
-	input := types.CleanPromotedDataInput{
+	input := types.ActivityCleanPromotedDataInput{
 		ChainID: "test-chain",
 		Entity:  "blocks",
 		Height:  1000,
@@ -522,15 +522,15 @@ func TestPromoteData_AllEntities(t *testing.T) {
 
 			// Create activity context
 			activityCtx := &activity.Context{
-				Logger:   logger,
-				ChainsDB: chainsDB,
+				Logger:  logger,
+				ChainDB: chainsDB,
 			}
 
 			// Setup expectations
 			mockChainStore.On("PromoteEntity", ctx, entity, uint64(2000)).Return(nil)
 
 			// Test input
-			input := types.PromoteDataInput{
+			input := types.ActivityPromoteDataInput{
 				ChainID: "test-chain",
 				Entity:  entity.String(),
 				Height:  2000,
@@ -564,15 +564,15 @@ func TestCleanPromotedData_AllEntities(t *testing.T) {
 
 			// Create activity context
 			activityCtx := &activity.Context{
-				Logger:   logger,
-				ChainsDB: chainsDB,
+				Logger:  logger,
+				ChainDB: chainsDB,
 			}
 
 			// Setup expectations
 			mockChainStore.On("CleanEntityStaging", ctx, entity, uint64(3000)).Return(nil)
 
 			// Test input
-			input := types.CleanPromotedDataInput{
+			input := types.ActivityCleanPromotedDataInput{
 				ChainID: "test-chain",
 				Entity:  entity.String(),
 				Height:  3000,
@@ -604,14 +604,14 @@ func BenchmarkPromoteData(b *testing.B) {
 
 	// Create activity context
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: chainsDB,
+		Logger:  logger,
+		ChainDB: chainsDB,
 	}
 
 	// Setup expectations
 	mockChainStore.On("PromoteEntity", ctx, entities.Blocks, mock.AnythingOfType("uint64")).Return(nil)
 
-	input := types.PromoteDataInput{
+	input := types.ActivityPromoteDataInput{
 		ChainID: "test-chain",
 		Entity:  "blocks",
 		Height:  1000,
@@ -636,14 +636,14 @@ func BenchmarkCleanPromotedData(b *testing.B) {
 
 	// Create activity context
 	activityCtx := &activity.Context{
-		Logger:   logger,
-		ChainsDB: chainsDB,
+		Logger:  logger,
+		ChainDB: chainsDB,
 	}
 
 	// Setup expectations
 	mockChainStore.On("CleanEntityStaging", ctx, entities.Blocks, mock.AnythingOfType("uint64")).Return(nil)
 
-	input := types.CleanPromotedDataInput{
+	input := types.ActivityCleanPromotedDataInput{
 		ChainID: "test-chain",
 		Entity:  "blocks",
 		Height:  1000,

@@ -16,34 +16,31 @@ import (
 //
 // Core Algorithm:
 // 1. Parallel RPC fetch: Fetch validators and non-signers simultaneously using goroutines
-// 2. Special case: If H=1, use empty previous state (genesis validators)
-// 3. Compare: Build map of previous validators, iterate current validators
-// 4. Detect changes: If state differs (stake, status, committees, etc.), create snapshot
+// 2. Special case: If H=1, use an empty previous state (genesis validators)
+// 3. Compare: Build a map of previous validators, iterate current validators
+// 4. Detect changes: If the state differs (stake, status, committees, etc.), create snapshot
 // 5. Correlate events: Match EventAutoPause, EventAutoBeginUnstaking, EventFinishUnstaking
 // 6. Build signing info: Merge validator info with non-signer data
-// 7. Insert to staging: Batch insert all changed validators and signing info
+// 7. Insert to staging: Batch inserts all changed validators and signing info
 //
 // Performance:
 // - Parallel RPC fetching reduces latency by ~50% (2 concurrent requests)
 // - Only stores changed validators (significant storage savings vs full snapshots)
 // - Event correlation provides context for validator status changes
-func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidatorsInput) (types.IndexValidatorsOutput, error) {
+func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityIndexAtHeight) (types.ActivityIndexValidatorsOutput, error) {
 	start := time.Now()
 
 	// Get chain metadata
-	ch, err := c.AdminDB.GetChain(ctx, input.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexValidatorsOutput{}, err
+		return types.ActivityIndexValidatorsOutput{}, err
 	}
 
 	// Get chain database
-	chainDb, err := c.NewChainDb(ctx, input.ChainID)
+	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
 	if err != nil {
-		return types.IndexValidatorsOutput{}, err
+		return types.ActivityIndexValidatorsOutput{}, err
 	}
-
-	// Create RPC client
-	cli := c.rpcClient(ch.RPCEndpoints)
 
 	// Parallel RPC fetch using goroutines for performance
 	var (
@@ -102,20 +99,20 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 
 	// Check for errors
 	if currentErr != nil {
-		return types.IndexValidatorsOutput{}, fmt.Errorf("fetch current validators at height %d: %w", input.Height, currentErr)
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch current validators at height %d: %w", input.Height, currentErr)
 	}
 	if previousErr != nil && input.Height > 1 {
-		return types.IndexValidatorsOutput{}, fmt.Errorf("fetch previous validators at height %d: %w", input.Height-1, previousErr)
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch previous validators at height %d: %w", input.Height-1, previousErr)
 	}
 	// Non-signer errors are non-fatal - the endpoint may not be available
 	if nonSignersErr != nil {
-		c.Logger.Debug("Failed to fetch current non-signers (endpoint may not be available)",
+		ac.Logger.Debug("Failed to fetch current non-signers (endpoint may not be available)",
 			zap.Uint64("height", input.Height),
 			zap.Error(nonSignersErr))
 		currentNonSigners = make([]*rpc.RpcNonSigner, 0)
 	}
 	if prevNonSignersErr != nil {
-		c.Logger.Debug("Failed to fetch previous non-signers (endpoint may not be available)",
+		ac.Logger.Debug("Failed to fetch previous non-signers (endpoint may not be available)",
 			zap.Uint64("height", input.Height-1),
 			zap.Error(prevNonSignersErr))
 		previousNonSigners = make([]*rpc.RpcNonSigner, 0)
@@ -140,41 +137,45 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 
 	// Query validator lifecycle events from staging table (event-driven state tracking)
 	// These events define state transitions in the validator lifecycle:
-	// - EventAutoPause: validator transitions to paused state
-	// - EventAutoBeginUnstaking: validator transitions to unstaking state
-	// - EventFinishUnstaking: validator deleted (unstaked)
-	// - EventSlash: validator slashed (affects staked amount)
-	// - EventReward: validator rewarded (informational, doesn't change state)
-	validatorEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height,
-		"EventAutoPause",
-		"EventAutoBeginUnstaking",
-		"EventFinishUnstaking",
-		"EventSlash",
-		"EventReward",
+	// - EventTypeAutomaticPause: validator transitions to paused state
+	// - EventTypeAutomaticBeginUnstaking: validator transitions to unstaking state
+	// - EventTypeAutomaticFinishUnstaking: validator deleted (unstaked)
+	// - EventTypeSlash: validator slashed (affects staked amount)
+	// - EventTypeReward: validator rewarded (informational, doesn't change state)
+	validatorEvents, err := chainDb.GetEventsByTypeAndHeight(
+		ctx, input.Height, true,
+		rpc.EventTypeAsStr(rpc.EventTypeReward),
+		rpc.EventTypeAsStr(rpc.EventTypeSlash),
+		rpc.EventTypeAsStr(rpc.EventTypeAutomaticPause),
+		rpc.EventTypeAsStr(rpc.EventTypeAutomaticBeginUnstaking),
+		rpc.EventTypeAsStr(rpc.EventTypeAutomaticFinishUnstaking),
 	)
 	if err != nil {
-		return types.IndexValidatorsOutput{}, fmt.Errorf("query validator events at height %d: %w", input.Height, err)
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("query validator events at height %d: %w", input.Height, err)
 	}
 
 	// Build event maps by validator address for O(1) lookup
+	rewardEvents := make(map[string]*indexer.Event)
 	pauseEvents := make(map[string]*indexer.Event)
 	beginUnstakingEvents := make(map[string]*indexer.Event)
 	finishUnstakingEvents := make(map[string]*indexer.Event)
 	slashEvents := make(map[string]*indexer.Event)
 
 	for _, event := range validatorEvents {
-		// Events have Address field for the validator address
+		// Events have an Address field for the validator address
 		addr := event.Address
 
 		switch event.EventType {
-		case "EventAutoPause":
+		case "automatic-pause":
 			pauseEvents[addr] = event
-		case "EventAutoBeginUnstaking":
+		case "automatic-begin-unstaking":
 			beginUnstakingEvents[addr] = event
-		case "EventFinishUnstaking":
+		case "automatic-finish-unstaking":
 			finishUnstakingEvents[addr] = event
-		case "EventSlash":
+		case "slash":
 			slashEvents[addr] = event
+		case "reward":
+			rewardEvents[addr] = event
 		}
 	}
 
@@ -197,6 +198,10 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 			hasEvent = true
 		}
 		if _, hasSlash := slashEvents[curr.Address]; hasSlash {
+			changed = true
+			hasEvent = true
+		}
+		if _, hasReward := rewardEvents[curr.Address]; hasReward {
 			changed = true
 			hasEvent = true
 		}
@@ -308,26 +313,26 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 	// Insert to staging tables
 	if len(changedValidators) > 0 {
 		if err := chainDb.InsertValidatorsStaging(ctx, changedValidators); err != nil {
-			return types.IndexValidatorsOutput{}, fmt.Errorf("insert validators staging: %w", err)
+			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validators staging: %w", err)
 		}
 	}
 
 	if len(changedSigningInfos) > 0 {
 		if err := chainDb.InsertValidatorSigningInfoStaging(ctx, changedSigningInfos); err != nil {
-			return types.IndexValidatorsOutput{}, fmt.Errorf("insert validator signing info staging: %w", err)
+			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validator signing info staging: %w", err)
 		}
 	}
 
 	if len(committeeValidators) > 0 {
 		if err := chainDb.InsertCommitteeValidatorsStaging(ctx, committeeValidators); err != nil {
-			return types.IndexValidatorsOutput{}, fmt.Errorf("insert committee validators staging: %w", err)
+			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert committee validators staging: %w", err)
 		}
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 
-	c.Logger.Info("Indexed validators",
-		zap.Uint64("chainId", input.ChainID),
+	ac.Logger.Info("Indexed validators",
+		zap.Uint64("chainId", ac.ChainID),
 		zap.Uint64("height", input.Height),
 		zap.Int("totalValidators", len(currentValidators)),
 		zap.Int("changedValidators", len(changedValidators)),
@@ -338,9 +343,10 @@ func (c *Context) IndexValidators(ctx context.Context, input types.IndexValidato
 		zap.Int("beginUnstakingEvents", len(beginUnstakingEvents)),
 		zap.Int("finishUnstakingEvents", len(finishUnstakingEvents)),
 		zap.Int("slashEvents", len(slashEvents)),
+		zap.Int("rewardEvents", len(rewardEvents)),
 		zap.Float64("durationMs", durationMs))
 
-	return types.IndexValidatorsOutput{
+	return types.ActivityIndexValidatorsOutput{
 		NumValidators:   uint32(len(changedValidators)),
 		NumSigningInfos: uint32(len(changedSigningInfos)),
 		DurationMs:      durationMs,

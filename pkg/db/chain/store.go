@@ -46,7 +46,7 @@ type Store interface {
 	HasBlock(ctx context.Context, height uint64) (bool, error)
 	GetGenesisData(ctx context.Context, height uint64) (string, error)
 	HasGenesis(ctx context.Context, height uint64) (bool, error)
-	GetEventsByTypeAndHeight(ctx context.Context, height uint64, eventTypes ...string) ([]*indexermodels.Event, error)
+	GetEventsByTypeAndHeight(ctx context.Context, height uint64, staging bool, eventTypes ...string) ([]*indexermodels.Event, error)
 
 	// --- Delete entities
 

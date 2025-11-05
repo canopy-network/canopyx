@@ -14,25 +14,24 @@ import (
 
 // IndexTransactions indexes transactions for a given block.
 // Returns output containing the number of indexed transactions, counts by type, and execution duration in milliseconds.
-func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransactionsInput) (types.IndexTransactionsOutput, error) {
+func (ac *Context) IndexTransactions(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexTransactionsOutput, error) {
 	start := time.Now()
 
-	ch, err := c.AdminDB.GetChain(ctx, in.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexTransactionsOutput{}, err
+		return types.ActivityIndexTransactionsOutput{}, err
 	}
 
 	// Acquire (or ping) the chain DB just to validate it exists.
-	chainDb, chainDbErr := c.NewChainDb(ctx, in.ChainID)
+	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
 	if chainDbErr != nil {
-		return types.IndexTransactionsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
+		return types.ActivityIndexTransactionsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	// Fetch and parse transactions from RPC (single-table design)
-	cli := c.rpcClient(ch.RPCEndpoints)
+	// Fetch and parse transactions from RPC
 	rpcTxs, err := cli.TxsByHeight(ctx, in.Height)
 	if err != nil {
-		return types.IndexTransactionsOutput{}, err
+		return types.ActivityIndexTransactionsOutput{}, err
 	}
 
 	// Convert RPC transactions to indexer models
@@ -41,9 +40,9 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransacti
 		tx, err := transform.Transaction(rpcTx)
 		if err != nil {
 			// Fail fast - conversion errors mean corrupted/incomplete data
-			return types.IndexTransactionsOutput{}, fmt.Errorf("convert transaction at height %d, hash %s: %w", in.Height, rpcTx.TxHash, err)
+			return types.ActivityIndexTransactionsOutput{}, fmt.Errorf("convert transaction at height %d, hash %s: %w", in.Height, rpcTx.TxHash, err)
 		}
-		// Populate HeightTime field using the block timestamp
+		// Populate the HeightTime field using the block timestamp
 		tx.HeightTime = in.BlockTime
 		txs = append(txs, tx)
 	}
@@ -55,18 +54,18 @@ func (c *Context) IndexTransactions(ctx context.Context, in types.IndexTransacti
 	}
 
 	numTxs := uint32(len(txs))
-	c.Logger.Debug("IndexTransactions fetched from RPC",
+	ac.Logger.Debug("IndexTransactions fetched from RPC",
 		zap.Uint64("height", in.Height),
 		zap.Uint32("numTxs", numTxs),
 		zap.Any("txCountsByType", txCountsByType))
 
 	// Insert transactions to staging table (two-phase commit pattern)
 	if err := chainDb.InsertTransactionsStaging(ctx, txs); err != nil {
-		return types.IndexTransactionsOutput{}, err
+		return types.ActivityIndexTransactionsOutput{}, err
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.IndexTransactionsOutput{
+	return types.ActivityIndexTransactionsOutput{
 		NumTxs:         numTxs,
 		TxCountsByType: txCountsByType,
 		DurationMs:     durationMs,

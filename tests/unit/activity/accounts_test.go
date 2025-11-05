@@ -265,7 +265,7 @@ func (m *mockAccountsChainStore) GetOrderCreatedHeight(_ context.Context, orderI
 	return 0
 }
 
-func (m *mockAccountsChainStore) GetEventsByTypeAndHeight(ctx context.Context, height uint64, eventTypes ...string) ([]*indexermodels.Event, error) {
+func (m *mockAccountsChainStore) GetEventsByTypeAndHeight(ctx context.Context, height uint64, staging bool, eventTypes ...string) ([]*indexermodels.Event, error) {
 	return nil, nil
 }
 
@@ -526,7 +526,7 @@ func TestIndexAccounts_Success(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
 
@@ -546,7 +546,7 @@ func TestIndexAccounts_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get output
-	var output types.IndexAccountsOutput
+	var output types.ActivityIndexAccountsOutput
 	require.NoError(t, future.Get(&output))
 
 	// Assertions
@@ -589,7 +589,7 @@ func TestIndexAccounts_NoChanges(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
 
@@ -606,7 +606,7 @@ func TestIndexAccounts_NoChanges(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexAccounts, input)
 	require.NoError(t, err)
 
-	var output types.IndexAccountsOutput
+	var output types.ActivityIndexAccountsOutput
 	require.NoError(t, future.Get(&output))
 
 	// No accounts should be indexed since nothing changed
@@ -721,7 +721,7 @@ func TestIndexAccounts_RPCFailure(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
 
@@ -737,7 +737,7 @@ func TestIndexAccounts_RPCFailure(t *testing.T) {
 
 	future, execErr := env.ExecuteActivity(activityCtx.IndexAccounts, input)
 
-	var output types.IndexAccountsOutput
+	var output types.ActivityIndexAccountsOutput
 	var actErr error
 	if execErr != nil {
 		actErr = execErr
@@ -806,7 +806,7 @@ func TestIndexAccounts_LargeDataset(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &fakeRPCFactory{client: mockRPC},
 	}
 
@@ -824,7 +824,7 @@ func TestIndexAccounts_LargeDataset(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexAccounts, input)
 	require.NoError(t, err)
 
-	var output types.IndexAccountsOutput
+	var output types.ActivityIndexAccountsOutput
 	require.NoError(t, future.Get(&output))
 
 	elapsed := time.Since(start)

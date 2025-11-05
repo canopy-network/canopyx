@@ -344,9 +344,6 @@ go test -bench=. -count=10 ./...
 ```bash
 # See all test output
 go test -v ./tests/integration/indexer/
-
-# See ClickHouse container logs
-CHDEBUG=1 go test -v ./tests/integration/indexer/
 ```
 
 ### Run Single Test Repeatedly

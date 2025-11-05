@@ -2,12 +2,10 @@ package activity
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 	"sync"
 
 	"github.com/alitto/pond/v2"
-	"github.com/puzpuzpuz/xsync/v4"
 	"go.uber.org/zap"
 
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
@@ -18,10 +16,11 @@ import (
 )
 
 type Context struct {
-	Logger *zap.Logger
+	ChainID uint64
+	Logger  *zap.Logger
 	// Admin and per Chain DBs
-	AdminDB  adminstore.Store
-	ChainsDB *xsync.Map[string, chainstore.Store]
+	AdminDB adminstore.Store
+	ChainDB chainstore.Store
 	// For RPC calls to the blockchain
 	RPCFactory rpc.Factory
 	RPCOpts    rpc.Opts
@@ -36,46 +35,61 @@ type Context struct {
 	schedulerPoolSize       int
 }
 
-// NewChainDb returns a chain store instance for the provided chain ID.
-func (c *Context) NewChainDb(ctx context.Context, chainID uint64) (chainstore.Store, error) {
-	chainIDStr := fmt.Sprintf("%d", chainID)
-	if chainDb, ok := c.ChainsDB.Load(chainIDStr); ok {
-		// chainDb is already loaded
-		return chainDb, nil
+// GetChainDb return chain db or create it to return
+func (ac *Context) GetChainDb(ctx context.Context, chainID uint64) (chainstore.Store, error) {
+	if ac.ChainDB != nil {
+		return ac.ChainDB, nil
+
 	}
 
-	chainDB, chainDBErr := chainstore.New(ctx, c.Logger, chainID)
+	chainDB, chainDBErr := chainstore.New(ctx, ac.Logger, chainID)
 	if chainDBErr != nil {
 		return nil, chainDBErr
 	}
 
-	c.ChainsDB.Store(chainIDStr, chainDB)
+	ac.ChainDB = chainDB
 
-	return chainDB, nil
+	return ac.ChainDB, nil
+}
+
+// rpcClient creates and returns an RPC client using the provided endpoints and the context's RPCFactory or default factory.
+func (ac *Context) rpcClient(ctx context.Context) (rpc.Client, error) {
+	// Get chain metadata
+	ch, err := ac.AdminDB.GetChain(ctx, ac.ChainID)
+	if err != nil {
+		return nil, err
+	}
+
+	factory := ac.RPCFactory
+	if factory == nil {
+		factory = rpc.NewHTTPFactory(ac.RPCOpts)
+	}
+
+	return factory.NewClient(ch.RPCEndpoints), nil
 }
 
 // schedulerBatchPool returns a shared worker pool for batch scheduling activities.
 // Pool size defaults to four workers per CPU (with sensible caps) but can be overridden.
-func (c *Context) schedulerBatchPool(batchSize int) pond.Pool {
-	c.schedulerPoolOnce.Do(func() {
-		maxWorkers := SchedulerParallelism(c.SchedulerMaxParallelism)
-		c.schedulerPoolSize = maxWorkers
+func (ac *Context) schedulerBatchPool(batchSize int) pond.Pool {
+	ac.schedulerPoolOnce.Do(func() {
+		maxWorkers := SchedulerParallelism(ac.SchedulerMaxParallelism)
+		ac.schedulerPoolSize = maxWorkers
 		queueSize := SchedulerQueueSize(maxWorkers, batchSize)
-		c.schedulerPool = pond.NewPool(
+		ac.schedulerPool = pond.NewPool(
 			maxWorkers,
 			pond.WithQueueSize(queueSize),
 		)
 	})
 
-	return c.schedulerPool
+	return ac.schedulerPool
 }
 
 // SchedulerPoolSize exposes the configured pool size for logging purposes.
-func (c *Context) SchedulerPoolSize() int {
-	if c.schedulerPoolSize != 0 {
-		return c.schedulerPoolSize
+func (ac *Context) SchedulerPoolSize() int {
+	if ac.schedulerPoolSize != 0 {
+		return ac.schedulerPoolSize
 	}
-	return SchedulerParallelism(c.SchedulerMaxParallelism)
+	return SchedulerParallelism(ac.SchedulerMaxParallelism)
 }
 
 // SchedulerParallelism calculates the optimal parallelism for the scheduler pool.

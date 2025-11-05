@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
-	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.uber.org/zap"
 )
@@ -32,23 +32,20 @@ import (
 // - Parallel RPC fetching reduces latency by ~50% (2 concurrent requests)
 // - In-cluster RPC is fast (~500-800ms total for 200k accounts)
 // - Only stores changed accounts (20x storage savings vs full snapshots)
-func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsInput) (types.IndexAccountsOutput, error) {
+func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexAtHeight) (types.ActivityIndexAccountsOutput, error) {
 	start := time.Now()
 
-	// Get chain metadata
-	ch, err := c.AdminDB.GetChain(ctx, input.ChainID)
-	if err != nil {
-		return types.IndexAccountsOutput{}, err
+	// Create RPC client
+	cli, cliErr := ac.rpcClient(ctx)
+	if cliErr != nil {
+		return types.ActivityIndexAccountsOutput{}, cliErr
 	}
 
 	// Get chain database
-	chainDb, err := c.NewChainDb(ctx, input.ChainID)
+	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
 	if err != nil {
-		return types.IndexAccountsOutput{}, err
+		return types.ActivityIndexAccountsOutput{}, err
 	}
-
-	// Create RPC client
-	cli := c.rpcClient(ch.RPCEndpoints)
 
 	// Parallel RPC fetch using goroutines for performance
 	var (
@@ -86,10 +83,10 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 
 	// Check for errors
 	if currentErr != nil {
-		return types.IndexAccountsOutput{}, fmt.Errorf("fetch current accounts at height %d: %w", input.Height, currentErr)
+		return types.ActivityIndexAccountsOutput{}, fmt.Errorf("fetch current accounts at height %d: %w", input.Height, currentErr)
 	}
 	if previousErr != nil {
-		return types.IndexAccountsOutput{}, fmt.Errorf("fetch previous accounts at height %d: %w", input.Height-1, previousErr)
+		return types.ActivityIndexAccountsOutput{}, fmt.Errorf("fetch previous accounts at height %d: %w", input.Height-1, previousErr)
 	}
 
 	// Build previous state map for O(1) lookups
@@ -102,12 +99,12 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 	// These events provide context for account balance changes:
 	// - EventReward: Validator receives block rewards
 	// - EventSlash: Validator slashed for Byzantine behavior
-	accountEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height,
-		"EventReward",
-		"EventSlash",
+	accountEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height, true,
+		rpc.EventTypeAsStr(rpc.EventTypeReward),
+		rpc.EventTypeAsStr(rpc.EventTypeSlash),
 	)
 	if err != nil {
-		return types.IndexAccountsOutput{}, fmt.Errorf("query account events at height %d: %w", input.Height, err)
+		return types.ActivityIndexAccountsOutput{}, fmt.Errorf("query account events at height %d: %w", input.Height, err)
 	}
 
 	// Build event maps by address for O(1) lookup
@@ -145,14 +142,14 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 	// Insert to staging table
 	if len(changedAccounts) > 0 {
 		if err := chainDb.InsertAccountsStaging(ctx, changedAccounts); err != nil {
-			return types.IndexAccountsOutput{}, fmt.Errorf("insert accounts staging: %w", err)
+			return types.ActivityIndexAccountsOutput{}, fmt.Errorf("insert accounts staging: %w", err)
 		}
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 
-	c.Logger.Info("Indexed accounts",
-		zap.Uint64("chainId", input.ChainID),
+	ac.Logger.Info("Indexed accounts",
+		zap.Uint64("chainId", ac.ChainID),
 		zap.Uint64("height", input.Height),
 		zap.Int("totalAccounts", len(currentAccounts)),
 		zap.Int("changedAccounts", len(changedAccounts)),
@@ -160,29 +157,8 @@ func (c *Context) IndexAccounts(ctx context.Context, input types.IndexAccountsIn
 		zap.Int("slashEvents", len(slashEvents)),
 		zap.Float64("durationMs", durationMs))
 
-	return types.IndexAccountsOutput{
+	return types.ActivityIndexAccountsOutput{
 		NumAccounts: uint32(len(changedAccounts)),
 		DurationMs:  durationMs,
 	}, nil
 }
-
-// getGenesisAccounts reads accounts from the genesis cache in the database.
-// This is used when indexing height 1 to compare RPC(1) vs Genesis(0).
-// Currently unused but kept for potential future use.
-/*
-func (c *Context) getGenesisAccounts(ctx context.Context, chainDb chainstore.Store) ([]*rpc.Account, error) {
-	// Query genesis table for height 0
-	genesisData, err := chainDb.GetGenesisData(ctx, 0)
-	if err != nil {
-		return nil, fmt.Errorf("query genesis cache: %w", err)
-	}
-
-	// Unmarshal JSON
-	var genesis rpc.GenesisState
-	if err := json.Unmarshal([]byte(genesisData), &genesis); err != nil {
-		return nil, fmt.Errorf("unmarshal genesis JSON: %w", err)
-	}
-
-	return genesis.Accounts, nil
-}
-*/

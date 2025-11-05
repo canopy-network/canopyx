@@ -29,6 +29,9 @@ type Account struct {
 	// Balance (using uint64 to match the blockchain's native type)
 	Amount uint64 `ch:"amount" json:"amount"` // Account balance in uCNPY (micro-denomination)
 
+	Rewards uint64 `ch:"rewards" json:"rewards"`
+	Slashes uint64 `ch:"slashes" json:"slashes"`
+
 	// Version tracking - every balance change creates a new snapshot
 	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
 	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries

@@ -20,8 +20,32 @@
 #
 # production:  Production-like setup with replication and monitoring
 #              Best for: Performance testing, benchmarking, demo
-#              Resources: ~16GB RAM, 8+ CPU cores
+#              Resources: ~27GB RAM, ~11 CPU cores (fits on 16 core / 64GB machine)
+#              Note: Runs multiple replicas on a single node (pod anti-affinity disabled)
+#                    Perfect for single-node KIND clusters or shared dev servers
 profile: development
+
+# ==============================================================================
+# MODE SELECTION
+# ==============================================================================
+# Options: "local", "shared"
+#
+# local:   Local development mode with hot reloading
+#          - Next.js runs in dev mode (NODE_ENV=development)
+#          - Go services use live binary sync for instant updates
+#          - Indexer builds manually (on demand)
+#          Best for: Individual developers working on their laptops
+#
+# shared:  Shared development server mode (production-like builds)
+#          - Next.js runs optimized production build (NODE_ENV=production)
+#          - Go services require full rebuild (no hot reload)
+#          - Indexer builds automatically on code changes
+#          Best for: Team dev server where multiple people connect
+#
+# Recommended combinations:
+#   - Local laptop:      profile: development + mode: local
+#   - Shared dev server: profile: development + mode: shared
+mode: local
 
 # ==============================================================================
 # COMPONENT TOGGLES
@@ -161,47 +185,62 @@ resources:
       grafana_memory_limit: "512Mi"
 
   production:
+    # IMPORTANT: Optimized for single-node clusters with 16 cores / 64GB RAM
+    # Target: Stay under 28GB RAM and 12 cores to leave headroom for system
+    # All replicas run on same node (anti-affinity disabled)
+    #
+    # Estimated usage with this config:
+    #   Cassandra:       3 × 3GB   = 9GB   (3 cores)
+    #   Elasticsearch:   3 × 1.5GB = 4.5GB (3 cores)
+    #   ClickHouse:      1 × 4GB   = 4GB   (2 cores)
+    #   Temporal svcs:   3 × 1GB   = 3GB   (1.5 cores)
+    #   CanopyX svcs:              = 3GB   (2 cores)
+    #   Monitoring:                = 1.5GB (1 core)
+    #   System overhead:           = 2GB   (1 core)
+    #   --------------------------------
+    #   TOTAL:                    ~27GB   ~11.5 cores
+
     clickhouse:
-      cpu_limit: "4000m"
-      memory_limit: "8Gi"
-      cpu_request: "2000m"
-      memory_request: "4Gi"
+      cpu_limit: "2000m"
+      memory_limit: "4Gi"
+      cpu_request: "1000m"
+      memory_request: "2Gi"
 
     temporal:
       history_replicas: 3
       cassandra_replicas: 3
-      cassandra_heap_size: "16G"
-      cassandra_memory_limit: "24G"
+      cassandra_heap_size: "2G"        # Reduced from 16G
+      cassandra_memory_limit: "3G"     # Reduced from 24G (3 × 3GB = 9GB total)
       elasticsearch_replicas: 3
-      elasticsearch_memory_limit: "4Gi"
-      elasticsearch_cpu_limit: "4000m"
+      elasticsearch_memory_limit: "1536Mi"  # Reduced from 4Gi (3 × 1.5GB = 4.5GB total)
+      elasticsearch_cpu_limit: "1000m"       # Reduced from 4000m
 
     canopyx:
-      admin_cpu_limit: "2000m"
-      admin_memory_limit: "2Gi"
-      controller_cpu_limit: "2000m"
-      controller_memory_limit: "2Gi"
-      admin_web_cpu_limit: "1000m"
+      admin_cpu_limit: "1000m"
+      admin_memory_limit: "1Gi"
+      controller_cpu_limit: "1000m"
+      controller_memory_limit: "1Gi"
+      admin_web_cpu_limit: "500m"
       admin_web_memory_limit: "1Gi"
 
     indexer:
-      min_replicas: 3
-      max_replicas: 12
+      min_replicas: 1
+      max_replicas: 3
 
     monitoring:
       prometheus:
-        retention: "7d"
-        scrape_interval: "10s"
-        cpu_limit: "2000m"
-        memory_limit: "2Gi"
+        retention: "3d"              # Reduced from 7d
+        scrape_interval: "15s"       # Reduced from 10s
+        cpu_limit: "1000m"           # Reduced from 2000m
+        memory_limit: "1Gi"          # Reduced from 2Gi
       grafana:
         enabled: true
-        cpu_limit: "1000m"
-        memory_limit: "1Gi"
-      prometheus_cpu_limit: "2000m"
-      prometheus_memory_limit: "2Gi"
-      grafana_cpu_limit: "1000m"
-      grafana_memory_limit: "1Gi"
+        cpu_limit: "500m"            # Reduced from 1000m
+        memory_limit: "512Mi"        # Reduced from 1Gi
+      prometheus_cpu_limit: "1000m"
+      prometheus_memory_limit: "1Gi"
+      grafana_cpu_limit: "500m"
+      grafana_memory_limit: "512Mi"
 
 # ==============================================================================
 # PORT FORWARDING
@@ -285,12 +324,10 @@ chains: []
 env:
   admin:
     # LOG_LEVEL: "debug"           # Logging level: debug, info, warn, error
-    # CHDEBUG: "1"                 # ClickHouse debug: 0=off, 1=failed queries, 2=all queries
     # ADMIN_TOKEN: "devtoken"      # Admin API authentication token
 
   controller:
     # LOG_LEVEL: "debug"           # Logging level: debug, info, warn, error
-    # CHDEBUG: "1"                 # ClickHouse debug: 0=off, 1=failed queries, 2=all queries
     # INDEXER_CPU: "2000m"         # CPU limit for spawned indexer pods
     # INDEXER_MEM: "2Gi"           # Memory limit for spawned indexer pods
     # INDEXER_HPA_MIN: "1"         # Minimum indexer replicas (HPA)
@@ -312,7 +349,8 @@ dev:
 
   # Trigger mode for indexer builds
   # Options: "auto" (rebuild on changes), "manual" (rebuild on button press)
-  indexer_build_mode: "auto"
+  # Note: In 'shared' mode, this is automatically set to "auto" regardless of this setting
+  indexer_build_mode: "manual"
 
 # ==============================================================================
 # EXAMPLE CONFIGURATIONS

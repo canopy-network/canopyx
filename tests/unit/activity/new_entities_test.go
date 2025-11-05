@@ -94,7 +94,7 @@ func TestIndexCommittees_Success_CommitteesChanged(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexCommittees, input)
 	require.NoError(t, err)
 
-	var output types.IndexCommitteesOutput
+	var output types.ActivityIndexCommitteesOutput
 	require.NoError(t, future.Get(&output))
 
 	// 2 committees changed (committee 1 changed, committee 2 is new)
@@ -168,7 +168,7 @@ func TestIndexCommittees_GenesisBlock(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexCommittees, input)
 	require.NoError(t, err)
 
-	var output types.IndexCommitteesOutput
+	var output types.ActivityIndexCommitteesOutput
 	require.NoError(t, future.Get(&output))
 
 	// All committees inserted at genesis
@@ -268,7 +268,7 @@ func TestIndexPoll_Success_WithProposals(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexPoll, input)
 	require.NoError(t, err)
 
-	var output types.IndexPollOutput
+	var output types.ActivityIndexPollOutput
 	require.NoError(t, future.Get(&output))
 
 	assert.Equal(t, uint32(2), output.NumProposals)
@@ -331,7 +331,7 @@ func TestIndexPoll_EmptyPoll(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexPoll, input)
 	require.NoError(t, err)
 
-	var output types.IndexPollOutput
+	var output types.ActivityIndexPollOutput
 	require.NoError(t, future.Get(&output))
 
 	// No active proposals
@@ -419,7 +419,7 @@ func TestIndexDexBatch_Success_WithOrders(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivity(activityCtx.IndexDexBatch)
 
-	input := types.IndexDexBatchInput{
+	input := types.ActivityIndexDexBatchInput{
 		ChainID:   1,
 		Height:    100,
 		Committee: 1,
@@ -429,7 +429,7 @@ func TestIndexDexBatch_Success_WithOrders(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexDexBatch, input)
 	require.NoError(t, err)
 
-	var output types.IndexDexBatchOutput
+	var output types.ActivityIndexDexBatchOutput
 	require.NoError(t, future.Get(&output))
 
 	assert.Equal(t, uint32(2), output.NumOrders)      // 1 locked + 1 future
@@ -473,7 +473,7 @@ func TestIndexDexBatch_NoBatch(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivity(activityCtx.IndexDexBatch)
 
-	input := types.IndexDexBatchInput{
+	input := types.ActivityIndexDexBatchInput{
 		ChainID:   1,
 		Height:    100,
 		Committee: 1,
@@ -483,7 +483,7 @@ func TestIndexDexBatch_NoBatch(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexDexBatch, input)
 	require.NoError(t, err)
 
-	var output types.IndexDexBatchOutput
+	var output types.ActivityIndexDexBatchOutput
 	require.NoError(t, future.Get(&output))
 
 	// No batch means no entities
@@ -561,7 +561,7 @@ func TestIndexDexPoolPoints_Success(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexDexPoolPoints, input)
 	require.NoError(t, err)
 
-	var output types.IndexDexPoolPointsOutput
+	var output types.ActivityIndexDexPoolPointsOutput
 	require.NoError(t, future.Get(&output))
 
 	assert.Equal(t, uint32(3), output.NumHolders) // 3 holders across 2 pools
@@ -624,7 +624,7 @@ func TestIndexDexPoolPoints_EmptyPools(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexDexPoolPoints, input)
 	require.NoError(t, err)
 
-	var output types.IndexDexPoolPointsOutput
+	var output types.ActivityIndexDexPoolPointsOutput
 	require.NoError(t, future.Get(&output))
 
 	assert.Equal(t, uint32(0), output.NumHolders)

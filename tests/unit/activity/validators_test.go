@@ -142,7 +142,7 @@ func TestIndexValidators_Success_ValidatorsChanged(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexValidators, input)
 	require.NoError(t, err)
 
-	var output types.IndexValidatorsOutput
+	var output types.ActivityIndexValidatorsOutput
 	require.NoError(t, future.Get(&output))
 
 	// Assertions - 2 validators changed (0x111 stake changed, 0x333 is new)
@@ -234,7 +234,7 @@ func TestIndexValidators_GenesisBlock(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexValidators, input)
 	require.NoError(t, err)
 
-	var output types.IndexValidatorsOutput
+	var output types.ActivityIndexValidatorsOutput
 	require.NoError(t, future.Get(&output))
 
 	// All validators should be inserted at genesis
@@ -309,7 +309,7 @@ func TestIndexValidators_NoChanges(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexValidators, input)
 	require.NoError(t, err)
 
-	var output types.IndexValidatorsOutput
+	var output types.ActivityIndexValidatorsOutput
 	require.NoError(t, future.Get(&output))
 
 	// No changes detected
@@ -363,7 +363,7 @@ func TestIndexValidators_RPCError(t *testing.T) {
 
 	future, execErr := env.ExecuteActivity(activityCtx.IndexValidators, input)
 
-	var output types.IndexValidatorsOutput
+	var output types.ActivityIndexValidatorsOutput
 	var actErr error
 	if execErr != nil {
 		actErr = execErr
@@ -439,7 +439,7 @@ func TestIndexValidators_NonSignersOptional(t *testing.T) {
 	future, err := env.ExecuteActivity(activityCtx.IndexValidators, input)
 	require.NoError(t, err)
 
-	var output types.IndexValidatorsOutput
+	var output types.ActivityIndexValidatorsOutput
 	require.NoError(t, future.Get(&output))
 
 	// Should still succeed with validators indexed

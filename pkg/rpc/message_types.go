@@ -3,30 +3,72 @@ package rpc
 // MessageType identifies the type of transaction
 type MessageType string
 
+/*
+type StartPoll struct {
+    StartPoll string `json:"startPoll"`
+    Url       string `json:"url,omitempty"`
+    EndHeight uint64 `json:"endHeight"`
+}
+
+type VotePoll struct {
+    VotePoll string `json:"votePoll"`
+    Approve  bool   `json:"approve"`
+}
+
+// CheckForPollTransaction() populates the poll.json file from embeds if the embed exists in the memo field
+func (p *ActivePolls) CheckForPollTransaction(sender crypto.AddressI, memo string, height uint64) lib.ErrorI {
+    if len(memo) < minPollEmbedSize {
+        return nil
+    }
+    // check for start poll embed
+    if startPoll, err := checkMemoForStartPoll(height, memo); err == nil {
+        p.NewPoll(startPoll)
+        return nil
+    }
+    // check for vote poll embed
+    if votePoll, err := checkMemoForVotePoll(memo); err == nil {
+        p.VotePoll(sender, votePoll, height)
+        return nil
+    }
+    // no embed
+    return nil
+}
+*/
+
 const (
-	MsgTypeSend                 MessageType = "send"
-	MsgTypeDelegate             MessageType = "delegate"
-	MsgTypeUndelegate           MessageType = "undelegate"
-	MsgTypeStake                MessageType = "stake"
-	MsgTypeUnstake              MessageType = "unstake"
-	MsgTypeEditStake            MessageType = "edit_stake"
-	MsgTypeVote                 MessageType = "vote"
-	MsgTypeProposal             MessageType = "proposal"
-	MsgTypeContract             MessageType = "contract"
-	MsgTypeSystem               MessageType = "system"
-	MsgTypeUnknown              MessageType = "unknown"
-	MsgTypePause                MessageType = "pause"
-	MsgTypeUnpause              MessageType = "unpause"
-	MsgTypeChangeParameter      MessageType = "changeParameter"
-	MsgTypeDAOTransfer          MessageType = "daoTransfer"
-	MsgTypeCertificateResults   MessageType = "certificateResults"
-	MsgTypeSubsidy              MessageType = "subsidy"
-	MsgTypeCreateOrder          MessageType = "createOrder"
-	MsgTypeEditOrder            MessageType = "editOrder"
-	MsgTypeDeleteOrder          MessageType = "deleteOrder"
-	MsgTypeDexLimitOrder        MessageType = "dexLimitOrder"
-	MsgTypeDexLiquidityDeposit  MessageType = "dexLiquidityDeposit"
-	MsgTypeDexLiquidityWithdraw MessageType = "dexLiquidityWithdraw"
+	MsgTypeUnknown MessageType = "unknown"
+
+	MsgTypeSend MessageType = "send" // -
+
+	MsgTypeStake     MessageType = "stake"      // -
+	MsgTypeUnstake   MessageType = "unstake"    // -
+	MsgTypeEditStake MessageType = "edit_stake" // -
+
+	MsgTypePause           MessageType = "pause"           // -
+	MsgTypeUnpause         MessageType = "unpause"         // -
+	MsgTypeChangeParameter MessageType = "changeParameter" // -
+	MsgTypeDAOTransfer     MessageType = "daoTransfer"     // -
+
+	MsgTypeCertificateResults MessageType = "certificateResults" // NOT IN POPULATOR
+
+	MsgTypeSubsidy MessageType = "subsidy" // -
+
+	MsgTypeCreateOrder MessageType = "createOrder" // -
+	MsgTypeEditOrder   MessageType = "editOrder"   // -
+	MsgTypeDeleteOrder MessageType = "deleteOrder" // -
+
+	MsgTypeDexLimitOrder        MessageType = "dexLimitOrder"        // -
+	MsgTypeDexLiquidityDeposit  MessageType = "dexLiquidityDeposit"  // -
+	MsgTypeDexLiquidityWithdraw MessageType = "dexLiquidityWithdraw" // -
+
+	// -- this 2 are part of --populator
+
+	// startPoll - this is a send with info on memo (TODO: let understand what memo has) <- is a json -> 80b
+	// votePoll - this is a send with info on memo (TODO: let understand what memo has) <- is a json
+
+	// lockOrder -
+	// closeOrder - This will have higher than fee.send param - json too
+	LockOrderTransaction = "lockOrder"
 )
 
 // Message is the interface all transaction message types implement.
@@ -75,55 +117,6 @@ func (m *SendMessage) GetParamKey() *string         { return nil }
 func (m *SendMessage) GetParamValue() *string       { return nil }
 func (m *SendMessage) GetCommitteeID() *uint64      { return nil }
 func (m *SendMessage) GetRecipient() *string        { return nil }
-
-// DelegateMessage represents delegation to a validator
-type DelegateMessage struct {
-	Delegator        string `json:"delegator"`
-	ValidatorAddress string `json:"validator_address"`
-	Amount           uint64 `json:"amount"`
-	Memo             string `json:"memo,omitempty"`
-}
-
-func (m *DelegateMessage) Type() MessageType            { return MsgTypeDelegate }
-func (m *DelegateMessage) GetSigner() string            { return m.Delegator }
-func (m *DelegateMessage) GetCounterparty() *string     { return &m.ValidatorAddress }
-func (m *DelegateMessage) GetAmount() *uint64           { return &m.Amount }
-func (m *DelegateMessage) GetValidatorAddress() *string { return &m.ValidatorAddress }
-func (m *DelegateMessage) GetCommission() *float64      { return nil }
-func (m *DelegateMessage) GetChainID() *uint64          { return nil }
-func (m *DelegateMessage) GetSellAmount() *uint64       { return nil }
-func (m *DelegateMessage) GetBuyAmount() *uint64        { return nil }
-func (m *DelegateMessage) GetLiquidityAmount() *uint64  { return nil }
-func (m *DelegateMessage) GetOrderID() *string          { return nil }
-func (m *DelegateMessage) GetPrice() *float64           { return nil }
-func (m *DelegateMessage) GetParamKey() *string         { return nil }
-func (m *DelegateMessage) GetParamValue() *string       { return nil }
-func (m *DelegateMessage) GetCommitteeID() *uint64      { return nil }
-func (m *DelegateMessage) GetRecipient() *string        { return nil }
-
-// UndelegateMessage represents undelegation from a validator
-type UndelegateMessage struct {
-	Delegator        string `json:"delegator"`
-	ValidatorAddress string `json:"validator_address"`
-	Amount           uint64 `json:"amount"`
-}
-
-func (m *UndelegateMessage) Type() MessageType            { return MsgTypeUndelegate }
-func (m *UndelegateMessage) GetSigner() string            { return m.Delegator }
-func (m *UndelegateMessage) GetCounterparty() *string     { return &m.ValidatorAddress }
-func (m *UndelegateMessage) GetAmount() *uint64           { return &m.Amount }
-func (m *UndelegateMessage) GetValidatorAddress() *string { return &m.ValidatorAddress }
-func (m *UndelegateMessage) GetCommission() *float64      { return nil }
-func (m *UndelegateMessage) GetChainID() *uint64          { return nil }
-func (m *UndelegateMessage) GetSellAmount() *uint64       { return nil }
-func (m *UndelegateMessage) GetBuyAmount() *uint64        { return nil }
-func (m *UndelegateMessage) GetLiquidityAmount() *uint64  { return nil }
-func (m *UndelegateMessage) GetOrderID() *string          { return nil }
-func (m *UndelegateMessage) GetPrice() *float64           { return nil }
-func (m *UndelegateMessage) GetParamKey() *string         { return nil }
-func (m *UndelegateMessage) GetParamValue() *string       { return nil }
-func (m *UndelegateMessage) GetCommitteeID() *uint64      { return nil }
-func (m *UndelegateMessage) GetRecipient() *string        { return nil }
 
 // StakeMessage represents staking to a pool
 type StakeMessage struct {
@@ -198,106 +191,6 @@ func (m *EditStakeMessage) GetParamKey() *string         { return nil }
 func (m *EditStakeMessage) GetParamValue() *string       { return nil }
 func (m *EditStakeMessage) GetCommitteeID() *uint64      { return nil }
 func (m *EditStakeMessage) GetRecipient() *string        { return nil }
-
-// VoteMessage represents a governance vote
-type VoteMessage struct {
-	Voter      string `json:"voter"`
-	ProposalID uint64 `json:"proposal_id"`
-	Option     string `json:"option"` // "yes", "no", "abstain", "veto"
-	Memo       string `json:"memo,omitempty"`
-}
-
-func (m *VoteMessage) Type() MessageType            { return MsgTypeVote }
-func (m *VoteMessage) GetSigner() string            { return m.Voter }
-func (m *VoteMessage) GetCounterparty() *string     { return nil }
-func (m *VoteMessage) GetAmount() *uint64           { return nil }
-func (m *VoteMessage) GetValidatorAddress() *string { return nil }
-func (m *VoteMessage) GetCommission() *float64      { return nil }
-func (m *VoteMessage) GetChainID() *uint64          { return nil }
-func (m *VoteMessage) GetSellAmount() *uint64       { return nil }
-func (m *VoteMessage) GetBuyAmount() *uint64        { return nil }
-func (m *VoteMessage) GetLiquidityAmount() *uint64  { return nil }
-func (m *VoteMessage) GetOrderID() *string          { return nil }
-func (m *VoteMessage) GetPrice() *float64           { return nil }
-func (m *VoteMessage) GetParamKey() *string         { return nil }
-func (m *VoteMessage) GetParamValue() *string       { return nil }
-func (m *VoteMessage) GetCommitteeID() *uint64      { return nil }
-func (m *VoteMessage) GetRecipient() *string        { return nil }
-
-// ProposalMessage represents creating a governance proposal
-type ProposalMessage struct {
-	Proposer    string `json:"proposer"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Deposit     uint64 `json:"deposit"`
-}
-
-func (m *ProposalMessage) Type() MessageType            { return MsgTypeProposal }
-func (m *ProposalMessage) GetSigner() string            { return m.Proposer }
-func (m *ProposalMessage) GetCounterparty() *string     { return nil }
-func (m *ProposalMessage) GetAmount() *uint64           { return &m.Deposit }
-func (m *ProposalMessage) GetValidatorAddress() *string { return nil }
-func (m *ProposalMessage) GetCommission() *float64      { return nil }
-func (m *ProposalMessage) GetChainID() *uint64          { return nil }
-func (m *ProposalMessage) GetSellAmount() *uint64       { return nil }
-func (m *ProposalMessage) GetBuyAmount() *uint64        { return nil }
-func (m *ProposalMessage) GetLiquidityAmount() *uint64  { return nil }
-func (m *ProposalMessage) GetOrderID() *string          { return nil }
-func (m *ProposalMessage) GetPrice() *float64           { return nil }
-func (m *ProposalMessage) GetParamKey() *string         { return nil }
-func (m *ProposalMessage) GetParamValue() *string       { return nil }
-func (m *ProposalMessage) GetCommitteeID() *uint64      { return nil }
-func (m *ProposalMessage) GetRecipient() *string        { return nil }
-
-// ContractMessage represents a smart contract interaction
-type ContractMessage struct {
-	Caller          string  `json:"caller"`
-	ContractAddress string  `json:"contract_address"`
-	Method          string  `json:"method"`
-	CallData        string  `json:"call_data"` // JSON or hex-encoded
-	Value           *uint64 `json:"value,omitempty"`
-}
-
-func (m *ContractMessage) Type() MessageType            { return MsgTypeContract }
-func (m *ContractMessage) GetSigner() string            { return m.Caller }
-func (m *ContractMessage) GetCounterparty() *string     { return &m.ContractAddress }
-func (m *ContractMessage) GetAmount() *uint64           { return m.Value }
-func (m *ContractMessage) GetValidatorAddress() *string { return nil }
-func (m *ContractMessage) GetCommission() *float64      { return nil }
-func (m *ContractMessage) GetChainID() *uint64          { return nil }
-func (m *ContractMessage) GetSellAmount() *uint64       { return nil }
-func (m *ContractMessage) GetBuyAmount() *uint64        { return nil }
-func (m *ContractMessage) GetLiquidityAmount() *uint64  { return nil }
-func (m *ContractMessage) GetOrderID() *string          { return nil }
-func (m *ContractMessage) GetPrice() *float64           { return nil }
-func (m *ContractMessage) GetParamKey() *string         { return nil }
-func (m *ContractMessage) GetParamValue() *string       { return nil }
-func (m *ContractMessage) GetCommitteeID() *uint64      { return nil }
-func (m *ContractMessage) GetRecipient() *string        { return nil }
-
-// SystemMessage represents a system-level transaction
-type SystemMessage struct {
-	Executor string                 `json:"executor"`
-	Action   string                 `json:"action"`
-	Params   map[string]interface{} `json:"params,omitempty"`
-}
-
-func (m *SystemMessage) Type() MessageType            { return MsgTypeSystem }
-func (m *SystemMessage) GetSigner() string            { return m.Executor }
-func (m *SystemMessage) GetCounterparty() *string     { return nil }
-func (m *SystemMessage) GetAmount() *uint64           { return nil }
-func (m *SystemMessage) GetValidatorAddress() *string { return nil }
-func (m *SystemMessage) GetCommission() *float64      { return nil }
-func (m *SystemMessage) GetChainID() *uint64          { return nil }
-func (m *SystemMessage) GetSellAmount() *uint64       { return nil }
-func (m *SystemMessage) GetBuyAmount() *uint64        { return nil }
-func (m *SystemMessage) GetLiquidityAmount() *uint64  { return nil }
-func (m *SystemMessage) GetOrderID() *string          { return nil }
-func (m *SystemMessage) GetPrice() *float64           { return nil }
-func (m *SystemMessage) GetParamKey() *string         { return nil }
-func (m *SystemMessage) GetParamValue() *string       { return nil }
-func (m *SystemMessage) GetCommitteeID() *uint64      { return nil }
-func (m *SystemMessage) GetRecipient() *string        { return nil }
 
 // UnknownMessage represents an unrecognized transaction type.
 // This is a fallback for transaction types we don't yet support.

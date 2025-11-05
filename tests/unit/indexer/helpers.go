@@ -89,7 +89,7 @@ func (m *mockSchedulerActivities) FindGaps(ctx context.Context, in *types.ChainI
 }
 
 //nolint:unused // Test helper method used by test files
-func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in types.IndexBlockInput) error {
+func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in types.WorkflowIndexBlockInput) error {
 	m.startIndexCalls.Add(1)
 
 	m.mu.Lock()
@@ -110,14 +110,14 @@ func (m *mockSchedulerActivities) StartIndexWorkflow(ctx context.Context, in typ
 }
 
 //nolint:unused // Test helper method used by test files
-func (m *mockSchedulerActivities) StartIndexWorkflowBatch(ctx context.Context, in types.BatchScheduleInput) (types.BatchScheduleOutput, error) {
+func (m *mockSchedulerActivities) StartIndexWorkflowBatch(ctx context.Context, in types.ActivityBatchScheduleInput) (types.ActivityBatchScheduleOutput, error) {
 	start := time.Now()
 
 	scheduled := 0
 	failed := 0
 
 	for height := in.StartHeight; height <= in.EndHeight; height++ {
-		err := m.StartIndexWorkflow(ctx, types.IndexBlockInput{
+		err := m.StartIndexWorkflow(ctx, types.WorkflowIndexBlockInput{
 			ChainID:     in.ChainID,
 			Height:      height,
 			PriorityKey: in.PriorityKey,
@@ -131,7 +131,7 @@ func (m *mockSchedulerActivities) StartIndexWorkflowBatch(ctx context.Context, i
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 
-	return types.BatchScheduleOutput{
+	return types.ActivityBatchScheduleOutput{
 		Scheduled:  scheduled,
 		Failed:     failed,
 		DurationMs: durationMs,

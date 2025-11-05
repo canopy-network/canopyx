@@ -52,7 +52,7 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &wfFakeRPCFactory{client: rpcClient},
 	}
 
@@ -84,7 +84,7 @@ func TestIndexBlockWorkflowHappyPath(t *testing.T) {
 	env.RegisterActivity(activityCtx.CleanPromotedData)
 	env.RegisterActivity(activityCtx.RecordIndexed)
 
-	input := types.IndexBlockInput{ChainID: 1, Height: 21}
+	input := types.WorkflowIndexBlockInput{ChainID: 1, Height: 21}
 	env.ExecuteWorkflow(wfCtx.IndexBlockWorkflow, input)
 
 	require.NoError(t, env.GetWorkflowError())
@@ -144,7 +144,7 @@ func TestIndexBlockWorkflowAllEntitiesPromotion(t *testing.T) {
 	activityCtx := &activity.Context{
 		Logger:     logger,
 		AdminDB:    adminStore,
-		ChainsDB:   chainsMap,
+		ChainDB:    chainsMap,
 		RPCFactory: &wfFakeRPCFactory{client: rpcClient},
 	}
 
@@ -177,7 +177,7 @@ func TestIndexBlockWorkflowAllEntitiesPromotion(t *testing.T) {
 	env.RegisterActivity(activityCtx.CleanPromotedData)
 	env.RegisterActivity(activityCtx.RecordIndexed)
 
-	input := types.IndexBlockInput{ChainID: 1, Height: 100}
+	input := types.WorkflowIndexBlockInput{ChainID: 1, Height: 100}
 	env.ExecuteWorkflow(wfCtx.IndexBlockWorkflow, input)
 
 	require.NoError(t, env.GetWorkflowError())
@@ -490,7 +490,7 @@ func (f *wfFakeChainStore) GetOrderCreatedHeight(context.Context, string) uint64
 	return 0
 }
 
-func (*wfFakeChainStore) GetEventsByTypeAndHeight(context.Context, uint64, ...string) ([]*indexermodels.Event, error) {
+func (*wfFakeChainStore) GetEventsByTypeAndHeight(context.Context, uint64, bool, ...string) ([]*indexermodels.Event, error) {
 	return nil, nil
 }
 

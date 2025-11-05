@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/canopy-network/canopyx/app/indexer/types"
 	"go.uber.org/zap"
 )
 
@@ -20,17 +19,11 @@ import (
 // 3. If not cached: fetch from RPC and store as JSON
 //
 // The genesis data is stored in the "genesis" table as a JSON string for easy retrieval.
-func (c *Context) EnsureGenesisCached(ctx context.Context, input types.EnsureGenesisCachedInput) error {
+func (ac *Context) EnsureGenesisCached(ctx context.Context) error {
 	start := time.Now()
 
-	// Get chain metadata
-	ch, err := c.AdminDB.GetChain(ctx, input.ChainID)
-	if err != nil {
-		return err
-	}
-
 	// Get chain database
-	chainDb, err := c.NewChainDb(ctx, input.ChainID)
+	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
 	if err != nil {
 		return err
 	}
@@ -42,17 +35,20 @@ func (c *Context) EnsureGenesisCached(ctx context.Context, input types.EnsureGen
 	}
 
 	if hasGenesis {
-		c.Logger.Info("Genesis already cached, skipping",
-			zap.Uint64("chainId", input.ChainID),
+		ac.Logger.Info("Genesis already cached, skipping",
+			zap.Uint64("chainId", ac.ChainID),
 			zap.Float64("durationMs", float64(time.Since(start).Microseconds())/1000.0))
 		return nil
 	}
 
 	// Fetch genesis from RPC
-	c.Logger.Info("Fetching genesis state from RPC",
-		zap.Uint64("chainId", input.ChainID))
+	ac.Logger.Info("Fetching genesis state from RPC",
+		zap.Uint64("chainId", ac.ChainID))
 
-	cli := c.rpcClient(ch.RPCEndpoints)
+	cli, cliErr := ac.rpcClient(ctx)
+	if cliErr != nil {
+		return cliErr
+	}
 	genesis, err := cli.StateByHeight(ctx, 0)
 	if err != nil {
 		return err
@@ -64,7 +60,7 @@ func (c *Context) EnsureGenesisCached(ctx context.Context, input types.EnsureGen
 		return err
 	}
 
-	// Store in genesis table
+	// Store in the genesis table
 	err = chainDb.InsertGenesis(ctx, 0, string(genesisJSON), time.Now())
 	if err != nil {
 		return fmt.Errorf("insert genesis: %w", err)
@@ -72,8 +68,8 @@ func (c *Context) EnsureGenesisCached(ctx context.Context, input types.EnsureGen
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 
-	c.Logger.Info("Genesis cached successfully",
-		zap.Uint64("chainId", input.ChainID),
+	ac.Logger.Info("Genesis cached successfully",
+		zap.Uint64("chainId", ac.ChainID),
 		zap.Int("numAccounts", len(genesis.Accounts)),
 		zap.Float64("durationMs", durationMs))
 

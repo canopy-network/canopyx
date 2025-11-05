@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"github.com/canopy-network/canopyx/pkg/rpc"
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
@@ -14,27 +15,26 @@ import (
 // IndexPools indexes pools for a given block height.
 // Fetches all pools from RPC, converts to database models, and inserts to staging table.
 // Returns output containing the number of indexed pools and execution duration in milliseconds.
-func (c *Context) IndexPools(ctx context.Context, in types.IndexPoolsInput) (types.IndexPoolsOutput, error) {
+func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexPoolsOutput, error) {
 	start := time.Now()
 
 	// Get chain configuration
-	ch, err := c.AdminDB.GetChain(ctx, in.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexPoolsOutput{}, err
+		return types.ActivityIndexPoolsOutput{}, err
 	}
 
 	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := c.NewChainDb(ctx, in.ChainID)
+	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
 	if chainDbErr != nil {
-		return types.IndexPoolsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
+		return types.ActivityIndexPoolsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
 	// Fetch all pools from RPC
 	// This returns ALL pools across all nested chains managed by this blockchain
-	cli := c.rpcClient(ch.RPCEndpoints)
 	rpcPools, err := cli.PoolsByHeight(ctx, in.Height)
 	if err != nil {
-		return types.IndexPoolsOutput{}, err
+		return types.ActivityIndexPoolsOutput{}, err
 	}
 
 	// Query pool liquidity events from staging table (event-driven correlation)
@@ -42,13 +42,14 @@ func (c *Context) IndexPools(ctx context.Context, in types.IndexPoolsInput) (typ
 	// - EventDexLiquidityDeposit: LP adds liquidity
 	// - EventDexLiquidityWithdraw: LP removes liquidity
 	// - EventDexSwap: Swap executes affecting pool balances
-	poolEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, in.Height,
-		"EventDexLiquidityDeposit",
-		"EventDexLiquidityWithdraw",
-		"EventDexSwap",
+	poolEvents, err := chainDb.GetEventsByTypeAndHeight(
+		ctx, in.Height, true,
+		rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit),
+		rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw),
+		rpc.EventTypeAsStr(rpc.EventTypeDexSwap),
 	)
 	if err != nil {
-		return types.IndexPoolsOutput{}, err
+		return types.ActivityIndexPoolsOutput{}, err
 	}
 
 	// Convert RPC pools to database models
@@ -80,8 +81,8 @@ func (c *Context) IndexPools(ctx context.Context, in types.IndexPoolsInput) (typ
 		}
 	}
 
-	c.Logger.Info("Indexed pools",
-		zap.Uint64("chainId", in.ChainID),
+	ac.Logger.Info("Indexed pools",
+		zap.Uint64("chainId", ac.ChainID),
 		zap.Uint64("height", in.Height),
 		zap.Uint32("numPools", numPools),
 		zap.Int("depositEvents", numDeposits),
@@ -90,11 +91,11 @@ func (c *Context) IndexPools(ctx context.Context, in types.IndexPoolsInput) (typ
 
 	// Insert pools to staging table (two-phase commit pattern)
 	if err := chainDb.InsertPoolsStaging(ctx, pools); err != nil {
-		return types.IndexPoolsOutput{}, err
+		return types.ActivityIndexPoolsOutput{}, err
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.IndexPoolsOutput{
+	return types.ActivityIndexPoolsOutput{
 		NumPools:   numPools,
 		DurationMs: durationMs,
 	}, nil

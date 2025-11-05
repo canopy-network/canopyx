@@ -15,38 +15,34 @@ import (
 // Committees are only inserted when their data differs from the previous height to maintain a sparse historical record.
 // This follows the RPC(H) vs RPC(H-1) pattern for change detection, never querying the database.
 // Returns output indicating the number of changed committees and execution duration in milliseconds.
-func (c *Context) IndexCommittees(ctx context.Context, in types.IndexCommitteesInput) (types.IndexCommitteesOutput, error) {
+func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexCommitteesOutput, error) {
 	start := time.Now()
 
-	ch, err := c.AdminDB.GetChain(ctx, in.ChainID)
+	cli, err := ac.rpcClient(ctx)
 	if err != nil {
-		return types.IndexCommitteesOutput{}, err
+		return types.ActivityIndexCommitteesOutput{}, err
 	}
 
-	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := c.NewChainDb(ctx, in.ChainID)
+	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
 	if chainDbErr != nil {
-		return types.IndexCommitteesOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
+		return types.ActivityIndexCommitteesOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
-
-	// Fetch committees at both H and H-1 from RPC
-	cli := c.rpcClient(ch.RPCEndpoints)
 
 	// Fetch committees at current height (H)
 	committeesAtH, err := cli.CommitteesDataByHeight(ctx, in.Height)
 	if err != nil {
-		return types.IndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height, err)
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height, err)
 	}
 
 	// Also fetch subsidized and retired lists at H
 	subsidizedAtH, err := cli.SubsidizedCommitteesByHeight(ctx, in.Height)
 	if err != nil {
-		return types.IndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height, err)
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height, err)
 	}
 
 	retiredAtH, err := cli.RetiredCommitteesByHeight(ctx, in.Height)
 	if err != nil {
-		return types.IndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height, err)
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height, err)
 	}
 
 	// Build lookup maps for subsidized and retired status at H
@@ -82,25 +78,25 @@ func (c *Context) IndexCommittees(ctx context.Context, in types.IndexCommitteesI
 		for _, committee := range currentCommittees {
 			changedCommittees = append(changedCommittees, committee)
 		}
-		c.Logger.Debug("IndexCommittees genesis block - inserting all committees",
+		ac.Logger.Debug("IndexCommittees genesis block - inserting all committees",
 			zap.Uint64("height", in.Height),
 			zap.Int("numCommittees", len(changedCommittees)))
 	} else {
 		// Fetch committees at previous height (H-1)
 		committeesAtH1, err := cli.CommitteesDataByHeight(ctx, in.Height-1)
 		if err != nil {
-			return types.IndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height-1, err)
+			return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height-1, err)
 		}
 
 		// Fetch subsidized and retired lists at H-1
 		subsidizedAtH1, err := cli.SubsidizedCommitteesByHeight(ctx, in.Height-1)
 		if err != nil {
-			return types.IndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height-1, err)
+			return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height-1, err)
 		}
 
 		retiredAtH1, err := cli.RetiredCommitteesByHeight(ctx, in.Height-1)
 		if err != nil {
-			return types.IndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height-1, err)
+			return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height-1, err)
 		}
 
 		// Build lookup maps for subsidized and retired status at H-1
@@ -146,7 +142,7 @@ func (c *Context) IndexCommittees(ctx context.Context, in types.IndexCommitteesI
 		// Check for committees that were removed (existed at H-1 but not at H)
 		// In this case, we don't insert anything since we only track active committees
 
-		c.Logger.Debug("IndexCommittees compared RPC(H) vs RPC(H-1)",
+		ac.Logger.Debug("IndexCommittees compared RPC(H) vs RPC(H-1)",
 			zap.Uint64("height", in.Height),
 			zap.Int("committeesAtH", len(currentCommittees)),
 			zap.Int("committeesAtH1", len(prevMap)),
@@ -156,16 +152,16 @@ func (c *Context) IndexCommittees(ctx context.Context, in types.IndexCommitteesI
 	// Only insert if committees changed (sparse insert)
 	if len(changedCommittees) > 0 {
 		if err := chainDb.InsertCommitteesStaging(ctx, changedCommittees); err != nil {
-			return types.IndexCommitteesOutput{}, err
+			return types.ActivityIndexCommitteesOutput{}, err
 		}
-		c.Logger.Info("Committees changed, inserted to staging",
+		ac.Logger.Info("Committees changed, inserted to staging",
 			zap.Uint64("height", in.Height),
-			zap.Uint64("chainID", in.ChainID),
+			zap.Uint64("chainID", ac.ChainID),
 			zap.Int("numChanged", len(changedCommittees)))
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.IndexCommitteesOutput{
+	return types.ActivityIndexCommitteesOutput{
 		NumCommittees: uint32(len(changedCommittees)),
 		DurationMs:    durationMs,
 	}, nil

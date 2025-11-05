@@ -36,9 +36,6 @@ spec:
             - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.default.svc.cluster.local:7233" }
             - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
             - { name: CLICKHOUSE_ADDR, value: "clickhouse://clickhouse-hdx-oss-v2-clickhouse.default.svc.cluster.local:9000?sslmode=disable" }
-            # CHDEBUG=1 logs failed queries
-            # CHDEBUG=2 logs all queries
-            - { name: CHDEBUG, value: "1" }
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
             - { name: REPORTS_DB, value: "canopyx_reports" }
