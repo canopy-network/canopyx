@@ -9,6 +9,16 @@ import (
 const AccountsProductionTableName = "accounts"
 const AccountsStagingTableName = AccountsProductionTableName + entities.StagingSuffix
 
+// AccountColumns defines the schema for the accounts table.
+// This is the single source of truth - used by both chain tables and cross-chain tables.
+// Note: Rewards and Slashes fields exist in the struct but are NOT in the database yet.
+var AccountColumns = []ColumnDef{
+	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
+}
+
 // Account represents a versioned snapshot of an account balance.
 // Snapshots are created ONLY when the balance changes (not every block).
 // This enables temporal queries like "What was alice's balance at height 5000?"

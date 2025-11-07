@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/canopy-network/canopyx/pkg/temporal/indexer"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/temporal/indexer"
 
 	"github.com/canopy-network/canopyx/app/admin/controller/types"
 
@@ -132,6 +133,22 @@ func (c *Controller) HandleChainsUpsert(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+
+	// Setup cross-chain sync for this chain (non-fatal - just log warnings)
+	if c.App.CrossChainDB != nil {
+		if ccStore, ok := c.App.CrossChainDB.(interface {
+			SetupChainSync(context.Context, uint64) error
+		}); ok {
+			if syncErr := ccStore.SetupChainSync(ctx, chain.ChainID); syncErr != nil {
+				c.App.Logger.Warn("Failed to setup cross-chain sync for chain - cross-chain queries may be incomplete",
+					zap.Uint64("chain_id", chain.ChainID),
+					zap.Error(syncErr))
+			} else {
+				c.App.Logger.Info("Cross-chain sync setup complete for chain",
+					zap.Uint64("chain_id", chain.ChainID))
+			}
+		}
 	}
 
 	err := c.App.EnsureChainSchedules(r.Context(), chainIDStr)
@@ -1214,10 +1231,26 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Remove chain database from in-memory cache
+	// 4. Remove cross-chain sync for this chain (non-fatal - just log warnings)
+	if c.App.CrossChainDB != nil {
+		if ccStore, ok := c.App.CrossChainDB.(interface {
+			RemoveChainSync(context.Context, uint64) error
+		}); ok {
+			if syncErr := ccStore.RemoveChainSync(ctx, chainIDUint); syncErr != nil {
+				c.App.Logger.Warn("Failed to remove cross-chain sync for chain",
+					zap.Uint64("chain_id", chainIDUint),
+					zap.Error(syncErr))
+			} else {
+				c.App.Logger.Info("Cross-chain sync removed for chain",
+					zap.Uint64("chain_id", chainIDUint))
+			}
+		}
+	}
+
+	// 5. Remove chain database from in-memory cache
 	c.App.ChainsDB.Delete(id)
 
-	// 5. Clear queue stats cache for this chain
+	// 6. Clear queue stats cache for this chain
 	c.App.QueueStatsCache.Delete(id)
 
 	c.App.Logger.Info("chain deleted successfully", zap.String("chain_id", id), zap.String("user", user))

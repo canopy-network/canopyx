@@ -7,6 +7,16 @@ import (
 const ValidatorDoubleSigningInfoProductionTableName = "validator_double_signing_info"
 const ValidatorDoubleSigningInfoStagingTableName = "validator_double_signing_info_staging"
 
+// ValidatorDoubleSigningInfoColumns defines the schema for the validator_double_signing_info table.
+var ValidatorDoubleSigningInfoColumns = []ColumnDef{
+	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "evidence_count", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "first_evidence_height", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "last_evidence_height", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "height_time", Type: "DateTime64(3)", Codec: "DoubleDelta, ZSTD(1)"},
+}
+
 // ValidatorDoubleSigningInfo represents a versioned snapshot of a validator's double-signing evidence.
 // This tracks Byzantine behavior where validators sign multiple conflicting blocks at the same height.
 // Snapshots are created using the snapshot-on-change pattern: a new row is created

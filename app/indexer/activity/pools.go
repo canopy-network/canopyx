@@ -3,9 +3,10 @@ package activity
 import (
 	"context"
 	"fmt"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 	"sync"
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/rpc"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"

@@ -12,28 +12,22 @@ import (
 // This table stores versioned snapshots of liquidity provider pool points using the snapshot-on-change pattern.
 // Uses ReplacingMergeTree(height) to deduplicate and keep the latest state at each height.
 func (db *DB) initPoolPointsByHolder(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PoolPointsByHolderColumns)
 	queryTemplate := `
         CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			address String CODEC(ZSTD(1)),
-			pool_id UInt64 CODEC(Delta, ZSTD(1)),
-			height UInt64 CODEC(DoubleDelta, LZ4),
-			height_time DateTime64(6) CODEC(DoubleDelta, LZ4),
-			committee UInt64 CODEC(Delta, ZSTD(1)),
-			points UInt64 CODEC(Delta, ZSTD(3)),
-			liquidity_pool_points UInt64 CODEC(Delta, ZSTD(3)),
-			liquidity_pool_id UInt64 CODEC(Delta, ZSTD(1))
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (address, pool_id, height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolPointsByHolderProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolPointsByHolderProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolPointsByHolderStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolPointsByHolderStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderStagingTableName, err)
 	}

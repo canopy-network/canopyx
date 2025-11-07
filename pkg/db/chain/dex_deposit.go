@@ -12,29 +12,22 @@ import (
 // The production table uses aggressive compression for storage optimization.
 // The staging table has the same schema but no TTL (TTL only on production).
 func (db *DB) initDexDeposits(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.DexDepositColumns)
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			order_id String CODEC(ZSTD(1)),
-			height UInt64 CODEC(DoubleDelta, LZ4),
-			height_time DateTime64(6) CODEC(DoubleDelta, LZ4),
-			committee UInt64 CODEC(Delta, ZSTD(3)),
-			address String CODEC(ZSTD(1)),
-			amount UInt64 CODEC(Delta, ZSTD(3)),
-			state LowCardinality(String),
-			local_origin Bool,
-			points_received UInt64 CODEC(Delta, ZSTD(3))
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (order_id, height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexDepositsProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexDepositsProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexDepositsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexDepositsStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexDepositsStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexDepositsStagingTableName, err)
 	}

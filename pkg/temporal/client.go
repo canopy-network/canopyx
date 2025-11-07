@@ -25,10 +25,12 @@ type Client struct {
 	IndexerLiveQueue       string // chain:<chainID>:index:live - per chain queue for live blocks (within threshold of head)
 	IndexerHistoricalQueue string // chain:<chainID>:index:historical - per chain queue for historical blocks (beyond threshold)
 	IndexerOpsQueue        string // chain:<chainID>:ops - per chain operations queue (headscan, gapscan, maintenance).
+	AdminMaintenanceQueue  string // admin:maintenance - global admin maintenance queue (compaction, cleanup, monitoring)
 
 	// Schedule IDs
-	HeadScheduleID    string
-	GapScanScheduleID string
+	HeadScheduleID                 string
+	GapScanScheduleID              string
+	CrossChainCompactionScheduleID string
 
 	// Workflow IDs
 	IndexBlockWorkflowId     string
@@ -82,9 +84,11 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		IndexerLiveQueue:       "chain:%d:index:live",
 		IndexerHistoricalQueue: "chain:%d:index:historical",
 		IndexerOpsQueue:        "chain:%d:ops",
+		AdminMaintenanceQueue:  "admin:maintenance",
 		// schedule IDs
-		HeadScheduleID:    "chain:%d:headscan",
-		GapScanScheduleID: "chain:%d:gapscan",
+		HeadScheduleID:                 "chain:%d:headscan",
+		GapScanScheduleID:              "chain:%d:gapscan",
+		CrossChainCompactionScheduleID: "crosschain:compaction",
 		// workflow IDs
 		IndexBlockWorkflowId:     "chain:%d:index:%d",
 		SchedulerWorkflowID:      "chain:%d:scheduler",
@@ -256,7 +260,7 @@ func (c *Client) GetQueueStats(ctx context.Context, queueName string) (pendingWo
 		if actInfo, ok := versionInfo.TypesInfo[client.TaskQueueTypeActivity]; ok {
 			if actInfo.Stats != nil {
 				pendingActivityTasks += actInfo.Stats.ApproximateBacklogCount
-				// Update backlog age if activity backlog is older
+				// Update backlog age if the activity backlog is older
 				if actInfo.Stats.ApproximateBacklogAge.Seconds() > backlogAgeSeconds {
 					backlogAgeSeconds = actInfo.Stats.ApproximateBacklogAge.Seconds()
 				}
@@ -268,4 +272,15 @@ func (c *Client) GetQueueStats(ctx context.Context, queueName string) (pendingWo
 	}
 
 	return pendingWorkflowTasks, pendingActivityTasks, pollerCount, backlogAgeSeconds, nil
+}
+
+// GetAdminMaintenanceQueue returns the admin maintenance task queue.
+// This queue handles global admin maintenance operations like cross-chain table compaction.
+func (c *Client) GetAdminMaintenanceQueue() string {
+	return c.AdminMaintenanceQueue
+}
+
+// GetCrossChainCompactionScheduleID returns the schedule ID for cross-chain table compaction.
+func (c *Client) GetCrossChainCompactionScheduleID() string {
+	return c.CrossChainCompactionScheduleID
 }

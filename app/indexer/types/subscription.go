@@ -1,8 +1,9 @@
 package types
 
 import (
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // BlockInfo contains key block metadata included in the event.

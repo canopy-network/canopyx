@@ -7,6 +7,20 @@ import (
 const OrdersProductionTableName = "orders"
 const OrdersStagingTableName = "orders_staging"
 
+// OrderColumns defines the schema for the orders table.
+var OrderColumns = []ColumnDef{
+	{Name: "order_id", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
+	{Name: "committee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "amount_for_sale", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "requested_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "seller_address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "buyer_address", Type: "Nullable(String)", Codec: "ZSTD(1)"},
+	{Name: "deadline", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "status", Type: "LowCardinality(String)"},
+}
+
 // Order represents a versioned snapshot of an order's state.
 // Snapshots are created ONLY when order state changes (not every block).
 // This enables temporal queries like "What was order X's state at height 5000?"

@@ -4,12 +4,18 @@ import (
 	"context"
 	"time"
 
+	"github.com/canopy-network/canopyx/app/admin/activity"
 	"github.com/canopy-network/canopyx/app/admin/types"
+	"github.com/canopy-network/canopyx/app/admin/workflow"
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
+	"github.com/canopy-network/canopyx/pkg/db/crosschain"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/temporal"
+	temporaladmin "github.com/canopy-network/canopyx/pkg/temporal/admin"
 	"github.com/canopy-network/canopyx/pkg/utils"
+	"go.temporal.io/sdk/worker"
+	temporalworkflow "go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
 )
 
@@ -38,7 +44,7 @@ func Initialize(ctx context.Context) *types.App {
 	}
 
 	// Ensure the Temporal namespace exists (Helm chart doesn't auto-create it)
-	// Use 7 days retention to match the Helm values configuration
+	// Use 7-day retention to match the Helm values configuration
 	err = temporalClient.EnsureNamespace(ctx, 7*24*time.Hour)
 	if err != nil {
 		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
@@ -77,6 +83,82 @@ func Initialize(ctx context.Context) *types.App {
 		// Queue stats cache initialization (30s TTL to reduce Temporal API rate limiting)
 		QueueStatsCache: types.NewQueueStatsCache(),
 	}
+
+	// Initialize cross-chain database (required)
+	crossChainDB, crossChainErr := crosschain.NewStore(ctx, logger)
+	if crossChainErr != nil {
+		logger.Fatal("Cross-chain database initialization failed",
+			zap.Error(crossChainErr))
+	}
+
+	// Initialize schema (create global tables if they don't exist)
+	// This is idempotent - safe to call on every startup
+	if schemaErr := crossChainDB.InitializeSchema(ctx); schemaErr != nil {
+		logger.Fatal("Cross-chain schema initialization failed",
+			zap.Error(schemaErr))
+	}
+
+	app.CrossChainDB = crossChainDB
+	logger.Info("Cross-chain database initialized successfully",
+		zap.String("database", crossChainDB.Name))
+
+	// Set up materialized views for all existing chains
+	// This is idempotent - SetupChainSync uses CREATE IF NOT EXISTS for MVs
+	chains, listErr := app.AdminDB.ListChain(ctx)
+	if listErr != nil {
+		logger.Fatal("Failed to list chains for cross-chain sync setup",
+			zap.Error(listErr))
+	}
+
+	for _, chain := range chains {
+		if syncErr := crossChainDB.SetupChainSync(ctx, chain.ChainID); syncErr != nil {
+			logger.Fatal("Failed to setup cross-chain sync for chain",
+				zap.Uint64("chain_id", chain.ChainID),
+				zap.Error(syncErr))
+		}
+		logger.Info("Cross-chain sync setup complete for chain",
+			zap.Uint64("chain_id", chain.ChainID))
+	}
+
+	// Initialize Temporal maintenance worker for cross-chain compaction
+	activityContext := &activity.Context{
+		Logger:         logger,
+		CrossChainDB:   crossChainDB,
+		TemporalClient: temporalClient,
+	}
+	workflowContext := workflow.Context{
+		TemporalClient:  temporalClient,
+		ActivityContext: activityContext,
+	}
+
+	// Create a maintenance worker
+	maintenanceWorker := worker.New(
+		temporalClient.TClient,
+		temporalClient.GetAdminMaintenanceQueue(),
+		worker.Options{
+			MaxConcurrentWorkflowTaskPollers:       5,
+			MaxConcurrentActivityTaskPollers:       5,
+			MaxConcurrentWorkflowTaskExecutionSize: 10,
+			MaxConcurrentActivityExecutionSize:     10,
+			WorkerStopTimeout:                      1 * time.Minute,
+		},
+	)
+
+	// Register a compaction workflow
+	maintenanceWorker.RegisterWorkflowWithOptions(
+		workflowContext.CompactCrossChainTablesWorkflow,
+		temporalworkflow.RegisterOptions{
+			Name: temporaladmin.CompactCrossChainTablesWorkflowName,
+		},
+	)
+
+	// Register compaction activities
+	maintenanceWorker.RegisterActivity(activityContext.CompactGlobalTable)
+	maintenanceWorker.RegisterActivity(activityContext.CompactAllGlobalTables)
+	maintenanceWorker.RegisterActivity(activityContext.LogCompactionSummary)
+
+	app.MaintenanceWorker = maintenanceWorker
+	logger.Info("Maintenance worker initialized successfully")
 
 	err = app.ReconcileSchedules(ctx)
 	if err != nil {

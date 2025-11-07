@@ -12,30 +12,22 @@ import (
 // The production table uses aggressive compression for storage optimization.
 // The staging table has the same schema but no TTL (TTL only on production).
 func (db *DB) initOrders(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.OrderColumns)
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			order_id String CODEC(ZSTD(1)),
-			height UInt64 CODEC(DoubleDelta, LZ4),
-			height_time DateTime64(6) CODEC(DoubleDelta, LZ4),
-			committee UInt64 CODEC(Delta, ZSTD(3)),
-			amount_for_sale UInt64 CODEC(Delta, ZSTD(3)),
-			requested_amount UInt64 CODEC(Delta, ZSTD(3)),
-			seller_address String CODEC(ZSTD(1)),
-			buyer_address Nullable(String) CODEC(ZSTD(1)),
-			deadline Nullable(UInt64) CODEC(Delta, ZSTD(3)),
-			status LowCardinality(String)
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (order_id, height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.OrdersProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.OrdersProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.OrdersProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.OrdersStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.OrdersStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.OrdersStagingTableName, err)
 	}

@@ -7,6 +7,17 @@ import (
 const ValidatorSigningInfoProductionTableName = "validator_signing_info"
 const ValidatorSigningInfoStagingTableName = "validator_signing_info_staging"
 
+// ValidatorSigningInfoColumns defines the schema for the validator_signing_info table.
+var ValidatorSigningInfoColumns = []ColumnDef{
+	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "missed_blocks_count", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "missed_blocks_window", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "last_signed_height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "start_height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "height_time", Type: "DateTime64(3)", Codec: "DoubleDelta, ZSTD(1)"},
+}
+
 // ValidatorSigningInfo represents a versioned snapshot of a validator's signing performance.
 // This tracks non-signing counters for validators within a sliding window.
 // Snapshots are created using the snapshot-on-change pattern: a new row is created

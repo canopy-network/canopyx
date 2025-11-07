@@ -13,31 +13,22 @@ import (
 // The table stores pool state snapshots that change at each height.
 // Includes calculated pool ID fields for different pool types (liquidity, holding, escrow, reward).
 func (db *DB) initPools(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PoolColumns)
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			pool_id UInt64,
-			height UInt64,
-			chain_id UInt64,
-			amount UInt64,
-			total_points UInt64,
-			lp_count UInt32,
-			height_time DateTime64(6),
-			liquidity_pool_id UInt64,
-			holding_pool_id UInt64,
-			escrow_pool_id UInt64,
-			reward_pool_id UInt64
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (pool_id, height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolsProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolsProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PoolsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolsStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolsStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PoolsStagingTableName, err)
 	}

@@ -9,6 +9,30 @@ import (
 const DexOrdersProductionTableName = "dex_orders"
 const DexOrdersStagingTableName = DexOrdersProductionTableName + entities.StagingSuffix
 
+// State is used not only by order but also by Deposit and Withdrawal.
+const (
+	DexPendingState  string = "pending"
+	DexLockedState   string = "locked"
+	DexCompleteState string = "complete"
+)
+
+// DexOrderColumns defines the schema for the dex_orders table.
+var DexOrderColumns = []ColumnDef{
+	{Name: "order_id", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
+	{Name: "committee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "amount_for_sale", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "requested_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "state", Type: "LowCardinality(String)"},
+	{Name: "success", Type: "Bool"},
+	{Name: "sold_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "bought_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "local_origin", Type: "Bool"},
+	{Name: "locked_height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+}
+
 // DexOrder represents a versioned snapshot of a DEX limit order.
 // DEX orders are AMM-based cross-chain swaps that go through a batch lifecycle.
 // Snapshots are created at each state transition (future -> locked -> complete).

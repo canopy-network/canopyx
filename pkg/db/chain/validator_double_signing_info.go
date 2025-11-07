@@ -17,27 +17,23 @@ import (
 // - ORDER BY (address, height): Enables efficient temporal queries
 // - Delta codec for monotonically increasing counters and heights
 func (db *DB) initValidatorDoubleSigningInfo(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorDoubleSigningInfoColumns)
 	queryTemplate := `
         CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			address String CODEC(ZSTD(1)),
-			evidence_count UInt64 CODEC(Delta, ZSTD(1)),
-			first_evidence_height UInt64 CODEC(Delta, ZSTD(1)),
-			last_evidence_height UInt64 CODEC(Delta, ZSTD(1)),
-			height UInt64 CODEC(Delta, ZSTD(1)),
-			height_time DateTime64(3) CODEC(DoubleDelta, ZSTD(1))
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (address, height)
 		SETTINGS index_granularity = 8192
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorDoubleSigningInfoProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorDoubleSigningInfoProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorDoubleSigningInfoProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorDoubleSigningInfoStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorDoubleSigningInfoStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorDoubleSigningInfoStagingTableName, err)
 	}

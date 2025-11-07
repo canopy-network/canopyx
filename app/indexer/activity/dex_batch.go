@@ -60,14 +60,16 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 	// Parallel RPC fetch: ALL DexBatches(H) and ALL NextDexBatches(H) in a single call each
 	// Using committee=0 returns all committees' batches
 	var (
-		currentBatches []*rpc.RpcDexBatch
-		nextBatches    []*rpc.RpcDexBatch
-		currentErr     error
-		nextErr        error
-		wg             sync.WaitGroup
+		currentBatchesH1 []*rpc.RpcDexBatch
+		currentBatches   []*rpc.RpcDexBatch
+		nextBatches      []*rpc.RpcDexBatch
+		currentH1Err     error
+		currentErr       error
+		nextErr          error
+		wg               sync.WaitGroup
 	)
 
-	wg.Add(2)
+	wg.Add(3)
 
 	// Worker 1: Fetch ALL current batches (locked orders across all committees)
 	go func() {
@@ -81,6 +83,16 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		nextBatches, nextErr = cli.AllNextDexBatchesByHeight(ctx, in.Height)
 	}()
 
+	go func() {
+		defer wg.Done()
+		if in.Height <= 1 {
+			currentBatchesH1 = make([]*rpc.RpcDexBatch, 0)
+			return
+		}
+
+		currentBatchesH1, currentH1Err = cli.AllDexBatchesByHeight(ctx, in.Height-1)
+	}()
+
 	// Wait for both workers
 	wg.Wait()
 
@@ -90,6 +102,9 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 	}
 	if nextErr != nil {
 		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("fetch all next dex batches at height %d: %w", in.Height, nextErr)
+	}
+	if currentH1Err != nil {
+		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("fetch all dex batches at height %d: %w", in.Height-1, currentH1Err)
 	}
 
 	// Query events from the staging table
@@ -116,38 +131,39 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		orderID := *event.OrderID
 
 		switch event.EventType {
-		// TBD: Can the same orderID have more than one event of the same type in the same height?
-		//   if no, then this is ok.
-		case "EventDexSwap":
+		case rpc.EventTypeAsStr(rpc.EventTypeDexSwap):
 			swapEvents[orderID] = event
-		case "EventDexLiquidityDeposit":
+		case rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit):
 			depositEvents[orderID] = event
-		case "EventDexLiquidityWithdrawal":
+		case rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw):
 			withdrawalEvents[orderID] = event
 		}
 	}
 
 	// Process orders from ALL committees
 	orders := make([]*indexer.DexOrder, 0)
+	// Process deposits from ALL committees
+	deposits := make([]*indexer.DexDeposit, 0)
+	// Process withdrawals from ALL committees
+	withdrawals := make([]*indexer.DexWithdrawal, 0)
 
-	// Process current batch orders (state=locked or state=complete if the event exists)
-	for _, currentBatch := range currentBatches {
-		for _, rpcOrder := range currentBatch.Orders {
-			order := &indexer.DexOrder{
-				OrderID:         rpcOrder.OrderID,
-				Height:          in.Height,
-				HeightTime:      in.BlockTime,
-				Committee:       currentBatch.Committee, // Use committee from batch
-				Address:         rpcOrder.Address,
-				AmountForSale:   rpcOrder.AmountForSale,
-				RequestedAmount: rpcOrder.RequestedAmount,
-				State:           "locked",
-				LockedHeight:    currentBatch.LockedHeight,
-			}
-
+	// Process Dex event related against H-1 orders, deposits and withdrawals
+	for _, currentBatchH1 := range currentBatchesH1 {
+		for _, rpcOrder := range currentBatchH1.Orders {
 			// Check if this order has a completion event
 			if swapEvent, exists := swapEvents[rpcOrder.OrderID]; exists {
-				order.State = "complete"
+				order := &indexer.DexOrder{
+					OrderID:         rpcOrder.OrderID,
+					Height:          in.Height, // complete at the height of the event
+					HeightTime:      in.BlockTime,
+					Committee:       currentBatchH1.Committee, // Use committee from batch
+					Address:         rpcOrder.Address,
+					AmountForSale:   rpcOrder.AmountForSale,
+					RequestedAmount: rpcOrder.RequestedAmount,
+					State:           indexer.DexCompleteState,
+					LockedHeight:    currentBatchH1.LockedHeight,
+				}
+
 				// Safely dereference pointer fields from event
 				if swapEvent.Success != nil {
 					order.Success = *swapEvent.Success
@@ -161,9 +177,107 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				if swapEvent.LocalOrigin != nil {
 					order.LocalOrigin = *swapEvent.LocalOrigin
 				}
+
+				orders = append(orders, order)
+			}
+		}
+
+		for _, rpcDeposit := range currentBatchH1.Deposits {
+			// Check if this deposit has a completion event
+			if depositEvent, exists := depositEvents[rpcDeposit.OrderID]; exists {
+				deposit := &indexer.DexDeposit{
+					OrderID:    rpcDeposit.OrderID,
+					Height:     in.Height,
+					HeightTime: in.BlockTime,
+					Committee:  currentBatchH1.Committee, // Use committee from batch
+					Address:    rpcDeposit.Address,
+					Amount:     rpcDeposit.Amount,
+					State:      indexer.DexCompleteState,
+				}
+
+				// Safely dereference pointer fields from event
+				if depositEvent.LocalOrigin != nil {
+					deposit.LocalOrigin = *depositEvent.LocalOrigin
+				}
+				// @TODO: PointsReceived should be calculated from pool state change
+				// For now, we leave it as 0 - this will be improved when pool points tracking is added
+
+				deposits = append(deposits, deposit)
+			}
+		}
+
+		for _, rpcWithdrawal := range currentBatchH1.Withdrawals {
+			// Check if this withdrawal has a completion event
+			if withdrawalEvent, exists := withdrawalEvents[rpcWithdrawal.OrderID]; exists {
+				withdrawal := &indexer.DexWithdrawal{
+					OrderID:    rpcWithdrawal.OrderID,
+					Height:     in.Height,
+					HeightTime: in.BlockTime,
+					Committee:  currentBatchH1.Committee, // Use committee from batch
+					Address:    rpcWithdrawal.Address,
+					Percent:    rpcWithdrawal.Percent,
+					State:      indexer.DexCompleteState,
+				}
+
+				// Safely dereference pointer fields from event
+				if withdrawalEvent.LocalAmount != nil {
+					withdrawal.LocalAmount = *withdrawalEvent.LocalAmount
+				}
+				if withdrawalEvent.RemoteAmount != nil {
+					withdrawal.RemoteAmount = *withdrawalEvent.RemoteAmount
+				}
+				// @TODO: PointsBurned should be calculated from pool state change
+				// For now, we leave it as 0 - this will be improved when pool points tracking is added
+
+				withdrawals = append(withdrawals, withdrawal)
+			}
+		}
+	}
+
+	// Process current batch orders, deposits and withdrawals
+	for _, currentBatch := range currentBatches {
+		for _, rpcOrder := range currentBatch.Orders {
+			order := &indexer.DexOrder{
+				OrderID:         rpcOrder.OrderID,
+				Height:          in.Height,
+				HeightTime:      in.BlockTime,
+				Committee:       currentBatch.Committee, // Use committee from batch
+				Address:         rpcOrder.Address,
+				AmountForSale:   rpcOrder.AmountForSale,
+				RequestedAmount: rpcOrder.RequestedAmount,
+				State:           indexer.DexLockedState,
+				LockedHeight:    currentBatch.LockedHeight,
 			}
 
 			orders = append(orders, order)
+		}
+
+		for _, rpcDeposit := range currentBatch.Deposits {
+			deposit := &indexer.DexDeposit{
+				OrderID:    rpcDeposit.OrderID,
+				Height:     in.Height,
+				HeightTime: in.BlockTime,
+				Committee:  currentBatch.Committee, // Use committee from batch
+				Address:    rpcDeposit.Address,
+				Amount:     rpcDeposit.Amount,
+				State:      indexer.DexLockedState,
+			}
+
+			deposits = append(deposits, deposit)
+		}
+
+		for _, rpcWithdrawal := range currentBatch.Withdrawals {
+			withdrawal := &indexer.DexWithdrawal{
+				OrderID:    rpcWithdrawal.OrderID,
+				Height:     in.Height,
+				HeightTime: in.BlockTime,
+				Committee:  currentBatch.Committee, // Use committee from batch
+				Address:    rpcWithdrawal.Address,
+				Percent:    rpcWithdrawal.Percent,
+				State:      indexer.DexLockedState,
+			}
+
+			withdrawals = append(withdrawals, withdrawal)
 		}
 	}
 
@@ -178,46 +292,12 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				Address:         rpcOrder.Address,
 				AmountForSale:   rpcOrder.AmountForSale,
 				RequestedAmount: rpcOrder.RequestedAmount,
-				State:           "future",
+				State:           indexer.DexPendingState,
 				LockedHeight:    0, // Not locked yet
 			}
 			orders = append(orders, order)
 		}
-	}
 
-	// Process deposits from ALL committees
-	deposits := make([]*indexer.DexDeposit, 0)
-
-	// Process current batch deposits
-	for _, currentBatch := range currentBatches {
-		for _, rpcDeposit := range currentBatch.Deposits {
-			deposit := &indexer.DexDeposit{
-				OrderID:    rpcDeposit.OrderID,
-				Height:     in.Height,
-				HeightTime: in.BlockTime,
-				Committee:  currentBatch.Committee, // Use committee from batch
-				Address:    rpcDeposit.Address,
-				Amount:     rpcDeposit.Amount,
-				State:      "pending",
-			}
-
-			// Check if this deposit has a completion event
-			if depositEvent, exists := depositEvents[rpcDeposit.OrderID]; exists {
-				deposit.State = "complete"
-				// Safely dereference pointer fields from event
-				if depositEvent.LocalOrigin != nil {
-					deposit.LocalOrigin = *depositEvent.LocalOrigin
-				}
-				// @TODO: PointsReceived should be calculated from pool state change
-				// For now, we leave it as 0 - this will be improved when pool points tracking is added
-			}
-
-			deposits = append(deposits, deposit)
-		}
-	}
-
-	// Process next batch deposits
-	for _, nextBatch := range nextBatches {
 		for _, rpcDeposit := range nextBatch.Deposits {
 			deposit := &indexer.DexDeposit{
 				OrderID:    rpcDeposit.OrderID,
@@ -226,48 +306,11 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				Committee:  nextBatch.Committee, // Use committee from batch
 				Address:    rpcDeposit.Address,
 				Amount:     rpcDeposit.Amount,
-				State:      "pending",
+				State:      indexer.DexPendingState,
 			}
 			deposits = append(deposits, deposit)
 		}
-	}
 
-	// Process withdrawals from ALL committees
-	withdrawals := make([]*indexer.DexWithdrawal, 0)
-
-	// Process current batch withdrawals
-	for _, currentBatch := range currentBatches {
-		for _, rpcWithdrawal := range currentBatch.Withdrawals {
-			withdrawal := &indexer.DexWithdrawal{
-				OrderID:    rpcWithdrawal.OrderID,
-				Height:     in.Height,
-				HeightTime: in.BlockTime,
-				Committee:  currentBatch.Committee, // Use committee from batch
-				Address:    rpcWithdrawal.Address,
-				Percent:    rpcWithdrawal.Percent,
-				State:      "pending",
-			}
-
-			// Check if this withdrawal has a completion event
-			if withdrawalEvent, exists := withdrawalEvents[rpcWithdrawal.OrderID]; exists {
-				withdrawal.State = "complete"
-				// Safely dereference pointer fields from event
-				if withdrawalEvent.LocalAmount != nil {
-					withdrawal.LocalAmount = *withdrawalEvent.LocalAmount
-				}
-				if withdrawalEvent.RemoteAmount != nil {
-					withdrawal.RemoteAmount = *withdrawalEvent.RemoteAmount
-				}
-				// @TODO: PointsBurned should be calculated from pool state change
-				// For now, we leave it as 0 - this will be improved when pool points tracking is added
-			}
-
-			withdrawals = append(withdrawals, withdrawal)
-		}
-	}
-
-	// Process next batch withdrawals
-	for _, nextBatch := range nextBatches {
 		for _, rpcWithdrawal := range nextBatch.Withdrawals {
 			withdrawal := &indexer.DexWithdrawal{
 				OrderID:    rpcWithdrawal.OrderID,
@@ -276,7 +319,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				Committee:  nextBatch.Committee, // Use committee from batch
 				Address:    rpcWithdrawal.Address,
 				Percent:    rpcWithdrawal.Percent,
-				State:      "pending",
+				State:      indexer.DexPendingState,
 			}
 			withdrawals = append(withdrawals, withdrawal)
 		}

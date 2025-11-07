@@ -30,7 +30,7 @@ spec:
             - { name: CLICKHOUSE_ADDR, value: "clickhouse://clickhouse-hdx-oss-v2-clickhouse.default.svc.cluster.local:9000?sslmode=disable" }
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
-            - { name: REPORTS_DB, value: "canopyx_reports" }
+            - { name: CROSSCHAIN_DB, value: "canopyx_cross_chain" }
             # Temporal Connection
             - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.default.svc.cluster.local:7233" }
             - { name: TEMPORAL_NAMESPACE, value: "canopyx" }

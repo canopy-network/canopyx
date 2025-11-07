@@ -9,6 +9,20 @@ import (
 const DexWithdrawalsProductionTableName = "dex_withdrawals"
 const DexWithdrawalsStagingTableName = DexWithdrawalsProductionTableName + entities.StagingSuffix
 
+// DexWithdrawalColumns defines the schema for the dex_withdrawals table.
+var DexWithdrawalColumns = []ColumnDef{
+	{Name: "order_id", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
+	{Name: "committee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "percent", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "state", Type: "LowCardinality(String)"},
+	{Name: "local_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "remote_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "points_burned", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+}
+
 // DexWithdrawal represents a versioned snapshot of a DEX liquidity withdrawal.
 // Liquidity providers withdraw their tokens based on their pool points percentage.
 // Snapshots are created at each state transition (pending -> complete).

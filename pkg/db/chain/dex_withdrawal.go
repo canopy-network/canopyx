@@ -12,30 +12,22 @@ import (
 // The production table uses aggressive compression for storage optimization.
 // The staging table has the same schema but no TTL (TTL only on production).
 func (db *DB) initDexWithdrawals(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.DexWithdrawalColumns)
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			order_id String CODEC(ZSTD(1)),
-			height UInt64 CODEC(DoubleDelta, LZ4),
-			height_time DateTime64(6) CODEC(DoubleDelta, LZ4),
-			committee UInt64 CODEC(Delta, ZSTD(3)),
-			address String CODEC(ZSTD(1)),
-			percent UInt64 CODEC(Delta, ZSTD(3)),
-			state LowCardinality(String),
-			local_amount UInt64 CODEC(Delta, ZSTD(3)),
-			remote_amount UInt64 CODEC(Delta, ZSTD(3)),
-			points_burned UInt64 CODEC(Delta, ZSTD(3))
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (order_id, height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexWithdrawalsProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexWithdrawalsProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexWithdrawalsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexWithdrawalsStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexWithdrawalsStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexWithdrawalsStagingTableName, err)
 	}

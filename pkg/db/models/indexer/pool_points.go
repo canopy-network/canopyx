@@ -9,6 +9,18 @@ import (
 const PoolPointsByHolderProductionTableName = "pool_points_by_holder"
 const PoolPointsByHolderStagingTableName = PoolPointsByHolderProductionTableName + entities.StagingSuffix
 
+// PoolPointsByHolderColumns defines the schema for the pool_points_by_holder table.
+var PoolPointsByHolderColumns = []ColumnDef{
+	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "pool_id", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
+	{Name: "committee", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "points", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "liquidity_pool_points", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "liquidity_pool_id", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+}
+
 // PoolPointsByHolder represents a versioned snapshot of a liquidity provider's pool points.
 // Pool points represent ownership shares in a DEX liquidity pool, determining the proportion
 // of trading fees earned and the amount received when withdrawing liquidity.

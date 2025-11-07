@@ -113,5 +113,16 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	// WebSocket endpoint for real-time events (migrated from query service)
 	r.HandleFunc("/api/ws", c.HandleWebSocket).Methods(http.MethodGet)
 
+	// Cross-chain API endpoints
+	r.Handle("/api/crosschain/health", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainHealth))).Methods(http.MethodGet)
+	r.Handle("/api/crosschain/resync/{chainID}/{table}", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainResyncTable))).Methods(http.MethodPost)
+	r.Handle("/api/crosschain/resync/{chainID}", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainResyncChain))).Methods(http.MethodPost)
+	r.Handle("/api/crosschain/sync-status/{chainID}/{table}", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainSyncStatus))).Methods(http.MethodGet)
+
+	// Cross-chain entity query endpoints (dynamic, mirror chain entity pattern)
+	r.Handle("/api/crosschain/entities", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainEntitiesList))).Methods(http.MethodGet)
+	r.Handle("/api/crosschain/entities/{entity}", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainEntities))).Methods(http.MethodGet)
+	r.Handle("/api/crosschain/entities/{entity}/schema", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainEntitySchema))).Methods(http.MethodGet)
+
 	return r, nil
 }

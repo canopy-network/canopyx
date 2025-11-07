@@ -12,16 +12,15 @@ import (
 // The production table uses aggressive compression for storage optimization.
 // The staging table has the same schema but no TTL (TTL only on production).
 func (db *DB) initAccounts(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.AccountColumns)
+
 	// Create a production table
 	productionQuery := fmt.Sprintf(`
         CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			address String CODEC(ZSTD(1)),
-			amount UInt64 CODEC(Delta, ZSTD(3)),
-			height UInt64 CODEC(DoubleDelta, LZ4),
-			height_time DateTime64(6) CODEC(DoubleDelta, LZ4)
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (address, height)
-	`, db.Name, indexermodels.AccountsProductionTableName)
+	`, db.Name, indexermodels.AccountsProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.AccountsProductionTableName, err)
 	}
@@ -29,13 +28,10 @@ func (db *DB) initAccounts(ctx context.Context) error {
 	// Create the staging table - uses same engine as production for consistency
 	stagingQuery := fmt.Sprintf(`
         CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			address String CODEC(ZSTD(1)),
-			amount UInt64 CODEC(Delta, ZSTD(3)),
-			height UInt64 CODEC(DoubleDelta, LZ4),
-			height_time DateTime64(6) CODEC(DoubleDelta, LZ4)
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (address, height)
-	`, db.Name, indexermodels.AccountsStagingTableName)
+	`, db.Name, indexermodels.AccountsStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.AccountsStagingTableName, err)
 	}

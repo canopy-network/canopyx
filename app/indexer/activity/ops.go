@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/canopy-network/canopyx/app/indexer/utils"
 	"sync/atomic"
 	"time"
+
+	"github.com/canopy-network/canopyx/app/indexer/utils"
 
 	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"

@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/canopy-network/canopyx/pkg/temporal/indexer"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/temporal/indexer"
 
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
@@ -21,11 +22,15 @@ import (
 
 type App struct {
 	// Database Client wrappers
-	AdminDB  *adminstore.DB
-	ChainsDB *xsync.Map[string, chainstore.Store]
+	AdminDB      *adminstore.DB
+	ChainsDB     *xsync.Map[string, chainstore.Store]
+	CrossChainDB interface{} // Cross-chain database store (optional, set to crosschain.Store)
 
 	// Temporal Client wrapper
 	TemporalClient *temporal.Client
+
+	// Temporal Workers
+	MaintenanceWorker interface{} // Maintenance worker for cross-chain compaction (go.temporal.io/sdk/worker.Worker)
 
 	// Redis Client (for WebSocket real-time events)
 	RedisClient *redis.Client
@@ -42,13 +47,43 @@ type App struct {
 
 // Start starts the application.
 func (a *App) Start(ctx context.Context) {
+	// Start maintenance worker if it exists
+	if a.MaintenanceWorker != nil {
+		// Type assert to worker.Worker interface
+		if worker, ok := a.MaintenanceWorker.(interface{ Start() error }); ok {
+			if err := worker.Start(); err != nil {
+				a.Logger.Fatal("Unable to start maintenance worker", zap.Error(err))
+			}
+			a.Logger.Info("Maintenance worker started successfully")
+		}
+	}
+
 	go func() { _ = a.Server.ListenAndServe() }()
 	<-ctx.Done()
+
+	// Stop maintenance worker
+	if a.MaintenanceWorker != nil {
+		if worker, ok := a.MaintenanceWorker.(interface{ Stop() }); ok {
+			a.Logger.Info("Stopping maintenance worker")
+			worker.Stop()
+		}
+	}
 
 	a.Logger.Info("closing admin database connection")
 	err := a.AdminDB.Close()
 	if err != nil {
 		a.Logger.Error("Failed to close database connection", zap.Error(err))
+	}
+
+	// Close cross-chain database connection
+	if a.CrossChainDB != nil {
+		a.Logger.Info("closing cross-chain database connection")
+		// Type assert to the closer interface
+		if closer, ok := a.CrossChainDB.(interface{ Close() error }); ok {
+			if closeErr := closer.Close(); closeErr != nil {
+				a.Logger.Error("Failed to close cross-chain database connection", zap.Error(closeErr))
+			}
+		}
 	}
 
 	// Close all chain database connections
@@ -108,6 +143,12 @@ func (a *App) ReconcileSchedules(ctx context.Context) error {
 			return chainScheduleErr
 		}
 	}
+
+	// Ensure cross-chain compaction schedule
+	if err := a.EnsureCrossChainCompactionSchedule(ctx); err != nil {
+		return fmt.Errorf("failed to ensure cross-chain compaction schedule: %w", err)
+	}
+
 	return nil
 }
 
@@ -190,6 +231,36 @@ func (a *App) EnsureChainSchedules(ctx context.Context, chainID string) error {
 	}
 
 	return nil
+}
+
+// EnsureCrossChainCompactionSchedule ensures the cross-chain table compaction schedule is created.
+func (a *App) EnsureCrossChainCompactionSchedule(ctx context.Context) error {
+	id := a.TemporalClient.GetCrossChainCompactionScheduleID()
+	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
+	_, err := h.Describe(ctx)
+	if err == nil {
+		a.Logger.Info("Cross-chain compaction schedule already exists", zap.String("id", id))
+		return nil
+	}
+
+	var notFound *serviceerror.NotFound
+	if errors.As(err, &notFound) {
+		a.Logger.Info("Creating cross-chain compaction schedule", zap.String("id", id))
+		_, scheduleErr := a.TemporalClient.TSClient.Create(
+			ctx,
+			client.ScheduleOptions{
+				ID:   id,
+				Spec: a.TemporalClient.OneHourSpec(), // Run every hour
+				Action: &client.ScheduleWorkflowAction{
+					Workflow:  "CompactCrossChainTablesWorkflow",       // Workflow name from pkg/temporal/admin
+					Args:      []interface{}{map[string]interface{}{}}, // Empty input
+					TaskQueue: a.TemporalClient.GetAdminMaintenanceQueue(),
+				},
+			},
+		)
+		return scheduleErr
+	}
+	return err
 }
 
 // LoadChainStore loads or creates a chain store for the given chain ID.

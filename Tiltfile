@@ -163,15 +163,15 @@ temporal_flags = ['--values=./deploy/helm/temporal-cassandra-elasticsearch-value
 # Temporal replica counts
 if temporal_cfg.get('history_replicas'):
     temporal_flags.append('--set=server.replicaCount=%s' % temporal_cfg['history_replicas'])
-if temporal_cfg.get('cassandra_replicas'):
-    temporal_flags.append('--set=cassandra.config.cluster_size=%s' % temporal_cfg['cassandra_replicas'])
-    temporal_flags.append('--set=cassandra.replicas=%s' % temporal_cfg['cassandra_replicas'])
-    # Disable pod anti-affinity for single-node clusters (allows multiple replicas on same node)
-    temporal_flags.append('--set=cassandra.affinity=null')
-if temporal_cfg.get('elasticsearch_replicas'):
-    temporal_flags.append('--set=elasticsearch.replicas=%s' % temporal_cfg['elasticsearch_replicas'])
-    # Disable pod anti-affinity for single-node clusters (allows multiple replicas on same node)
-    temporal_flags.append('--set=elasticsearch.antiAffinity=soft')  # or null for complete disable
+
+# Force single-replica configuration for Cassandra and Elasticsearch
+# This prevents shard allocation errors on single-node Kubernetes clusters
+# Even in production profile, we enforce simple replication to avoid 503 errors
+temporal_flags.append('--set=cassandra.config.cluster_size=1')
+temporal_flags.append('--set=cassandra.replicas=1')
+temporal_flags.append('--set=cassandra.affinity=null')
+temporal_flags.append('--set=elasticsearch.replicas=1')
+temporal_flags.append('--set=elasticsearch.antiAffinity=soft')
 
 # Cassandra resource limits
 cass_mem_limit = temporal_cfg.get('cassandra_memory_limit', '8G')

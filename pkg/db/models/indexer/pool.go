@@ -8,6 +8,23 @@ import (
 const PoolsProductionTableName = "pools"
 const PoolsStagingTableName = "pools_staging"
 
+// PoolColumns defines the schema for the pools table.
+// NOTE: chain_id is renamed to pool_chain_id in cross-chain tables to avoid conflict
+// with the cross-chain table's chain_id column (which indicates the source database).
+var PoolColumns = []ColumnDef{
+	{Name: "pool_id", Type: "UInt64"},
+	{Name: "height", Type: "UInt64"},
+	{Name: "chain_id", Type: "UInt64", CrossChainRename: "pool_chain_id"},
+	{Name: "amount", Type: "UInt64"},
+	{Name: "total_points", Type: "UInt64"},
+	{Name: "lp_count", Type: "UInt32"},
+	{Name: "height_time", Type: "DateTime64(6)"},
+	{Name: "liquidity_pool_id", Type: "UInt64"},
+	{Name: "holding_pool_id", Type: "UInt64"},
+	{Name: "escrow_pool_id", Type: "UInt64"},
+	{Name: "reward_pool_id", Type: "UInt64"},
+}
+
 // Pool ID calculation constants (from Canopy blockchain logic)
 const (
 	MaxChainID          = uint64(math.MaxUint16 / 4)

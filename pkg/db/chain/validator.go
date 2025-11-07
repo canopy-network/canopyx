@@ -18,34 +18,23 @@ import (
 // - Array(UInt64) for committees: ClickHouse native array type for committee IDs
 // - UInt8 for boolean fields (delegate, compound): ClickHouse doesn't have native bool
 func (db *DB) initValidators(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorColumns)
 	queryTemplate := `
         CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			address String CODEC(ZSTD(1)),
-			public_key String CODEC(ZSTD(1)),
-			net_address String CODEC(ZSTD(1)),
-			staked_amount UInt64 CODEC(Delta, ZSTD(3)),
-			committees Array(UInt64) CODEC(ZSTD(1)),
-			max_paused_height UInt64 CODEC(Delta, ZSTD(3)),
-			unstaking_height UInt64 CODEC(Delta, ZSTD(3)),
-			output String CODEC(ZSTD(1)),
-			delegate UInt8 DEFAULT 0,
-			compound UInt8 DEFAULT 0,
-			status String CODEC(ZSTD(1)),
-			height UInt64 CODEC(Delta, ZSTD(3)),
-			height_time DateTime64(3) CODEC(DoubleDelta, ZSTD(1))
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (address, height)
 		SETTINGS index_granularity = 8192
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorsProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorsProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorsStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorsStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorsStagingTableName, err)
 	}
