@@ -33,6 +33,8 @@ type EventMessage interface {
 	GetSuccess() *bool
 	GetLocalOrigin() *bool
 	GetOrderID() *string
+	GetPointsReceived() *uint64
+	GetPointsBurned() *uint64
 }
 
 // RewardEvent represents a validator reward event
@@ -50,6 +52,8 @@ func (e *RewardEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *RewardEvent) GetSuccess() *bool        { return nil }
 func (e *RewardEvent) GetLocalOrigin() *bool    { return nil }
 func (e *RewardEvent) GetOrderID() *string      { return nil }
+func (e *RewardEvent) GetPointsReceived() *uint64 { return nil }
+func (e *RewardEvent) GetPointsBurned() *uint64 { return nil }
 
 // SlashEvent represents a validator slash event
 type SlashEvent struct {
@@ -66,13 +70,14 @@ func (e *SlashEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *SlashEvent) GetSuccess() *bool        { return nil }
 func (e *SlashEvent) GetLocalOrigin() *bool    { return nil }
 func (e *SlashEvent) GetOrderID() *string      { return nil }
+func (e *SlashEvent) GetPointsReceived() *uint64 { return nil }
+func (e *SlashEvent) GetPointsBurned() *uint64 { return nil }
 
 // DexLiquidityDepositEvent represents adding liquidity to a DEX pool
 type DexLiquidityDepositEvent struct {
 	Data map[string]interface{}
 }
 
-// TODO: ADD POINTS
 func (e *DexLiquidityDepositEvent) Type() EventType    { return EventTypeDexLiquidityDeposit }
 func (e *DexLiquidityDepositEvent) GetAddress() string { return GetStringField(e.Data, "address") }
 func (e *DexLiquidityDepositEvent) GetAmount() *uint64 {
@@ -89,6 +94,10 @@ func (e *DexLiquidityDepositEvent) GetLocalOrigin() *bool {
 func (e *DexLiquidityDepositEvent) GetOrderID() *string {
 	return GetOptionalStringField(e.Data, "orderID")
 }
+func (e *DexLiquidityDepositEvent) GetPointsReceived() *uint64 {
+	return GetOptionalUint64Field(e.Data, "points")
+}
+func (e *DexLiquidityDepositEvent) GetPointsBurned() *uint64 { return nil }
 
 // DexLiquidityWithdrawEvent represents removing liquidity from a DEX pool
 type DexLiquidityWithdrawEvent struct {
@@ -112,6 +121,10 @@ func (e *DexLiquidityWithdrawEvent) GetLocalOrigin() *bool { return nil }
 func (e *DexLiquidityWithdrawEvent) GetOrderID() *string {
 	return GetOptionalStringField(e.Data, "orderID")
 }
+func (e *DexLiquidityWithdrawEvent) GetPointsReceived() *uint64 { return nil }
+func (e *DexLiquidityWithdrawEvent) GetPointsBurned() *uint64 {
+	return GetOptionalUint64Field(e.Data, "pointsBurned")
+}
 
 // DexSwapEvent represents a DEX swap event
 type DexSwapEvent struct {
@@ -132,6 +145,8 @@ func (e *DexSwapEvent) GetLocalOrigin() *bool    { return GetOptionalBoolField(e
 func (e *DexSwapEvent) GetOrderID() *string {
 	return GetOptionalStringField(e.Data, "orderID")
 }
+func (e *DexSwapEvent) GetPointsReceived() *uint64 { return nil }
+func (e *DexSwapEvent) GetPointsBurned() *uint64   { return nil }
 
 // OrderBookSwapEvent represents an order book swap event
 type OrderBookSwapEvent struct {
@@ -162,6 +177,8 @@ func (e *OrderBookSwapEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *OrderBookSwapEvent) GetSuccess() *bool        { return nil }
 func (e *OrderBookSwapEvent) GetLocalOrigin() *bool    { return nil }
 func (e *OrderBookSwapEvent) GetOrderID() *string      { return GetOptionalStringField(e.Data, "orderID") }
+func (e *OrderBookSwapEvent) GetPointsReceived() *uint64 { return nil }
+func (e *OrderBookSwapEvent) GetPointsBurned() *uint64 { return nil }
 
 // AutomaticPauseEvent represents an automatic validator pause event
 type AutomaticPauseEvent struct {
@@ -178,6 +195,8 @@ func (e *AutomaticPauseEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *AutomaticPauseEvent) GetSuccess() *bool        { return nil }
 func (e *AutomaticPauseEvent) GetLocalOrigin() *bool    { return nil }
 func (e *AutomaticPauseEvent) GetOrderID() *string      { return nil }
+func (e *AutomaticPauseEvent) GetPointsReceived() *uint64 { return nil }
+func (e *AutomaticPauseEvent) GetPointsBurned() *uint64 { return nil }
 
 // AutomaticBeginUnstakingEvent represents beginning automatic unstaking
 type AutomaticBeginUnstakingEvent struct {
@@ -194,6 +213,8 @@ func (e *AutomaticBeginUnstakingEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *AutomaticBeginUnstakingEvent) GetSuccess() *bool        { return nil }
 func (e *AutomaticBeginUnstakingEvent) GetLocalOrigin() *bool    { return nil }
 func (e *AutomaticBeginUnstakingEvent) GetOrderID() *string      { return nil }
+func (e *AutomaticBeginUnstakingEvent) GetPointsReceived() *uint64 { return nil }
+func (e *AutomaticBeginUnstakingEvent) GetPointsBurned() *uint64 { return nil }
 
 // AutomaticFinishUnstakingEvent represents finishing automatic unstaking
 type AutomaticFinishUnstakingEvent struct {
@@ -210,3 +231,5 @@ func (e *AutomaticFinishUnstakingEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *AutomaticFinishUnstakingEvent) GetSuccess() *bool        { return nil }
 func (e *AutomaticFinishUnstakingEvent) GetLocalOrigin() *bool    { return nil }
 func (e *AutomaticFinishUnstakingEvent) GetOrderID() *string      { return nil }
+func (e *AutomaticFinishUnstakingEvent) GetPointsReceived() *uint64 { return nil }
+func (e *AutomaticFinishUnstakingEvent) GetPointsBurned() *uint64 { return nil }

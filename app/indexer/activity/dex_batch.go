@@ -214,7 +214,9 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				if depositEvent.LocalOrigin != nil {
 					deposit.LocalOrigin = *depositEvent.LocalOrigin
 				}
-				// @TODO: PointsReceived should read from the events as Point (it needs to be added to EventType)
+				if depositEvent.PointsReceived != nil {
+					deposit.PointsReceived = *depositEvent.PointsReceived
+				}
 
 				deposits = append(deposits, deposit)
 			}
@@ -240,7 +242,9 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				if withdrawalEvent.RemoteAmount != nil {
 					withdrawal.RemoteAmount = *withdrawalEvent.RemoteAmount
 				}
-				// @TODO: PointsBurned should read from the events as Point (it needs to be added to EventType)
+				if withdrawalEvent.PointsBurned != nil {
+					withdrawal.PointsBurned = *withdrawalEvent.PointsBurned
+				}
 
 				withdrawals = append(withdrawals, withdrawal)
 			}

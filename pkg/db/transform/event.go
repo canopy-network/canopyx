@@ -21,20 +21,22 @@ func Event(e *rpc.RpcEvent) (*indexer.Event, error) {
 	}
 
 	return &indexer.Event{
-		Height:       e.Height,
-		ChainID:      e.ChainID,
-		Address:      e.Address,
-		Reference:    e.Reference,
-		EventType:    string(msg.Type()),
-		Amount:       msg.GetAmount(),
-		SoldAmount:   msg.GetSoldAmount(),
-		BoughtAmount: msg.GetBoughtAmount(),
-		LocalAmount:  msg.GetLocalAmount(),
-		RemoteAmount: msg.GetRemoteAmount(),
-		Success:      msg.GetSuccess(),
-		LocalOrigin:  msg.GetLocalOrigin(),
-		OrderID:      msg.GetOrderID(),
-		Msg:          string(msgJSON),
+		Height:         e.Height,
+		ChainID:        e.ChainID,
+		Address:        e.Address,
+		Reference:      e.Reference,
+		EventType:      string(msg.Type()),
+		Amount:         msg.GetAmount(),
+		SoldAmount:     msg.GetSoldAmount(),
+		BoughtAmount:   msg.GetBoughtAmount(),
+		LocalAmount:    msg.GetLocalAmount(),
+		RemoteAmount:   msg.GetRemoteAmount(),
+		Success:        msg.GetSuccess(),
+		LocalOrigin:    msg.GetLocalOrigin(),
+		OrderID:        msg.GetOrderID(),
+		PointsReceived: msg.GetPointsReceived(),
+		PointsBurned:   msg.GetPointsBurned(),
+		Msg:            string(msgJSON),
 		// HeightTime will be set later by the activity layer
 	}, nil
 }

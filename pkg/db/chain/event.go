@@ -43,7 +43,7 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 	}
 
 	stagingTable := fmt.Sprintf("%s.events_staging", db.Name)
-	query := fmt.Sprintf(`INSERT INTO %s (height, chain_id, address, reference, event_type, amount, sold_amount, bought_amount, local_amount, remote_amount, success, local_origin, order_id, msg, height_time) VALUES`, stagingTable)
+	query := fmt.Sprintf(`INSERT INTO %s (height, chain_id, address, reference, event_type, amount, sold_amount, bought_amount, local_amount, remote_amount, success, local_origin, order_id, points_received, points_burned, msg, height_time) VALUES`, stagingTable)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err
@@ -67,6 +67,8 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 			event.Success,
 			event.LocalOrigin,
 			event.OrderID,
+			event.PointsReceived,
+			event.PointsBurned,
 			event.Msg,
 			event.HeightTime,
 		)
@@ -116,7 +118,8 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, stagi
 		SELECT
 			height, chain_id, address, reference, event_type,
 			amount, sold_amount, bought_amount, local_amount, remote_amount,
-			success, local_origin, order_id, msg, height_time
+			success, local_origin, order_id, points_received, points_burned,
+			msg, height_time
 		FROM "%s"."%s" FINAL
 		WHERE height = ? AND %s
 		ORDER BY reference, event_type
@@ -152,6 +155,8 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, stagi
 			&event.Success,
 			&event.LocalOrigin,
 			&event.OrderID,
+			&event.PointsReceived,
+			&event.PointsBurned,
 			&event.Msg,
 			&event.HeightTime,
 		); err != nil {

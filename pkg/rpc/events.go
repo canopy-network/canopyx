@@ -103,6 +103,8 @@ func (e *UnknownEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *UnknownEvent) GetSuccess() *bool        { return nil }
 func (e *UnknownEvent) GetLocalOrigin() *bool    { return nil }
 func (e *UnknownEvent) GetOrderID() *string      { return nil }
+func (e *UnknownEvent) GetPointsReceived() *uint64 { return nil }
+func (e *UnknownEvent) GetPointsBurned() *uint64 { return nil }
 
 // EventsByHeight returns all raw RPC events for a given height.
 // Callers should convert to indexer models using transform.Event() if needed.

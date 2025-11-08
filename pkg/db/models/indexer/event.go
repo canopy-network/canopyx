@@ -23,6 +23,8 @@ var EventColumns = []ColumnDef{
 	{Name: "success", Type: "Nullable(Bool)"},
 	{Name: "local_origin", Type: "Nullable(Bool)"},
 	{Name: "order_id", Type: "Nullable(String)"},
+	{Name: "points_received", Type: "Nullable(UInt64)"},
+	{Name: "points_burned", Type: "Nullable(UInt64)"},
 	{Name: "msg", Type: "String", Codec: "ZSTD(3)"},
 	{Name: "height_time", Type: "DateTime64(6)"},
 }
@@ -50,9 +52,11 @@ type Event struct {
 	BoughtAmount *uint64 `ch:"bought_amount" json:"bought_amount,omitempty"`
 	LocalAmount  *uint64 `ch:"local_amount" json:"local_amount,omitempty"`
 	RemoteAmount *uint64 `ch:"remote_amount" json:"remote_amount,omitempty"`
-	Success      *bool   `ch:"success" json:"success,omitempty"`
-	LocalOrigin  *bool   `ch:"local_origin" json:"local_origin,omitempty"`
-	OrderID      *string `ch:"order_id" json:"order_id,omitempty"`
+	Success        *bool   `ch:"success" json:"success,omitempty"`
+	LocalOrigin    *bool   `ch:"local_origin" json:"local_origin,omitempty"`
+	OrderID        *string `ch:"order_id" json:"order_id,omitempty"`
+	PointsReceived *uint64 `ch:"points_received" json:"points_received,omitempty"`
+	PointsBurned   *uint64 `ch:"points_burned" json:"points_burned,omitempty"`
 
 	// Full message (compressed)
 	Msg string `ch:"msg" json:"msg"`
