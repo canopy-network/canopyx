@@ -7,28 +7,18 @@ import (
 
 // RpcOrder represents an order returned from Canopy's RPC endpoint.
 // This maps to the SellOrder proto structure returned by /v1/query/order and /v1/query/orders.
+// See: /home/overlordyorch/Development/canopy/lib/.proto/swap.proto
 type RpcOrder struct {
-	OrderID         string  `json:"orderId"`         // Unique order identifier
-	Committee       uint64  `json:"committee"`       // Committee ID for the order
-	AmountForSale   uint64  `json:"amountForSale"`   // Amount being sold
-	RequestedAmount uint64  `json:"requestedAmount"` // Amount requested in return
-	SellerAddress   string  `json:"sellerAddress"`   // (SellerReceiveAddress) Address of the seller
-	BuyerAddress    *string `json:"buyerAddress"`    // Address of the buyer (null if not filled) - SPLIT into recieve/send (BuyerSendAddress|BuyerReceiveAddress)
-	Deadline        *uint64 `json:"deadline"`        // Order deadline height (null if no deadline)
-	Status          string  `json:"status"`          // Order status: "open", "complete", "canceled"
-
-	// TODO: Add missing fields
-	//  // seller_receive_address: the external chain address to receive the 'counter-asset'
-	//  bytes SellerReceiveAddress = 6; // @gotags: json:"sellerReceiveAddress"
-	//  // buyer_send_address: the address the buyer will be transferring the funds from
-	//  bytes BuyerSendAddress = 7; // @gotags: json:"buyerSendAddress"
-	//  // buyer_receive_address: the buyer Canopy address to receive the CNPY
-	//  bytes BuyerReceiveAddress = 8; // @gotags: json:"buyerReceiveAddress"
-	//  // buyer_chain_deadline: the external chain height deadline to send the 'tokens' to SellerReceiveAddress
-	//  uint64 BuyerChainDeadline = 9; // @gotags: json:"buyerChainDeadline"
-	//  // sellers_send_address: the signing address of seller who is selling the CNPY
-	//  bytes SellersSendAddress = 10; // @gotags: json:"sellersSendAddress"
-	//  // "data" same of the event - needs eric oracle pr (probably save as is)
+	ID                   string `json:"id"`                   // Unique order identifier (20 bytes hex)
+	Committee            uint64 `json:"committee"`            // Committee ID for the order
+	Data                 string `json:"data"`                 // Generic data field for committee-specific functionality
+	AmountForSale        uint64 `json:"amountForSale"`        // Amount of CNPY for sale
+	RequestedAmount      uint64 `json:"requestedAmount"`      // Amount of counter-asset to receive
+	SellerReceiveAddress string `json:"sellerReceiveAddress"` // External chain address to receive counter-asset
+	BuyerSendAddress     string `json:"buyerSendAddress"`     // Address buyer transfers funds from (empty if not locked)
+	BuyerReceiveAddress  string `json:"buyerReceiveAddress"`  // Buyer Canopy address to receive CNPY (empty if not locked)
+	BuyerChainDeadline   uint64 `json:"buyerChainDeadline"`   // External chain height deadline (0 if not locked)
+	SellersSendAddress   string `json:"sellersSendAddress"`   // Signing address of seller selling CNPY
 }
 
 // RpcOrderBook represents an order book for a specific chain.

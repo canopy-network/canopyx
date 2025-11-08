@@ -103,7 +103,7 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 	// Map key is orderID, value is the full order state
 	prevMap := make(map[string]*rpc.RpcOrder, len(previousOrders))
 	for _, order := range previousOrders {
-		prevMap[order.OrderID] = order
+		prevMap[order.ID] = order
 	}
 
 	// Query order lifecycle events from staging table (event-driven state tracking)
@@ -130,29 +130,76 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 	// Compare and collect changed orders
 	changedOrders := make([]*indexer.Order, 0)
 	for _, curr := range currentOrders {
-		prev, existed := prevMap[curr.OrderID]
+		prev, existed := prevMap[curr.ID]
 
-		// Check if the order has a swap event (state transition to "filled")
-		_, hasSwapEvent := swapEvents[curr.OrderID]
+		// Check if the order has a swap event (state transition to "complete")
+		_, hasSwapEvent := swapEvents[curr.ID]
 
 		// Determine if order state changed
-		// We check all significant fields: amount, status, buyer, deadline,
+		// We check all significant fields: amount, buyer details, deadline,
 		// OR if there's a swap event indicating state transition
 		hasChanged := !existed || hasSwapEvent || orderStateChanged(prev, curr)
 
 		if hasChanged {
+			// Derive status from events and state:
+			// - "complete" if there's a swap event
+			// - "open" otherwise (order exists in current state)
+			status := indexer.OrderStatusOpen
+			if hasSwapEvent {
+				status = indexer.OrderStatusComplete
+			}
+
 			changedOrders = append(changedOrders, &indexer.Order{
-				OrderID:         curr.OrderID,
-				Height:          input.Height,
-				HeightTime:      input.BlockTime,
-				Committee:       curr.Committee,
-				AmountForSale:   curr.AmountForSale,
-				RequestedAmount: curr.RequestedAmount,
-				SellerAddress:   curr.SellerAddress,
-				BuyerAddress:    curr.BuyerAddress,
-				Deadline:        curr.Deadline,
-				Status:          curr.Status,
+				OrderID:              curr.ID,
+				Height:               input.Height,
+				HeightTime:           input.BlockTime,
+				Committee:            curr.Committee,
+				Data:                 curr.Data,
+				AmountForSale:        curr.AmountForSale,
+				RequestedAmount:      curr.RequestedAmount,
+				SellerReceiveAddress: curr.SellerReceiveAddress,
+				BuyerSendAddress:     curr.BuyerSendAddress,
+				BuyerReceiveAddress:  curr.BuyerReceiveAddress,
+				BuyerChainDeadline:   curr.BuyerChainDeadline,
+				SellersSendAddress:   curr.SellersSendAddress,
+				Status:               status,
 			})
+		}
+	}
+
+	// Check for canceled orders (existed at H-1 but not at H, and no swap event)
+	for prevID, prevOrder := range prevMap {
+		// Check if order exists at current height
+		_, existsNow := func() (bool, bool) {
+			for _, curr := range currentOrders {
+				if curr.ID == prevID {
+					return true, true
+				}
+			}
+			return false, false
+		}()
+
+		// If order disappeared and there's no swap event, it was canceled
+		if !existsNow {
+			_, hasSwapEvent := swapEvents[prevID]
+			if !hasSwapEvent {
+				// Order was canceled - create a final snapshot with "canceled" status
+				changedOrders = append(changedOrders, &indexer.Order{
+					OrderID:              prevOrder.ID,
+					Height:               input.Height,
+					HeightTime:           input.BlockTime,
+					Committee:            prevOrder.Committee,
+					Data:                 prevOrder.Data,
+					AmountForSale:        prevOrder.AmountForSale,
+					RequestedAmount:      prevOrder.RequestedAmount,
+					SellerReceiveAddress: prevOrder.SellerReceiveAddress,
+					BuyerSendAddress:     prevOrder.BuyerSendAddress,
+					BuyerReceiveAddress:  prevOrder.BuyerReceiveAddress,
+					BuyerChainDeadline:   prevOrder.BuyerChainDeadline,
+					SellersSendAddress:   prevOrder.SellersSendAddress,
+					Status:               indexer.OrderStatusCanceled,
+				})
+			}
 		}
 	}
 
@@ -183,50 +230,30 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 // Returns true if any significant field has changed.
 func orderStateChanged(prev, curr *rpc.RpcOrder) bool {
 	// Check all significant fields
+	if prev.Data != curr.Data {
+		return true
+	}
 	if prev.AmountForSale != curr.AmountForSale {
 		return true
 	}
 	if prev.RequestedAmount != curr.RequestedAmount {
 		return true
 	}
-	if prev.Status != curr.Status {
+	if prev.SellerReceiveAddress != curr.SellerReceiveAddress {
 		return true
 	}
-	if prev.SellerAddress != curr.SellerAddress {
+	if prev.BuyerSendAddress != curr.BuyerSendAddress {
 		return true
 	}
-
-	// Check nullable fields (buyer address, deadline)
-	if !stringPtrEqual(prev.BuyerAddress, curr.BuyerAddress) {
+	if prev.BuyerReceiveAddress != curr.BuyerReceiveAddress {
 		return true
 	}
-	if !uint64PtrEqual(prev.Deadline, curr.Deadline) {
+	if prev.BuyerChainDeadline != curr.BuyerChainDeadline {
+		return true
+	}
+	if prev.SellersSendAddress != curr.SellersSendAddress {
 		return true
 	}
 
 	return false
-}
-
-// stringPtrEqual compares two nullable string pointers.
-// Returns true if both are nil or both point to the same value.
-func stringPtrEqual(a, b *string) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
-}
-
-// uint64PtrEqual compares two nullable uint64 pointers.
-// Returns true if both are nil or both point to the same value.
-func uint64PtrEqual(a, b *uint64) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
 }

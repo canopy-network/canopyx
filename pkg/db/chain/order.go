@@ -56,11 +56,14 @@ func (db *DB) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.O
 			order.Height,
 			order.HeightTime,
 			order.Committee,
+			order.Data,
 			order.AmountForSale,
 			order.RequestedAmount,
-			order.SellerAddress,
-			order.BuyerAddress,
-			order.Deadline,
+			order.SellerReceiveAddress,
+			order.BuyerSendAddress,
+			order.BuyerReceiveAddress,
+			order.BuyerChainDeadline,
+			order.SellersSendAddress,
 			order.Status,
 		)
 		if err != nil {
