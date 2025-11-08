@@ -2,10 +2,11 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
@@ -66,35 +67,49 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		currentH1Err     error
 		currentErr       error
 		nextErr          error
-		wg               sync.WaitGroup
 	)
 
-	wg.Add(3)
+	// Get a subgroup from the shared worker pool for parallel RPC fetching
+	pool := ac.WorkerPool(3)
+	group := pool.NewGroupContext(ctx)
+	groupCtx := group.Context()
 
 	// Worker 1: Fetch ALL current batches (locked orders across all committees)
-	go func() {
-		defer wg.Done()
-		currentBatches, currentErr = cli.AllDexBatchesByHeight(ctx, in.Height)
-	}()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		currentBatches, currentErr = cli.AllDexBatchesByHeight(groupCtx, in.Height)
+	})
 
 	// Worker 2: Fetch ALL next batches (future orders across all committees)
-	go func() {
-		defer wg.Done()
-		nextBatches, nextErr = cli.AllNextDexBatchesByHeight(ctx, in.Height)
-	}()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		nextBatches, nextErr = cli.AllNextDexBatchesByHeight(groupCtx, in.Height)
+	})
 
-	go func() {
-		defer wg.Done()
+	// Worker 3: Fetch current batches at H-1 for event processing
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
 		if in.Height <= 1 {
 			currentBatchesH1 = make([]*rpc.RpcDexBatch, 0)
 			return
 		}
+		currentBatchesH1, currentH1Err = cli.AllDexBatchesByHeight(groupCtx, in.Height-1)
+	})
 
-		currentBatchesH1, currentH1Err = cli.AllDexBatchesByHeight(ctx, in.Height-1)
-	}()
-
-	// Wait for both workers
-	wg.Wait()
+	// Wait for all workers to complete
+	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		ac.Logger.Warn("parallel RPC fetch encountered error",
+			zap.Uint64("chainId", ac.ChainID),
+			zap.Uint64("height", in.Height),
+			zap.Error(err),
+		)
+	}
 
 	// Check for errors (empty batches are acceptable - means no batches at this height)
 	if currentErr != nil {

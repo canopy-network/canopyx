@@ -2,10 +2,11 @@ package activity
 
 import (
     "context"
+    "errors"
     "fmt"
-    "sync"
     "time"
 
+    "github.com/alitto/pond/v2"
     "github.com/canopy-network/canopyx/pkg/rpc"
 
     "github.com/canopy-network/canopyx/app/indexer/types"
@@ -41,44 +42,58 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
         rpcPoolsErr   error
         prevPoolsErr  error
         eventsErr     error
-        wg            sync.WaitGroup
     )
 
-    wg.Add(3)
+    // Get a subgroup from the shared worker pool for parallel RPC fetching
+    pool := ac.WorkerPool(3)
+    group := pool.NewGroupContext(ctx)
+    groupCtx := group.Context()
 
     // Worker 1: Fetch current pools at H
-    go func() {
-        defer wg.Done()
-        rpcPools, rpcPoolsErr = cli.PoolsByHeight(ctx, in.Height)
-    }()
+    group.Submit(func() {
+        if err := groupCtx.Err(); err != nil {
+            return
+        }
+        rpcPools, rpcPoolsErr = cli.PoolsByHeight(groupCtx, in.Height)
+    })
 
     // Worker 2: Fetch previous pools at H-1 for snapshot-on-change
-    go func() {
-        defer wg.Done()
+    group.Submit(func() {
+        if err := groupCtx.Err(); err != nil {
+            return
+        }
         if in.Height == 1 {
             previousPools = make([]*rpc.RpcPool, 0)
             return
         }
-        previousPools, prevPoolsErr = cli.PoolsByHeight(ctx, in.Height-1)
-    }()
+        previousPools, prevPoolsErr = cli.PoolsByHeight(groupCtx, in.Height-1)
+    })
 
     // Worker 3: Query pool events from staging table (event-driven correlation)
     // These events provide context for pool state changes:
     // - EventDexLiquidityDeposit: LP adds liquidity
     // - EventDexLiquidityWithdraw: LP removes liquidity
     // - EventDexSwap: Swap executes affecting pool balances
-    go func() {
-        defer wg.Done()
+    group.Submit(func() {
+        if err := groupCtx.Err(); err != nil {
+            return
+        }
         poolEvents, eventsErr = chainDb.GetEventsByTypeAndHeight(
-            ctx, in.Height, true,
+            groupCtx, in.Height, true,
             rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit),
             rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw),
             rpc.EventTypeAsStr(rpc.EventTypeDexSwap),
         )
-    }()
+    })
 
     // Wait for all workers to complete
-    wg.Wait()
+    if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+        ac.Logger.Warn("parallel RPC fetch encountered error",
+            zap.Uint64("chainId", ac.ChainID),
+            zap.Uint64("height", in.Height),
+            zap.Error(err),
+        )
+    }
 
     // Check all worker errors
     if rpcPoolsErr != nil {

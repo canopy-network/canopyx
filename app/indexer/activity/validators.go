@@ -2,10 +2,11 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
@@ -42,7 +43,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		return types.ActivityIndexValidatorsOutput{}, err
 	}
 
-	// Parallel RPC fetch using goroutines for performance
+	// Parallel RPC fetch using shared worker pool for performance
 	var (
 		currentValidators     []*rpc.RpcValidator
 		previousValidators    []*rpc.RpcValidator
@@ -56,66 +57,86 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		prevNonSignersErr     error
 		doubleSignersErr      error
 		prevDoubleSignersErr  error
-		wg                    sync.WaitGroup
 	)
 
-	wg.Add(6)
+	// Get a subgroup from the shared worker pool for parallel RPC fetching
+	pool := ac.WorkerPool(6)
+	group := pool.NewGroupContext(ctx)
+	groupCtx := group.Context()
 
 	// Worker 1: Fetch current height validators from RPC
-	go func() {
-		defer wg.Done()
-		currentValidators, currentErr = cli.ValidatorsByHeight(ctx, input.Height)
-	}()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		currentValidators, currentErr = cli.ValidatorsByHeight(groupCtx, input.Height)
+	})
 
 	// Worker 2: Fetch previous state
 	// - If height 1: use empty state (genesis)
 	// - Otherwise: fetch height-1 from RPC
-	go func() {
-		defer wg.Done()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
 		if input.Height == 1 {
 			// Genesis case: whatever comes at height 1 is the genesis state
 			previousValidators = make([]*rpc.RpcValidator, 0)
 		} else if input.Height > 1 {
 			// Normal case: fetch from RPC at height-1
 			// This queries the validator state as it existed at the previous block
-			previousValidators, previousErr = cli.ValidatorsByHeight(ctx, input.Height-1)
+			previousValidators, previousErr = cli.ValidatorsByHeight(groupCtx, input.Height-1)
 		}
-	}()
+	})
 
 	// Worker 3: Fetch current non-signers
-	go func() {
-		defer wg.Done()
-		currentNonSigners, nonSignersErr = cli.NonSignersByHeight(ctx, input.Height)
-	}()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		currentNonSigners, nonSignersErr = cli.NonSignersByHeight(groupCtx, input.Height)
+	})
 
 	// Worker 4: Fetch previous non-signers
-	go func() {
-		defer wg.Done()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
 		if input.Height == 1 {
 			previousNonSigners = make([]*rpc.RpcNonSigner, 0)
 		} else if input.Height > 1 {
-			previousNonSigners, prevNonSignersErr = cli.NonSignersByHeight(ctx, input.Height-1)
+			previousNonSigners, prevNonSignersErr = cli.NonSignersByHeight(groupCtx, input.Height-1)
 		}
-	}()
+	})
 
 	// Worker 5: Fetch current double-signers
-	go func() {
-		defer wg.Done()
-		currentDoubleSigners, doubleSignersErr = cli.DoubleSignersByHeight(ctx, input.Height)
-	}()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		currentDoubleSigners, doubleSignersErr = cli.DoubleSignersByHeight(groupCtx, input.Height)
+	})
 
 	// Worker 6: Fetch previous double-signers
-	go func() {
-		defer wg.Done()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
 		if input.Height == 1 {
 			previousDoubleSigners = make([]*rpc.RpcDoubleSigner, 0)
 		} else if input.Height > 1 {
-			previousDoubleSigners, prevDoubleSignersErr = cli.DoubleSignersByHeight(ctx, input.Height-1)
+			previousDoubleSigners, prevDoubleSignersErr = cli.DoubleSignersByHeight(groupCtx, input.Height-1)
 		}
-	}()
+	})
 
 	// Wait for all workers to complete
-	wg.Wait()
+	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		ac.Logger.Warn("parallel RPC fetch encountered error",
+			zap.Uint64("chainId", ac.ChainID),
+			zap.Uint64("height", input.Height),
+			zap.Error(err),
+		)
+	}
 
 	// Check for errors - all RPC calls must succeed to ensure data integrity
 	if currentErr != nil {

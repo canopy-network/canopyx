@@ -28,11 +28,11 @@ type Context struct {
 	TemporalClient *temporalclient.Client
 	// For publishing real-time events
 	RedisClient *redis.Client
-	// SchedulerMaxParallelism allows overriding the default scheduling pool size.
-	SchedulerMaxParallelism int
-	schedulerPoolOnce       sync.Once
-	schedulerPool           pond.Pool
-	schedulerPoolSize       int
+	// WorkerMaxParallelism allows overriding the default worker pool size.
+	WorkerMaxParallelism int
+	workerPoolOnce       sync.Once
+	workerPool           pond.Pool
+	workerPoolSize       int
 }
 
 // GetChainDb return chain db or create it to return
@@ -68,32 +68,33 @@ func (ac *Context) rpcClient(ctx context.Context) (rpc.Client, error) {
 	return factory.NewClient(ch.RPCEndpoints), nil
 }
 
-// schedulerBatchPool returns a shared worker pool for batch scheduling activities.
+// WorkerPool returns a shared worker pool for parallel RPC fetching and batch operations.
 // Pool size defaults to four workers per CPU (with sensible caps) but can be overridden.
-func (ac *Context) schedulerBatchPool(batchSize int) pond.Pool {
-	ac.schedulerPoolOnce.Do(func() {
-		maxWorkers := SchedulerParallelism(ac.SchedulerMaxParallelism)
-		ac.schedulerPoolSize = maxWorkers
-		queueSize := SchedulerQueueSize(maxWorkers, batchSize)
-		ac.schedulerPool = pond.NewPool(
+// Use NewGroupContext() on the returned pool to get a subgroup for specific tasks.
+func (ac *Context) WorkerPool(batchSize int) pond.Pool {
+	ac.workerPoolOnce.Do(func() {
+		maxWorkers := WorkerParallelism(ac.WorkerMaxParallelism)
+		ac.workerPoolSize = maxWorkers
+		queueSize := WorkerQueueSize(maxWorkers, batchSize)
+		ac.workerPool = pond.NewPool(
 			maxWorkers,
 			pond.WithQueueSize(queueSize),
 		)
 	})
 
-	return ac.schedulerPool
+	return ac.workerPool
 }
 
-// SchedulerPoolSize exposes the configured pool size for logging purposes.
-func (ac *Context) SchedulerPoolSize() int {
-	if ac.schedulerPoolSize != 0 {
-		return ac.schedulerPoolSize
+// WorkerPoolSize exposes the configured pool size for logging purposes.
+func (ac *Context) WorkerPoolSize() int {
+	if ac.workerPoolSize != 0 {
+		return ac.workerPoolSize
 	}
-	return SchedulerParallelism(ac.SchedulerMaxParallelism)
+	return WorkerParallelism(ac.WorkerMaxParallelism)
 }
 
-// SchedulerParallelism calculates the optimal parallelism for the scheduler pool.
-func SchedulerParallelism(override int) int {
+// WorkerParallelism calculates the optimal parallelism for the worker pool.
+func WorkerParallelism(override int) int {
 	if override > 0 {
 		if override > 512 {
 			return 512
@@ -118,8 +119,8 @@ func SchedulerParallelism(override int) int {
 	return parallelism
 }
 
-// SchedulerQueueSize calculates the optimal queue size for the scheduler pool.
-func SchedulerQueueSize(parallelism, batchSize int) int {
+// WorkerQueueSize calculates the optimal queue size for the worker pool.
+func WorkerQueueSize(parallelism, batchSize int) int {
 	if parallelism < 1 {
 		parallelism = 1
 	}

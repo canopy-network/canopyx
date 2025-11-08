@@ -2,10 +2,12 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
@@ -31,10 +33,54 @@ func (ac *Context) IndexParams(ctx context.Context, in types.ActivityIndexAtHeig
 		return types.ActivityIndexParamsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	// Fetch params at the current height (H)
-	paramsAtH, err := cli.AllParamsByHeight(ctx, in.Height)
-	if err != nil {
-		return types.ActivityIndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height, err)
+	// Parallel RPC fetch using shared worker pool for performance
+	var (
+		paramsAtH   *rpc.RpcAllParams
+		paramsAtH1  *rpc.RpcAllParams
+		paramsErr   error
+		paramsH1Err error
+	)
+
+	// Get a subgroup from the shared worker pool for parallel RPC fetching
+	pool := ac.WorkerPool(2)
+	group := pool.NewGroupContext(ctx)
+	groupCtx := group.Context()
+
+	// Worker 1: Fetch params at height H
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		paramsAtH, paramsErr = cli.AllParamsByHeight(groupCtx, in.Height)
+	})
+
+	// Worker 2: Fetch params at height H-1
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		if in.Height <= 1 {
+			paramsAtH1 = nil
+			return
+		}
+		paramsAtH1, paramsH1Err = cli.AllParamsByHeight(groupCtx, in.Height-1)
+	})
+
+	// Wait for all workers to complete
+	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		ac.Logger.Warn("parallel RPC fetch encountered error",
+			zap.Uint64("chainId", ac.ChainID),
+			zap.Uint64("height", in.Height),
+			zap.Error(err),
+		)
+	}
+
+	// Check for errors
+	if paramsErr != nil {
+		return types.ActivityIndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height, paramsErr)
+	}
+	if paramsH1Err != nil {
+		return types.ActivityIndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height-1, paramsH1Err)
 	}
 
 	// Convert RPC params at H to an entity model
@@ -48,12 +94,6 @@ func (ac *Context) IndexParams(ctx context.Context, in types.ActivityIndexAtHeig
 		ac.Logger.Debug("IndexParams genesis block - inserting initial params",
 			zap.Uint64("height", in.Height))
 	} else {
-		// Fetch params at the previous height (H-1)
-		paramsAtH1, err := cli.AllParamsByHeight(ctx, in.Height-1)
-		if err != nil {
-			return types.ActivityIndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height-1, err)
-		}
-
 		// Convert RPC params at H-1 to an entity model (using dummy time since we only compare values)
 		prevParams := convertRpcParamsToEntity(paramsAtH1, in.Height-1, time.Time{})
 

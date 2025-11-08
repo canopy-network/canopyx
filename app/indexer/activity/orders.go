@@ -2,10 +2,11 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
@@ -48,35 +49,47 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 		return types.ActivityIndexOrdersOutput{}, err
 	}
 
-	// Parallel RPC fetch using goroutines for performance
+	// Parallel RPC fetch using shared worker pool for performance
 	var (
 		currentOrders  []*rpc.RpcOrder
 		previousOrders []*rpc.RpcOrder
 		currentErr     error
 		previousErr    error
-		wg             sync.WaitGroup
 	)
 
-	wg.Add(2)
+	// Get a subgroup from the shared worker pool for parallel RPC fetching
+	pool := ac.WorkerPool(2)
+	group := pool.NewGroupContext(ctx)
+	groupCtx := group.Context()
 
 	// Worker 1: Fetch current height orders from RPC
-	go func() {
-		defer wg.Done()
-		currentOrders, currentErr = cli.OrdersByHeight(ctx, input.Height, ac.ChainID)
-	}()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		currentOrders, currentErr = cli.OrdersByHeight(groupCtx, input.Height, ac.ChainID)
+	})
 
 	// Worker 2: Fetch previous height orders from RPC
 	// Note: Unlike accounts, orders don't have genesis state, so we just fetch from RPC
 	// At height 1 (genesis), there are no previous orders to fetch
-	go func() {
-		defer wg.Done()
-		if input.Height > 1 {
-			previousOrders, previousErr = cli.OrdersByHeight(ctx, input.Height-1, ac.ChainID)
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
 		}
-	}()
+		if input.Height > 1 {
+			previousOrders, previousErr = cli.OrdersByHeight(groupCtx, input.Height-1, ac.ChainID)
+		}
+	})
 
-	// Wait for both workers to complete
-	wg.Wait()
+	// Wait for all workers to complete
+	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		ac.Logger.Warn("parallel RPC fetch encountered error",
+			zap.Uint64("chainId", ac.ChainID),
+			zap.Uint64("height", input.Height),
+			zap.Error(err),
+		)
+	}
 
 	// Check for errors
 	if currentErr != nil {

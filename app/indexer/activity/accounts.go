@@ -2,10 +2,11 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
@@ -47,39 +48,51 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 		return types.ActivityIndexAccountsOutput{}, err
 	}
 
-	// Parallel RPC fetch using goroutines for performance
+	// Parallel RPC fetch using shared worker pool for performance
 	var (
 		currentAccounts  []*rpc.Account
 		previousAccounts []*rpc.Account
 		currentErr       error
 		previousErr      error
-		wg               sync.WaitGroup
 	)
 
-	wg.Add(2)
+	// Get a subgroup from the shared worker pool for parallel RPC fetching
+	pool := ac.WorkerPool(2)
+	group := pool.NewGroupContext(ctx)
+	groupCtx := group.Context()
 
 	// Worker 1: Fetch current height accounts from RPC
-	go func() {
-		defer wg.Done()
-		currentAccounts, currentErr = cli.AccountsByHeight(ctx, input.Height)
-	}()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		currentAccounts, currentErr = cli.AccountsByHeight(groupCtx, input.Height)
+	})
 
 	// Worker 2: Fetch previous state
 	// - If height 1: read genesis from DB cache
 	// - Otherwise: fetch height-1 from RPC
-	go func() {
-		defer wg.Done()
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
 		if input.Height == 1 {
 			// Genesis case: whatever comes at height 1 is the genesis state, so we should save them always.
 			previousAccounts = make([]*rpc.Account, 0)
 		} else if input.Height > 1 {
 			// Normal case: fetch from RPC
-			previousAccounts, previousErr = cli.AccountsByHeight(ctx, input.Height-1)
+			previousAccounts, previousErr = cli.AccountsByHeight(groupCtx, input.Height-1)
 		}
-	}()
+	})
 
-	// Wait for both workers to complete
-	wg.Wait()
+	// Wait for all workers to complete
+	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		ac.Logger.Warn("parallel RPC fetch encountered error",
+			zap.Uint64("chainId", ac.ChainID),
+			zap.Uint64("height", input.Height),
+			zap.Error(err),
+		)
+	}
 
 	// Check for errors
 	if currentErr != nil {

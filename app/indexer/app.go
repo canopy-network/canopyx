@@ -130,15 +130,15 @@ func Initialize(ctx context.Context) *App {
 	}
 
 	activityContext := &activity.Context{
-		ChainID:                 chainIDUint,
-		Logger:                  logger,
-		AdminDB:                 indexerDb,
-		ChainDB:                 chainDb,
-		RPCFactory:              rpc.NewHTTPFactory(rpcOpts),
-		RPCOpts:                 rpcOpts,
-		TemporalClient:          temporalClient,
-		RedisClient:             redisClient,
-		SchedulerMaxParallelism: utils.EnvInt("SCHEDULER_BATCH_MAX_PARALLELISM", 0),
+		ChainID:              chainIDUint,
+		Logger:               logger,
+		AdminDB:              indexerDb,
+		ChainDB:              chainDb,
+		RPCFactory:           rpc.NewHTTPFactory(rpcOpts),
+		RPCOpts:              rpcOpts,
+		TemporalClient:       temporalClient,
+		RedisClient:          redisClient,
+		WorkerMaxParallelism: utils.EnvInt("SCHEDULER_BATCH_MAX_PARALLELISM", 0),
 	}
 	workflowContext := workflow.Context{
 		ChainID:         chainIDUint,

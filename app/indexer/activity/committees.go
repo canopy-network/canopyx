@@ -2,11 +2,14 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -28,21 +31,114 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 		return types.ActivityIndexCommitteesOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	// Fetch committees at current height (H)
-	committeesAtH, err := cli.CommitteesDataByHeight(ctx, in.Height)
-	if err != nil {
-		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height, err)
+	// Parallel RPC fetch using shared worker pool for performance
+	var (
+		committeesAtH    []*rpc.RpcCommitteeData
+		committeesAtH1   []*rpc.RpcCommitteeData
+		subsidizedAtH    []uint64
+		subsidizedAtH1   []uint64
+		retiredAtH       []uint64
+		retiredAtH1      []uint64
+		committeesErr    error
+		committeesH1Err  error
+		subsidizedErr    error
+		subsidizedH1Err  error
+		retiredErr       error
+		retiredH1Err     error
+	)
+
+	// Get a subgroup from the shared worker pool for parallel RPC fetching (6 workers)
+	pool := ac.WorkerPool(6)
+	group := pool.NewGroupContext(ctx)
+	groupCtx := group.Context()
+
+	// Worker 1: Fetch committees at height H
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		committeesAtH, committeesErr = cli.CommitteesDataByHeight(groupCtx, in.Height)
+	})
+
+	// Worker 2: Fetch subsidized committees at height H
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		subsidizedAtH, subsidizedErr = cli.SubsidizedCommitteesByHeight(groupCtx, in.Height)
+	})
+
+	// Worker 3: Fetch retired committees at height H
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		retiredAtH, retiredErr = cli.RetiredCommitteesByHeight(groupCtx, in.Height)
+	})
+
+	// Worker 4: Fetch committees at height H-1
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		if in.Height <= 1 {
+			committeesAtH1 = make([]*rpc.RpcCommitteeData, 0)
+			return
+		}
+		committeesAtH1, committeesH1Err = cli.CommitteesDataByHeight(groupCtx, in.Height-1)
+	})
+
+	// Worker 5: Fetch subsidized committees at height H-1
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		if in.Height <= 1 {
+			subsidizedAtH1 = make([]uint64, 0)
+			return
+		}
+		subsidizedAtH1, subsidizedH1Err = cli.SubsidizedCommitteesByHeight(groupCtx, in.Height-1)
+	})
+
+	// Worker 6: Fetch retired committees at height H-1
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		if in.Height <= 1 {
+			retiredAtH1 = make([]uint64, 0)
+			return
+		}
+		retiredAtH1, retiredH1Err = cli.RetiredCommitteesByHeight(groupCtx, in.Height-1)
+	})
+
+	// Wait for all workers to complete
+	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		ac.Logger.Warn("parallel RPC fetch encountered error",
+			zap.Uint64("chainId", ac.ChainID),
+			zap.Uint64("height", in.Height),
+			zap.Error(err),
+		)
 	}
 
-	// Also fetch subsidized and retired lists at H
-	subsidizedAtH, err := cli.SubsidizedCommitteesByHeight(ctx, in.Height)
-	if err != nil {
-		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height, err)
+	// Check for errors
+	if committeesErr != nil {
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height, committeesErr)
 	}
-
-	retiredAtH, err := cli.RetiredCommitteesByHeight(ctx, in.Height)
-	if err != nil {
-		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height, err)
+	if subsidizedErr != nil {
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height, subsidizedErr)
+	}
+	if retiredErr != nil {
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height, retiredErr)
+	}
+	if committeesH1Err != nil {
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height-1, committeesH1Err)
+	}
+	if subsidizedH1Err != nil {
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height-1, subsidizedH1Err)
+	}
+	if retiredH1Err != nil {
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height-1, retiredH1Err)
 	}
 
 	// Build lookup maps for subsidized and retired status at H
@@ -82,23 +178,6 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 			zap.Uint64("height", in.Height),
 			zap.Int("numCommittees", len(changedCommittees)))
 	} else {
-		// Fetch committees at previous height (H-1)
-		committeesAtH1, err := cli.CommitteesDataByHeight(ctx, in.Height-1)
-		if err != nil {
-			return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch committees at height %d: %w", in.Height-1, err)
-		}
-
-		// Fetch subsidized and retired lists at H-1
-		subsidizedAtH1, err := cli.SubsidizedCommitteesByHeight(ctx, in.Height-1)
-		if err != nil {
-			return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", in.Height-1, err)
-		}
-
-		retiredAtH1, err := cli.RetiredCommitteesByHeight(ctx, in.Height-1)
-		if err != nil {
-			return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height-1, err)
-		}
-
 		// Build lookup maps for subsidized and retired status at H-1
 		subsidizedMapAtH1 := make(map[uint64]bool)
 		for _, chainID := range subsidizedAtH1 {

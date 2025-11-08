@@ -415,7 +415,7 @@ func (ac *Context) scheduleBatchToQueue(ctx context.Context, in types.ActivityBa
 		}, nil
 	}
 
-	pool := ac.schedulerBatchPool(totalHeights)
+	pool := ac.WorkerPool(totalHeights)
 	group := pool.NewGroupContext(ctx)
 	groupCtx := group.Context()
 
@@ -481,7 +481,7 @@ func (ac *Context) scheduleBatchToQueue(ctx context.Context, in types.ActivityBa
 		rate = float64(totalProcessed) / (durationMs / 1000.0)
 	}
 
-	parallelism := ac.SchedulerPoolSize()
+	parallelism := ac.WorkerPoolSize()
 	if totalHeights < parallelism {
 		parallelism = totalHeights
 	}
