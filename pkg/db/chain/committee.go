@@ -13,28 +13,23 @@ import (
 // All numeric columns use Delta+ZSTD compression for optimal storage.
 // Boolean columns are stored as UInt8 (0=false, 1=true).
 func (db *DB) initCommittees(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.CommitteeColumns)
+
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			chain_id UInt64 CODEC(Delta, ZSTD(3)),
-			last_root_height_updated UInt64 CODEC(Delta, ZSTD(3)),
-			last_chain_height_updated UInt64 CODEC(Delta, ZSTD(3)),
-			number_of_samples UInt64 CODEC(Delta, ZSTD(3)),
-			subsidized UInt8,
-			retired UInt8,
-			height UInt64 CODEC(Delta, ZSTD(3)),
-			height_time DateTime64(6)
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (chain_id, height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteeProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteeStagingTableName, err)
 	}

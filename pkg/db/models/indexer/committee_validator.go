@@ -7,6 +7,16 @@ import (
 const CommitteeValidatorProductionTableName = "committee_validators"
 const CommitteeValidatorStagingTableName = "committee_validators_staging"
 
+// CommitteeValidatorColumns defines the schema for the committee_validators table.
+var CommitteeValidatorColumns = []ColumnDef{
+	{Name: "committee_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "validator_address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "staked_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "status", Type: "LowCardinality(String)"},
+	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "height_time", Type: "DateTime64(3)", Codec: "DoubleDelta, ZSTD(1)"},
+}
+
 // CommitteeValidator represents the junction table between committees and validators.
 // This denormalized table enables efficient queries like:
 // - "Get all validators in committee X at height Y"

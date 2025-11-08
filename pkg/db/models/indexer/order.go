@@ -48,9 +48,21 @@ type Order struct {
 	RequestedAmount uint64  `ch:"requested_amount" json:"requested_amount"` // Amount requested in return
 	SellerAddress   string  `ch:"seller_address" json:"seller_address"`     // Address of the seller
 	BuyerAddress    *string `ch:"buyer_address" json:"buyer_address"`       // Address of the buyer (null if not filled)
-	Deadline        *uint64 `ch:"deadline" json:"deadline"`                 // Order deadline height (null if no deadline)
+	Deadline        *uint64 `ch:"buyer_chain_deadline" json:"buyer_chain_deadline"`
+
+	// Review these fields below to match them on our RPC <> Model
+	//  // seller_receive_address: the external chain address to receive the 'counter-asset'
+	//  bytes SellerReceiveAddress = 6; // @gotags: json:"sellerReceiveAddress"
+	//  // buyer_send_address: the address the buyer will be transferring the funds from
+	//  bytes BuyerSendAddress = 7; // @gotags: json:"buyerSendAddress"
+	//  // buyer_receive_address: the buyer Canopy address to receive the CNPY
+	//  bytes BuyerReceiveAddress = 8; // @gotags: json:"buyerReceiveAddress"
+	//  // buyer_chain_deadline: the external chain height deadline to send the 'tokens' to SellerReceiveAddress
+	//  uint64 BuyerChainDeadline = 9; // @gotags: json:"buyerChainDeadline"
+	//  // sellers_send_address: the signing address of seller who is selling the CNPY
+	//  bytes SellersSendAddress = 10; // @gotags: json:"sellersSendAddress"
 
 	// Status tracking (LowCardinality for efficient filtering)
-	// Possible values: "open", "filled", "cancelled", "expired"
+	// Possible values: "open", "complete", "canceled"
 	Status string `ch:"status" json:"status"` // LowCardinality(String) for efficient filtering
 }

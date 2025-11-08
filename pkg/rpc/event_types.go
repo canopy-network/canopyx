@@ -72,6 +72,7 @@ type DexLiquidityDepositEvent struct {
 	Data map[string]interface{}
 }
 
+// TODO: ADD POINTS  - ADD ORDER ID
 func (e *DexLiquidityDepositEvent) Type() EventType    { return EventTypeDexLiquidityDeposit }
 func (e *DexLiquidityDepositEvent) GetAddress() string { return GetStringField(e.Data, "address") }
 func (e *DexLiquidityDepositEvent) GetAmount() *uint64 {
@@ -92,6 +93,7 @@ type DexLiquidityWithdrawEvent struct {
 	Data map[string]interface{}
 }
 
+// TODO: ADD POINTS - ADD ORDER ID
 func (e *DexLiquidityWithdrawEvent) Type() EventType          { return EventTypeDexLiquidityWithdraw }
 func (e *DexLiquidityWithdrawEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
 func (e *DexLiquidityWithdrawEvent) GetAmount() *uint64       { return nil }
@@ -112,6 +114,7 @@ type DexSwapEvent struct {
 	Data map[string]interface{}
 }
 
+// TODO: ADD ORDER ID -
 func (e *DexSwapEvent) Type() EventType        { return EventTypeDexSwap }
 func (e *DexSwapEvent) GetAddress() string     { return GetStringField(e.Data, "address") }
 func (e *DexSwapEvent) GetAmount() *uint64     { return nil }
@@ -130,8 +133,18 @@ type OrderBookSwapEvent struct {
 	Data map[string]interface{}
 }
 
+// IMPORTANT: We need eric branch for this - oracle branch - eth-oracle -> PR #204
+// TODO - ADD DATA (generic field to allow which eth account)
+//   - [] try to get name of the token
+
+// TODO: ADD:
+//    // sellers_receive_address: the address of the seller where the 'counter asset' will be received
+//    SellerReceiveAddress []byte protobuf:"bytes,4,opt,name=SellerReceiveAddress,proto3" json:"sellerReceiveAddress" // @gotags: json:"sellerReceiveAddress"
+//    // buyer_send_address: the address of the buyer where the 'counter asset' will be sent from
+//    BuyerSendAddress []byte protobuf:"bytes,5,opt,name=BuyerSendAddress,proto3" json:"buyerSendAddress" // @gotags: json:"buyerSendAddress"
+
 func (e *OrderBookSwapEvent) Type() EventType    { return EventTypeOrderBookSwap }
-func (e *OrderBookSwapEvent) GetAddress() string { return GetStringField(e.Data, "address") }
+func (e *OrderBookSwapEvent) GetAddress() string { return GetStringField(e.Data, "sellersSendAddress") }
 func (e *OrderBookSwapEvent) GetAmount() *uint64 { return nil }
 func (e *OrderBookSwapEvent) GetSoldAmount() *uint64 {
 	return GetOptionalUint64Field(e.Data, "soldAmount")

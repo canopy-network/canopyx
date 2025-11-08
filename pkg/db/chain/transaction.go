@@ -10,44 +10,23 @@ import (
 
 // initTransactions creates the transactions table and its staging table with ZSTD compression.
 func (db *DB) initTransactions(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.TransactionColumns)
+
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			height UInt64,
-			tx_hash String,
-			time DateTime64(6),
-			height_time DateTime64(6),
-			message_type LowCardinality(String),
-			signer String,
-			counterparty Nullable(String),
-			amount Nullable(UInt64),
-			fee UInt64,
-			validator_address Nullable(String),
-			commission Nullable(Float64),
-			chain_id Nullable(UInt64),
-			sell_amount Nullable(UInt64),
-			buy_amount Nullable(UInt64),
-			liquidity_amount Nullable(UInt64),
-			order_id Nullable(String),
-			price Nullable(Float64),
-			param_key Nullable(String),
-			param_value Nullable(String),
-			committee_id Nullable(UInt64),
-			recipient Nullable(String),
-			msg String CODEC(ZSTD(3)),
-			public_key Nullable(String) CODEC(ZSTD(3)),
-			signature Nullable(String) CODEC(ZSTD(3))
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height, tx_hash)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.TxsProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.TxsProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.TxsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.TxsStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.TxsStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.TxsStagingTableName, err)
 	}

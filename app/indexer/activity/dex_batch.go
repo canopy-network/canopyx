@@ -199,8 +199,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				if depositEvent.LocalOrigin != nil {
 					deposit.LocalOrigin = *depositEvent.LocalOrigin
 				}
-				// @TODO: PointsReceived should be calculated from pool state change
-				// For now, we leave it as 0 - this will be improved when pool points tracking is added
+				// @TODO: PointsReceived should read from the events as Point (it needs to be added to EventType)
 
 				deposits = append(deposits, deposit)
 			}
@@ -226,8 +225,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				if withdrawalEvent.RemoteAmount != nil {
 					withdrawal.RemoteAmount = *withdrawalEvent.RemoteAmount
 				}
-				// @TODO: PointsBurned should be calculated from pool state change
-				// For now, we leave it as 0 - this will be improved when pool points tracking is added
+				// @TODO: PointsBurned should read from the events as Point (it needs to be added to EventType)
 
 				withdrawals = append(withdrawals, withdrawal)
 			}

@@ -7,6 +7,35 @@ import (
 const TxsProductionTableName = "txs"
 const TxsStagingTableName = "txs_staging"
 
+// TransactionColumns defines the schema for the txs table.
+// Nullable fields are used for message-type-specific transaction data.
+var TransactionColumns = []ColumnDef{
+	{Name: "height", Type: "UInt64"},
+	{Name: "tx_hash", Type: "String"},
+	{Name: "time", Type: "DateTime64(6)"},
+	{Name: "height_time", Type: "DateTime64(6)"},
+	{Name: "message_type", Type: "LowCardinality(String)"},
+	{Name: "signer", Type: "String"},
+	{Name: "counterparty", Type: "Nullable(String)"},
+	{Name: "amount", Type: "Nullable(UInt64)"},
+	{Name: "fee", Type: "UInt64"},
+	{Name: "validator_address", Type: "Nullable(String)"},
+	{Name: "commission", Type: "Nullable(Float64)"},
+	{Name: "chain_id", Type: "Nullable(UInt64)"},
+	{Name: "sell_amount", Type: "Nullable(UInt64)"},
+	{Name: "buy_amount", Type: "Nullable(UInt64)"},
+	{Name: "liquidity_amount", Type: "Nullable(UInt64)"},
+	{Name: "order_id", Type: "Nullable(String)"},
+	{Name: "price", Type: "Nullable(Float64)"},
+	{Name: "param_key", Type: "Nullable(String)"},
+	{Name: "param_value", Type: "Nullable(String)"},
+	{Name: "committee_id", Type: "Nullable(UInt64)"},
+	{Name: "recipient", Type: "Nullable(String)"},
+	{Name: "msg", Type: "String", Codec: "ZSTD(3)"},
+	{Name: "public_key", Type: "Nullable(String)", Codec: "ZSTD(3)"},
+	{Name: "signature", Type: "Nullable(String)", Codec: "ZSTD(3)"},
+}
+
 // Transaction stores ALL transaction data in a single table.
 // Common queryable fields are typed columns.
 // Type-specific fields are stored in the compressed 'msg' JSON field.
@@ -23,7 +52,7 @@ type Transaction struct {
 	// Common filterable fields
 	MessageType  string  `ch:"message_type" json:"message_type"`           // LowCardinality(String) for efficient filtering
 	Signer       string  `ch:"signer" json:"signer"`                       // Transaction signer address
-	Counterparty *string `ch:"counterparty" json:"counterparty,omitempty"` // Recipient/validator/pool/contract address
+	Counterparty *string `ch:"counterparty" json:"counterparty,omitempty"` // Recipient/validator/pool address
 	Amount       *uint64 `ch:"amount" json:"amount,omitempty"`             // Amount transferred/staked/delegated (null for votes, etc.)
 	Fee          uint64  `ch:"fee" json:"fee"`                             // Transaction fee
 

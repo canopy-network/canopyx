@@ -4,6 +4,34 @@ import (
 	"time"
 )
 
+const ChainsTableName = "chains"
+
+// ChainColumns defines the schema for the chains table.
+var ChainColumns = []ColumnDef{
+	{Name: "chain_id", Type: "UInt64"},
+	{Name: "chain_name", Type: "String"},
+	{Name: "rpc_endpoints", Type: "Array(String)"},
+	{Name: "paused", Type: "UInt8"},
+	{Name: "deleted", Type: "UInt8"},
+	{Name: "image", Type: "String"},
+	{Name: "min_replicas", Type: "UInt16"},
+	{Name: "max_replicas", Type: "UInt16"},
+	{Name: "notes", Type: "String"},
+	{Name: "created_at", Type: "DateTime"},
+	{Name: "updated_at", Type: "DateTime"},
+	{Name: "rpc_health_status", Type: "String"},
+	{Name: "rpc_health_message", Type: "String"},
+	{Name: "rpc_health_updated_at", Type: "DateTime"},
+	{Name: "queue_health_status", Type: "String"},
+	{Name: "queue_health_message", Type: "String"},
+	{Name: "queue_health_updated_at", Type: "DateTime"},
+	{Name: "deployment_health_status", Type: "String"},
+	{Name: "deployment_health_message", Type: "String"},
+	{Name: "deployment_health_updated_at", Type: "DateTime"},
+	{Name: "overall_health_status", Type: "String"},
+	{Name: "overall_health_updated_at", Type: "DateTime"},
+}
+
 type Chain struct {
 	ChainID      uint64    `json:"chain_id" ch:"chain_id"` // ORDER BY set via builder
 	ChainName    string    `json:"chain_name" ch:"chain_name"`

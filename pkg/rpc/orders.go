@@ -12,10 +12,23 @@ type RpcOrder struct {
 	Committee       uint64  `json:"committee"`       // Committee ID for the order
 	AmountForSale   uint64  `json:"amountForSale"`   // Amount being sold
 	RequestedAmount uint64  `json:"requestedAmount"` // Amount requested in return
-	SellerAddress   string  `json:"sellerAddress"`   // Address of the seller
-	BuyerAddress    *string `json:"buyerAddress"`    // Address of the buyer (null if not filled)
+	SellerAddress   string  `json:"sellerAddress"`   // (SellerReceiveAddress) Address of the seller
+	BuyerAddress    *string `json:"buyerAddress"`    // Address of the buyer (null if not filled) - SPLIT into recieve/send (BuyerSendAddress|BuyerReceiveAddress)
 	Deadline        *uint64 `json:"deadline"`        // Order deadline height (null if no deadline)
-	Status          string  `json:"status"`          // Order status: "open", "filled", "cancelled", "expired"
+	Status          string  `json:"status"`          // Order status: "open", "complete", "canceled"
+
+	// TODO: Add missing fields
+	//  // seller_receive_address: the external chain address to receive the 'counter-asset'
+	//  bytes SellerReceiveAddress = 6; // @gotags: json:"sellerReceiveAddress"
+	//  // buyer_send_address: the address the buyer will be transferring the funds from
+	//  bytes BuyerSendAddress = 7; // @gotags: json:"buyerSendAddress"
+	//  // buyer_receive_address: the buyer Canopy address to receive the CNPY
+	//  bytes BuyerReceiveAddress = 8; // @gotags: json:"buyerReceiveAddress"
+	//  // buyer_chain_deadline: the external chain height deadline to send the 'tokens' to SellerReceiveAddress
+	//  uint64 BuyerChainDeadline = 9; // @gotags: json:"buyerChainDeadline"
+	//  // sellers_send_address: the signing address of seller who is selling the CNPY
+	//  bytes SellersSendAddress = 10; // @gotags: json:"sellersSendAddress"
+	//  // "data" same of the event - needs eric oracle pr (probably save as is)
 }
 
 // RpcOrderBook represents an order book for a specific chain.

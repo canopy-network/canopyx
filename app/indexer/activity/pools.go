@@ -112,11 +112,11 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 	// Count event types for metrics
 	for _, event := range poolEvents {
 		switch event.EventType {
-		case "EventDexLiquidityDeposit":
+		case rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit):
 			numDeposits++
-		case "EventDexLiquidityWithdraw":
+		case rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw):
 			numWithdrawals++
-		case "EventDexSwap":
+		case rpc.EventTypeAsStr(rpc.EventTypeDexSwap):
 			numSwaps++
 		}
 	}

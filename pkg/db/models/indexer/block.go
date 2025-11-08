@@ -9,6 +9,16 @@ import (
 const BlocksProductionTableName = "blocks"
 const BlocksStagingTableName = BlocksProductionTableName + entities.StagingSuffix
 
+// BlockColumns defines the schema for the blocks table.
+var BlockColumns = []ColumnDef{
+	{Name: "height", Type: "UInt64"},
+	{Name: "hash", Type: "String"},
+	{Name: "time", Type: "DateTime64(6)"},
+	{Name: "parent_hash", Type: "String"},
+	{Name: "proposer_address", Type: "String"},
+	{Name: "size", Type: "Int32"},
+}
+
 type Block struct {
 	Height          uint64    `ch:"height" json:"height"`
 	Hash            string    `ch:"hash" json:"hash"`

@@ -16,18 +16,15 @@ import (
 // 2. Aggregate table (AggregatingMergeTree) - stores aggregate state for max height per chain
 // 3. Materialized view - automatically updates aggregate on inserts
 func (db *DB) initIndexProgress(ctx context.Context) error {
+	schemaSQL := admin.ColumnsToSchemaSQL(admin.IndexProgressColumns)
+
 	// 1) Base table: index_progress
 	ddlBase := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."index_progress" (
-			chain_id UInt64,
-			height UInt64,
-			indexed_at DateTime64(6),
-			indexing_time Float64,
-			indexing_time_ms Float64,
-			indexing_detail String
+			%s
 		) ENGINE = MergeTree()
 		ORDER BY (chain_id, height)
-	`, db.Name)
+	`, db.Name, schemaSQL)
 	if err := db.Db.Exec(ctx, ddlBase); err != nil {
 		return fmt.Errorf("create index_progress table: %w", err)
 	}

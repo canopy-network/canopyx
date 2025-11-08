@@ -21,38 +21,23 @@ import (
 // because the /v1/gov/poll RPC endpoint does not support historical queries.
 // We cannot use the typical RPC(H) vs RPC(H-1) comparison pattern.
 func (db *DB) initPollSnapshots(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PollSnapshotColumns)
+
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			proposal_hash String CODEC(ZSTD(1)),
-			height UInt64 CODEC(Delta, ZSTD(1)),
-			proposal_url String CODEC(ZSTD(1)),
-			accounts_approve_tokens UInt64 CODEC(Delta, ZSTD(1)),
-			accounts_reject_tokens UInt64 CODEC(Delta, ZSTD(1)),
-			accounts_total_voted_tokens UInt64 CODEC(Delta, ZSTD(1)),
-			accounts_total_tokens UInt64 CODEC(Delta, ZSTD(1)),
-			accounts_approve_percentage UInt64 CODEC(Delta, ZSTD(1)),
-			accounts_reject_percentage UInt64 CODEC(Delta, ZSTD(1)),
-			accounts_voted_percentage UInt64 CODEC(Delta, ZSTD(1)),
-			validators_approve_tokens UInt64 CODEC(Delta, ZSTD(1)),
-			validators_reject_tokens UInt64 CODEC(Delta, ZSTD(1)),
-			validators_total_voted_tokens UInt64 CODEC(Delta, ZSTD(1)),
-			validators_total_tokens UInt64 CODEC(Delta, ZSTD(1)),
-			validators_approve_percentage UInt64 CODEC(Delta, ZSTD(1)),
-			validators_reject_percentage UInt64 CODEC(Delta, ZSTD(1)),
-			validators_voted_percentage UInt64 CODEC(Delta, ZSTD(1)),
-			height_time DateTime64(6) CODEC(Delta, ZSTD(1))
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (proposal_hash, height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PollSnapshotsProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PollSnapshotsProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PollSnapshotsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PollSnapshotsStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PollSnapshotsStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PollSnapshotsStagingTableName, err)
 	}

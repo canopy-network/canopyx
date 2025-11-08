@@ -12,32 +12,24 @@ import (
 
 // initBlocks initializes the blocks table.
 func (db *DB) initBlocks(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.BlockColumns)
+
 	productionQuery := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			height UInt64,
-			hash String,
-			time DateTime64(6),
-			parent_hash String,
-			proposer_address String,
-			size Int32
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height)
-	`, db.Name, indexermodels.BlocksProductionTableName)
+	`, db.Name, indexermodels.BlocksProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.BlocksProductionTableName, err)
 	}
 
 	stagingQuery := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			height UInt64,
-			hash String,
-			time DateTime64(6),
-			parent_hash String,
-			proposer_address String,
-			size Int32
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height)
-	`, db.Name, indexermodels.BlocksStagingTableName)
+	`, db.Name, indexermodels.BlocksStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.BlocksStagingTableName, err)
 	}

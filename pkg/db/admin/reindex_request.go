@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
@@ -20,18 +21,14 @@ type ReindexWorkflowInfo struct {
 // Engine: ReplacingMergeTree(requested_at)
 // Order: (chain_id, requested_at, height)
 func (db *DB) initReindexRequests(ctx context.Context) error {
-	query := `
+	schemaSQL := admin.ColumnsToSchemaSQL(admin.ReindexRequestColumns)
+
+	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS reindex_requests (
-			chain_id UInt64,
-			height UInt64,
-			requested_by String,
-			status String DEFAULT 'queued',
-			workflow_id String,
-			run_id String,
-			requested_at DateTime DEFAULT now()
+			%s
 		) ENGINE = ReplacingMergeTree(requested_at)
 		ORDER BY (chain_id, requested_at, height)
-	`
+	`, schemaSQL)
 	return db.Db.Exec(ctx, query)
 }
 

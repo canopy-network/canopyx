@@ -15,33 +15,14 @@ import (
 // initChains creates the chain table using raw SQL.
 // Table: ReplacingMergeTree(updated_at) ORDER BY (chain_id)
 func (db *DB) initChains(ctx context.Context) error {
-	query := `
+	schemaSQL := admin.ColumnsToSchemaSQL(admin.ChainColumns)
+
+	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS chains (
-			chain_id UInt64,
-			chain_name String,
-			rpc_endpoints Array(String),
-			paused UInt8 DEFAULT 0,
-			deleted UInt8 DEFAULT 0,
-			image String DEFAULT '',
-			min_replicas UInt16 DEFAULT 1,
-			max_replicas UInt16 DEFAULT 3,
-			notes String DEFAULT '',
-			created_at DateTime DEFAULT now(),
-			updated_at DateTime DEFAULT now(),
-			rpc_health_status String DEFAULT 'unknown',
-			rpc_health_message String DEFAULT '',
-			rpc_health_updated_at DateTime DEFAULT now(),
-			queue_health_status String DEFAULT 'unknown',
-			queue_health_message String DEFAULT '',
-			queue_health_updated_at DateTime DEFAULT now(),
-			deployment_health_status String DEFAULT 'unknown',
-			deployment_health_message String DEFAULT '',
-			deployment_health_updated_at DateTime DEFAULT now(),
-			overall_health_status String DEFAULT 'unknown',
-			overall_health_updated_at DateTime DEFAULT now()
+			%s
 		) ENGINE = ReplacingMergeTree(updated_at)
 		ORDER BY (chain_id)
-	`
+	`, schemaSQL)
 	return db.Db.Exec(ctx, query)
 }
 

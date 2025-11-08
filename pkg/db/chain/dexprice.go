@@ -12,27 +12,23 @@ import (
 // This follows the same pattern as other indexer entities using ReplacingMergeTree
 // for deduplication and efficient updates.
 func (db *DB) initDexPrices(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.DexPriceColumns)
+
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			local_chain_id UInt64,
-			remote_chain_id UInt64,
-			height UInt64,
-			local_pool UInt64,
-			remote_pool UInt64,
-			price_e6 UInt64,
-			height_time DateTime64(6)
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (local_chain_id, remote_chain_id, height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPricesProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPricesProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexPricesProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPricesStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPricesStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexPricesStagingTableName, err)
 	}

@@ -140,7 +140,6 @@ func (ac *Context) FindGaps(ctx context.Context) ([]adminmodels.Gap, error) {
 // NOTE: This is a local activity, so it accepts a value type (not pointer) for proper serialization.
 func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityIndexBlockInput) error {
 	logger := activity.GetLogger(ctx)
-	// TODO: ensure chain exists before triggering workflows.
 
 	// Get latest head to determine queue routing
 	latest, err := ac.GetLatestHead(ctx)
@@ -357,7 +356,7 @@ func (ac *Context) StartIndexWorkflowBatch(ctx context.Context, in types.Activit
 			} else {
 				totalScheduled += liveResult.Scheduled
 				totalFailed += liveResult.Failed
-				// TODO: validate this
+				// TODO: validate total duration times to ensure we report the times properly
 				// totalDuration += liveResult.DurationMs
 			}
 		}

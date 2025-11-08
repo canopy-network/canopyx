@@ -12,27 +12,24 @@ import (
 // Uses ReplacingMergeTree with height as the deduplication key.
 // Optimized for queries by committee_id (get all validators in a committee) and validator_address.
 func (db *DB) initCommitteeValidators(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.CommitteeValidatorColumns)
+
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			committee_id UInt64 CODEC(Delta, ZSTD(3)),
-			validator_address String CODEC(ZSTD(1)),
-			staked_amount UInt64 CODEC(Delta, ZSTD(3)),
-			status LowCardinality(String),
-			height UInt64 CODEC(Delta, ZSTD(3)),
-			height_time DateTime64(3) CODEC(DoubleDelta, ZSTD(1))
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (committee_id, validator_address, height)
 		SETTINGS index_granularity = 8192
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeValidatorProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeValidatorProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteeValidatorProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeValidatorStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeValidatorStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteeValidatorStagingTableName, err)
 	}

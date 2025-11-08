@@ -4,6 +4,18 @@ import (
 	"time"
 )
 
+const IndexProgressTableName = "index_progress"
+
+// IndexProgressColumns defines the schema for the index_progress table.
+var IndexProgressColumns = []ColumnDef{
+	{Name: "chain_id", Type: "UInt64"},
+	{Name: "height", Type: "UInt64"},
+	{Name: "indexed_at", Type: "DateTime64(6)"},
+	{Name: "indexing_time", Type: "Float64"},
+	{Name: "indexing_time_ms", Type: "Float64"},
+	{Name: "indexing_detail", Type: "String"},
+}
+
 // IndexProgress Raw indexing progress (one row per indexed height).
 type IndexProgress struct {
 	ChainID      uint64    `ch:"chain_id"`

@@ -61,14 +61,17 @@ const (
 	MsgTypeDexLiquidityDeposit  MessageType = "dexLiquidityDeposit"  // -
 	MsgTypeDexLiquidityWithdraw MessageType = "dexLiquidityWithdraw" // -
 
-	// -- this 2 are part of --populator
+	// MsgTypeStartPool MessageType = "startPool" (needs to be implemented)
+	// startPoll - this is a send with info on memo
 
-	// startPoll - this is a send with info on memo (TODO: let understand what memo has) <- is a json -> 80b
-	// votePoll - this is a send with info on memo (TODO: let understand what memo has) <- is a json
+	// MsgTypeVotePool MessageType = "votePoll" (needs to be implemented)
+	// votePoll - this is a send with info on memo
 
-	// lockOrder -
-	// closeOrder - This will have higher than fee.send param - json too
-	LockOrderTransaction = "lockOrder"
+	// MsgTypeLockOrder MessageType = "lockOrder" (needs to be implemented)
+	// lockOrder
+
+	//MsgTypeCloseOrder MessageType = "closeOrder" (needs to be implemented)
+	// closeOrder - This will have higher than fee.send param
 )
 
 // Message is the interface all transaction message types implement.

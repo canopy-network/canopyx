@@ -7,6 +7,28 @@ import (
 const PollSnapshotsProductionTableName = "poll_snapshots"
 const PollSnapshotsStagingTableName = "poll_snapshots_staging"
 
+// PollSnapshotColumns defines the schema for the poll_snapshots table.
+var PollSnapshotColumns = []ColumnDef{
+	{Name: "proposal_hash", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "proposal_url", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "accounts_approve_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "accounts_reject_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "accounts_total_voted_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "accounts_total_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "accounts_approve_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "accounts_reject_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "accounts_voted_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "validators_approve_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "validators_reject_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "validators_total_voted_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "validators_total_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "validators_approve_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "validators_reject_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "validators_voted_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "height_time", Type: "DateTime64(6)", Codec: "Delta, ZSTD(1)"},
+}
+
 // PollSnapshot stores historical poll results for governance proposals at each height.
 // Uses snapshot-on-change pattern: a new row is created only when poll state changes for a proposal.
 // ReplacingMergeTree deduplicates by (proposal_hash, height), keeping the latest state.
@@ -22,7 +44,6 @@ const PollSnapshotsStagingTableName = "poll_snapshots_staging"
 type PollSnapshot struct {
 	// Primary key - composite key for deduplication
 	ProposalHash string `ch:"proposal_hash" json:"proposal_hash"` // Hex hash of proposal
-	Height       uint64 `ch:"height" json:"height"`
 
 	// Proposal metadata
 	ProposalURL string `ch:"proposal_url" json:"proposal_url"` // URL to proposal document
@@ -45,6 +66,7 @@ type PollSnapshot struct {
 	ValidatorsRejectPercentage  uint64 `ch:"validators_reject_percentage" json:"validators_reject_percentage"`
 	ValidatorsVotedPercentage   uint64 `ch:"validators_voted_percentage" json:"validators_voted_percentage"`
 
+	Height uint64 `ch:"height" json:"height"` // REMOVE
 	// Time field for range queries
-	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp
+	HeightTime time.Time `ch:"height_time" json:"height_time"` // REMOVE
 }

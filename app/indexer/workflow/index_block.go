@@ -16,7 +16,6 @@ import (
 // IndexBlockWorkflow kicks off indexing of a block for a given chain in a separate workflow at `index:<chain>` queue.
 // It tracks the execution time of each activity and records detailed timing metrics.
 func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowIndexBlockInput) error {
-	// TODO: add checks for chainId and height values at `in` param, also verify database exists (it should)
 	//  check if the current options are good enough for indexing the block
 	retry := &temporal.RetryPolicy{
 		InitialInterval:    100 * time.Millisecond, // Start quickly for block propagation delays
@@ -203,7 +202,8 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	summary := &indexermodels.BlockSummary{
 		Height:     in.Height,
 		HeightTime: heightTime,
-		// @TODO: map all this, add more, review everyone
+		// TODO: Run a critical analysis over the BlockSummaries and any "good to have" aggregated number.
+		//   once that is done, map them here:
 		NumTxs:                            txOut.NumTxs,
 		NumTxsSend:                        txOut.TxCountsByType["send"], // repeat...
 		NumTxsDelegate:                    0,

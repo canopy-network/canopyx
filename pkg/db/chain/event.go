@@ -11,35 +11,23 @@ import (
 // initEvents creates the events table and its staging table with ZSTD compression.
 // Uses ReplacingMergeTree with height as the deduplication key.
 func (db *DB) initEvents(ctx context.Context) error {
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.EventColumns)
+
 	queryTemplate := `
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			height UInt64,
-			chain_id UInt64,
-			address String,
-			reference String,
-			event_type LowCardinality(String),
-			amount Nullable(UInt64),
-			sold_amount Nullable(UInt64),
-			bought_amount Nullable(UInt64),
-			local_amount Nullable(UInt64),
-			remote_amount Nullable(UInt64),
-			success Nullable(Bool),
-			local_origin Nullable(Bool),
-			order_id Nullable(String),
-			msg String CODEC(ZSTD(3)),
-			height_time DateTime64(6)
+			%s
 		) ENGINE = ReplacingMergeTree(height)
 		ORDER BY (height, chain_id, address, reference, event_type)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsProductionTableName)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsProductionTableName, schemaSQL)
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.EventsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsStagingTableName)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsStagingTableName, schemaSQL)
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.EventsStagingTableName, err)
 	}

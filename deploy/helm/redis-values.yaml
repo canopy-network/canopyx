@@ -6,7 +6,7 @@ architecture: standalone
 
 auth:
   enabled: true
-  password: "canopy-redis-dev"  # TODO: Change in production
+  password: "canopy-redis-dev"
 
 # Master configuration
 master:

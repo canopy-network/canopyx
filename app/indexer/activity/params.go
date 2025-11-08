@@ -3,6 +3,7 @@ package activity
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
@@ -147,41 +148,42 @@ func convertRpcParamsToEntity(rpcParams *rpc.RpcAllParams, height uint64, blockT
 // paramsEqual compares all fields of two Params instances (excluding Height and HeightTime).
 // Returns true if all parameter values are identical.
 func paramsEqual(a, b *indexermodels.Params) bool {
-	return a.BlockSize == b.BlockSize &&
-		a.ProtocolVersion == b.ProtocolVersion &&
-		a.RootChainID == b.RootChainID &&
-		a.Retired == b.Retired &&
-		a.UnstakingBlocks == b.UnstakingBlocks &&
-		a.MaxPauseBlocks == b.MaxPauseBlocks &&
-		a.DoubleSignSlashPercentage == b.DoubleSignSlashPercentage &&
-		a.NonSignSlashPercentage == b.NonSignSlashPercentage &&
-		a.MaxNonSign == b.MaxNonSign &&
-		a.NonSignWindow == b.NonSignWindow &&
-		a.MaxCommittees == b.MaxCommittees &&
-		a.MaxCommitteeSize == b.MaxCommitteeSize &&
-		a.EarlyWithdrawalPenalty == b.EarlyWithdrawalPenalty &&
-		a.DelegateUnstakingBlocks == b.DelegateUnstakingBlocks &&
-		a.MinimumOrderSize == b.MinimumOrderSize &&
-		a.StakePercentForSubsidized == b.StakePercentForSubsidized &&
-		a.MaxSlashPerCommittee == b.MaxSlashPerCommittee &&
-		a.DelegateRewardPercentage == b.DelegateRewardPercentage &&
-		a.BuyDeadlineBlocks == b.BuyDeadlineBlocks &&
-		a.LockOrderFeeMultiplier == b.LockOrderFeeMultiplier &&
-		a.SendFee == b.SendFee &&
-		a.StakeFee == b.StakeFee &&
-		a.EditStakeFee == b.EditStakeFee &&
-		a.UnstakeFee == b.UnstakeFee &&
-		a.PauseFee == b.PauseFee &&
-		a.UnpauseFee == b.UnpauseFee &&
-		a.ChangeParameterFee == b.ChangeParameterFee &&
-		a.DaoTransferFee == b.DaoTransferFee &&
-		a.CertificateResultsFee == b.CertificateResultsFee &&
-		a.SubsidyFee == b.SubsidyFee &&
-		a.CreateOrderFee == b.CreateOrderFee &&
-		a.EditOrderFee == b.EditOrderFee &&
-		a.DeleteOrderFee == b.DeleteOrderFee &&
-		a.DexLimitOrderFee == b.DexLimitOrderFee &&
-		a.DexLiquidityDepositFee == b.DexLiquidityDepositFee &&
-		a.DexLiquidityWithdrawFee == b.DexLiquidityWithdrawFee &&
-		a.DaoRewardPercentage == b.DaoRewardPercentage
+	return reflect.DeepEqual(a, b)
+	//return a.BlockSize == b.BlockSize &&
+	//        a.ProtocolVersion == b.ProtocolVersion &&
+	//        a.RootChainID == b.RootChainID &&
+	//        a.Retired == b.Retired &&
+	//        a.UnstakingBlocks == b.UnstakingBlocks &&
+	//        a.MaxPauseBlocks == b.MaxPauseBlocks &&
+	//        a.DoubleSignSlashPercentage == b.DoubleSignSlashPercentage &&
+	//        a.NonSignSlashPercentage == b.NonSignSlashPercentage &&
+	//        a.MaxNonSign == b.MaxNonSign &&
+	//        a.NonSignWindow == b.NonSignWindow &&
+	//        a.MaxCommittees == b.MaxCommittees &&
+	//        a.MaxCommitteeSize == b.MaxCommitteeSize &&
+	//        a.EarlyWithdrawalPenalty == b.EarlyWithdrawalPenalty &&
+	//        a.DelegateUnstakingBlocks == b.DelegateUnstakingBlocks &&
+	//        a.MinimumOrderSize == b.MinimumOrderSize &&
+	//        a.StakePercentForSubsidized == b.StakePercentForSubsidized &&
+	//        a.MaxSlashPerCommittee == b.MaxSlashPerCommittee &&
+	//        a.DelegateRewardPercentage == b.DelegateRewardPercentage &&
+	//        a.BuyDeadlineBlocks == b.BuyDeadlineBlocks &&
+	//        a.LockOrderFeeMultiplier == b.LockOrderFeeMultiplier &&
+	//        a.SendFee == b.SendFee &&
+	//        a.StakeFee == b.StakeFee &&
+	//        a.EditStakeFee == b.EditStakeFee &&
+	//        a.UnstakeFee == b.UnstakeFee &&
+	//        a.PauseFee == b.PauseFee &&
+	//        a.UnpauseFee == b.UnpauseFee &&
+	//        a.ChangeParameterFee == b.ChangeParameterFee &&
+	//        a.DaoTransferFee == b.DaoTransferFee &&
+	//        a.CertificateResultsFee == b.CertificateResultsFee &&
+	//        a.SubsidyFee == b.SubsidyFee &&
+	//        a.CreateOrderFee == b.CreateOrderFee &&
+	//        a.EditOrderFee == b.EditOrderFee &&
+	//        a.DeleteOrderFee == b.DeleteOrderFee &&
+	//        a.DexLimitOrderFee == b.DexLimitOrderFee &&
+	//        a.DexLiquidityDepositFee == b.DexLiquidityDepositFee &&
+	//        a.DexLiquidityWithdrawFee == b.DexLiquidityWithdrawFee &&
+	//        a.DaoRewardPercentage == b.DaoRewardPercentage
 }

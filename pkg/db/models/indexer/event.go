@@ -7,6 +7,26 @@ import (
 const EventsProductionTableName = "events"
 const EventsStagingTableName = "events_staging"
 
+// EventColumns defines the schema for the events table.
+// Nullable fields are used for type-specific event data.
+var EventColumns = []ColumnDef{
+	{Name: "height", Type: "UInt64"},
+	{Name: "chain_id", Type: "UInt64"},
+	{Name: "address", Type: "String"},
+	{Name: "reference", Type: "String"},
+	{Name: "event_type", Type: "LowCardinality(String)"},
+	{Name: "amount", Type: "Nullable(UInt64)"},
+	{Name: "sold_amount", Type: "Nullable(UInt64)"},
+	{Name: "bought_amount", Type: "Nullable(UInt64)"},
+	{Name: "local_amount", Type: "Nullable(UInt64)"},
+	{Name: "remote_amount", Type: "Nullable(UInt64)"},
+	{Name: "success", Type: "Nullable(Bool)"},
+	{Name: "local_origin", Type: "Nullable(Bool)"},
+	{Name: "order_id", Type: "Nullable(String)"},
+	{Name: "msg", Type: "String", Codec: "ZSTD(3)"},
+	{Name: "height_time", Type: "DateTime64(6)"},
+}
+
 // Event stores ALL event data emitted during block processing.
 // Events can be emitted in three contexts:
 //   - begin_block: Events occurring at the start of block processing

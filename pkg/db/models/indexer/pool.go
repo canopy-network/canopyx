@@ -27,6 +27,7 @@ var PoolColumns = []ColumnDef{
 
 // Pool ID calculation constants (from Canopy blockchain logic)
 const (
+	// TODO: use this from canopy as pkg (fsm/key.go)
 	MaxChainID          = uint64(math.MaxUint16 / 4)
 	HoldingPoolAddend   = uint64(1 * math.MaxUint16 / 4)
 	LiquidityPoolAddend = uint64(2 * math.MaxUint16 / 4)
@@ -44,7 +45,6 @@ const (
 type Pool struct {
 	// Primary key - composite key for deduplication
 	PoolID uint64 `ch:"pool_id" json:"pool_id"`
-	Height uint64 `ch:"height" json:"height"`
 
 	// Chain identifier for multi-chain support
 	ChainID uint64 `ch:"chain_id" json:"chain_id"`
@@ -54,6 +54,7 @@ type Pool struct {
 	TotalPoints uint64 `ch:"total_points" json:"total_points"` // Total pool points
 	LPCount     uint32 `ch:"lp_count" json:"lp_count"`         // Number of liquidity providers
 
+	Height uint64 `ch:"height" json:"height"`
 	// Time fields for range queries
 	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp
 

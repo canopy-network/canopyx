@@ -9,6 +9,19 @@ const (
 	CommitteeStagingTableName = "committees_staging"
 )
 
+// CommitteeColumns defines the schema for the committees table.
+// Boolean fields are stored as UInt8 (0=false, 1=true).
+var CommitteeColumns = []ColumnDef{
+	{Name: "chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "last_root_height_updated", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "last_chain_height_updated", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "number_of_samples", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "subsidized", Type: "UInt8"},
+	{Name: "retired", Type: "UInt8"},
+	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "height_time", Type: "DateTime64(6)"},
+}
+
 // Committee represents committee data at a specific height.
 // A committee is a group of validators responsible for a specific chain.
 // Committees are only inserted when their data changes to maintain a sparse historical record.

@@ -9,6 +9,54 @@ const (
 	ParamsStagingTableName = "params_staging"
 )
 
+// ParamsColumns defines the schema for the params table.
+// All numeric columns use Delta+ZSTD compression for optimal storage.
+var ParamsColumns = []ColumnDef{
+	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "height_time", Type: "DateTime64(6)"},
+	// Consensus parameters
+	{Name: "block_size", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "protocol_version", Type: "String", Codec: "ZSTD(3)"},
+	{Name: "root_chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "retired", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	// Validator parameters
+	{Name: "unstaking_blocks", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "max_pause_blocks", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "double_sign_slash_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "non_sign_slash_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "max_non_sign", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "non_sign_window", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "max_committees", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "max_committee_size", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "early_withdrawal_penalty", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "delegate_unstaking_blocks", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "minimum_order_size", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "stake_percent_for_subsidized", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "max_slash_per_committee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "delegate_reward_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "buy_deadline_blocks", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "lock_order_fee_multiplier", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	// Fee parameters
+	{Name: "send_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "stake_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "edit_stake_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "unstake_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "pause_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "unpause_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "change_parameter_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "dao_transfer_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "certificate_results_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "subsidy_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "create_order_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "edit_order_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "delete_order_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "dex_limit_order_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "dex_liquidity_deposit_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "dex_liquidity_withdraw_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	// Governance parameters
+	{Name: "dao_reward_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+}
+
 // Params represents chain parameters at a specific height.
 // This entity stores all governance parameters including consensus, validator, fee, and gov settings.
 // Parameters are only inserted when they change to maintain a sparse historical record.
