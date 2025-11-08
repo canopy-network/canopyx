@@ -1,8 +1,8 @@
 package indexer
 
 import (
-	"math"
-	"time"
+    "math"
+    "time"
 )
 
 const PoolsProductionTableName = "pools"
@@ -12,26 +12,29 @@ const PoolsStagingTableName = "pools_staging"
 // NOTE: chain_id is renamed to pool_chain_id in cross-chain tables to avoid conflict
 // with the cross-chain table's chain_id column (which indicates the source database).
 var PoolColumns = []ColumnDef{
-	{Name: "pool_id", Type: "UInt64"},
-	{Name: "height", Type: "UInt64"},
-	{Name: "chain_id", Type: "UInt64", CrossChainRename: "pool_chain_id"},
-	{Name: "amount", Type: "UInt64"},
-	{Name: "total_points", Type: "UInt64"},
-	{Name: "lp_count", Type: "UInt32"},
-	{Name: "height_time", Type: "DateTime64(6)"},
-	{Name: "liquidity_pool_id", Type: "UInt64"},
-	{Name: "holding_pool_id", Type: "UInt64"},
-	{Name: "escrow_pool_id", Type: "UInt64"},
-	{Name: "reward_pool_id", Type: "UInt64"},
+    {Name: "pool_id", Type: "UInt64"},
+    {Name: "height", Type: "UInt64"},
+    {Name: "chain_id", Type: "UInt64", CrossChainRename: "pool_chain_id"},
+    {Name: "amount", Type: "UInt64"},
+    {Name: "total_points", Type: "UInt64"},
+    {Name: "lp_count", Type: "UInt32"},
+    {Name: "height_time", Type: "DateTime64(6)"},
+    {Name: "liquidity_pool_id", Type: "UInt64"},
+    {Name: "holding_pool_id", Type: "UInt64"},
+    {Name: "escrow_pool_id", Type: "UInt64"},
+    {Name: "reward_pool_id", Type: "UInt64"},
+    {Name: "amount_delta", Type: "Int64", Codec: "Delta, ZSTD(3)"},
+    {Name: "total_points_delta", Type: "Int64", Codec: "Delta, ZSTD(3)"},
+    {Name: "lp_count_delta", Type: "Int32", Codec: "Delta, ZSTD(3)"},
 }
 
 // Pool ID calculation constants (from Canopy blockchain logic)
 const (
-	// TODO: use this from canopy as pkg (fsm/key.go)
-	MaxChainID          = uint64(math.MaxUint16 / 4)
-	HoldingPoolAddend   = uint64(1 * math.MaxUint16 / 4)
-	LiquidityPoolAddend = uint64(2 * math.MaxUint16 / 4)
-	EscrowPoolAddend    = uint64(4 * math.MaxUint16 / 4)
+    // TODO: use this from canopy as pkg (fsm/key.go)
+    MaxChainID          = uint64(math.MaxUint16 / 4)
+    HoldingPoolAddend   = uint64(1 * math.MaxUint16 / 4)
+    LiquidityPoolAddend = uint64(2 * math.MaxUint16 / 4)
+    EscrowPoolAddend    = uint64(4 * math.MaxUint16 / 4)
 )
 
 // Pool stores pool state snapshots at each height.
@@ -43,50 +46,55 @@ const (
 //   - Historical state: SELECT * FROM pools FINAL WHERE pool_id = ? AND height <= ? ORDER BY height DESC LIMIT 1
 //   - All pools at height: SELECT * FROM pools FINAL WHERE height <= ? GROUP BY pool_id HAVING height = max(height)
 type Pool struct {
-	// Primary key - composite key for deduplication
-	PoolID uint64 `ch:"pool_id" json:"pool_id"`
+    // Primary key - composite key for deduplication
+    PoolID uint64 `ch:"pool_id" json:"pool_id"`
 
-	// Chain identifier for multi-chain support
-	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+    // Chain identifier for multi-chain support
+    ChainID uint64 `ch:"chain_id" json:"chain_id"`
 
-	// Pool state fields
-	Amount      uint64 `ch:"amount" json:"amount"`             // Total amount in pool
-	TotalPoints uint64 `ch:"total_points" json:"total_points"` // Total pool points
-	LPCount     uint32 `ch:"lp_count" json:"lp_count"`         // Number of liquidity providers
+    // Pool state fields
+    Amount      uint64 `ch:"amount" json:"amount"`             // Total amount in pool
+    TotalPoints uint64 `ch:"total_points" json:"total_points"` // Total pool points
+    LPCount     uint32 `ch:"lp_count" json:"lp_count"`         // Number of liquidity providers
 
-	Height uint64 `ch:"height" json:"height"`
-	// Time fields for range queries
-	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp
+    // H-1 delta fields (change from previous height)
+    AmountDelta      int64 `ch:"amount_delta" json:"amount_delta"`             // Change in amount from H-1 to H
+    TotalPointsDelta int64 `ch:"total_points_delta" json:"total_points_delta"` // Change in total points from H-1 to H
+    LPCountDelta     int32 `ch:"lp_count_delta" json:"lp_count_delta"`         // Change in LP count from H-1 to H
 
-	// Calculated pool IDs for different pool types
-	// These IDs are calculated using: Addend + ChainID
-	LiquidityPoolID uint64 `ch:"liquidity_pool_id" json:"liquidity_pool_id"` // LiquidityPoolAddend + ChainID
-	HoldingPoolID   uint64 `ch:"holding_pool_id" json:"holding_pool_id"`     // HoldingPoolAddend + ChainID
-	EscrowPoolID    uint64 `ch:"escrow_pool_id" json:"escrow_pool_id"`       // EscrowPoolAddend + ChainID
-	RewardPoolID    uint64 `ch:"reward_pool_id" json:"reward_pool_id"`       // Same as ChainID
+    Height uint64 `ch:"height" json:"height"`
+    // Time fields for range queries
+    HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp
+
+    // Calculated pool IDs for different pool types
+    // These IDs are calculated using: Addend + ChainID
+    LiquidityPoolID uint64 `ch:"liquidity_pool_id" json:"liquidity_pool_id"` // LiquidityPoolAddend + ChainID
+    HoldingPoolID   uint64 `ch:"holding_pool_id" json:"holding_pool_id"`     // HoldingPoolAddend + ChainID
+    EscrowPoolID    uint64 `ch:"escrow_pool_id" json:"escrow_pool_id"`       // EscrowPoolAddend + ChainID
+    RewardPoolID    uint64 `ch:"reward_pool_id" json:"reward_pool_id"`       // Same as ChainID
 }
 
 // CalculatePoolIDs populates the calculated pool ID fields based on the ChainID.
 // This should be called after setting the ChainID field.
 func (p *Pool) CalculatePoolIDs() {
-	p.LiquidityPoolID = LiquidityPoolAddend + p.ChainID
-	p.HoldingPoolID = HoldingPoolAddend + p.ChainID
-	p.EscrowPoolID = EscrowPoolAddend + p.ChainID
-	p.RewardPoolID = p.ChainID
+    p.LiquidityPoolID = LiquidityPoolAddend + p.ChainID
+    p.HoldingPoolID = HoldingPoolAddend + p.ChainID
+    p.EscrowPoolID = EscrowPoolAddend + p.ChainID
+    p.RewardPoolID = p.ChainID
 }
 
 // ExtractChainIDFromPoolID extracts the chain ID from a pool ID.
 // Pool IDs are encoded as: TypeAddend + ChainID
 // where TypeAddend is 0 (reward), 16384 (holding), 32768 (liquidity), or 65536 (escrow)
 func ExtractChainIDFromPoolID(poolID uint64) uint64 {
-	switch {
-	case poolID >= EscrowPoolAddend:
-		return poolID - EscrowPoolAddend
-	case poolID >= LiquidityPoolAddend:
-		return poolID - LiquidityPoolAddend
-	case poolID >= HoldingPoolAddend:
-		return poolID - HoldingPoolAddend
-	default:
-		return poolID // Reward pool: ID = ChainID
-	}
+    switch {
+    case poolID >= EscrowPoolAddend:
+        return poolID - EscrowPoolAddend
+    case poolID >= LiquidityPoolAddend:
+        return poolID - LiquidityPoolAddend
+    case poolID >= HoldingPoolAddend:
+        return poolID - HoldingPoolAddend
+    default:
+        return poolID // Reward pool: ID = ChainID
+    }
 }

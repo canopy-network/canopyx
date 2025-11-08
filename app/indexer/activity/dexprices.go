@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
@@ -27,18 +28,51 @@ func (ac *Context) IndexDexPrices(ctx context.Context, in types.ActivityIndexAtH
 		return types.ActivityIndexDexPricesOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
 
-	// Fetch DEX prices from RPC
-	rpcPrices, err := cli.DexPricesByHeight(ctx, in.Height)
+	// Fetch DEX prices from RPC at height H
+	rpcPricesH, err := cli.DexPricesByHeight(ctx, in.Height)
 	if err != nil {
 		return types.ActivityIndexDexPricesOutput{}, err
 	}
 
-	// Convert RPC types to database models and populate height fields
-	dbPrices := make([]*indexer.DexPrice, 0, len(rpcPrices))
-	for _, rpcPrice := range rpcPrices {
+	// Fetch DEX prices from RPC at height H-1 for delta calculation
+	// (using RPC(H) vs RPC(H-1) pattern - no database query needed)
+	var rpcPricesH1 map[string]*indexer.DexPrice
+	if in.Height > 1 {
+		rpcH1, err := cli.DexPricesByHeight(ctx, in.Height-1)
+		if err != nil {
+			return types.ActivityIndexDexPricesOutput{}, fmt.Errorf("fetch previous DEX prices at height %d: %w", in.Height-1, err)
+		}
+		// Build map keyed by (local_chain_id, remote_chain_id) for fast lookup
+		rpcPricesH1 = make(map[string]*indexer.DexPrice, len(rpcH1))
+		for _, price := range rpcH1 {
+			dbPrice := transform.DexPrice(price)
+			key := transform.DexPriceKey(dbPrice.LocalChainID, dbPrice.RemoteChainID)
+			rpcPricesH1[key] = dbPrice
+		}
+	} else {
+		rpcPricesH1 = make(map[string]*indexer.DexPrice)
+	}
+
+	// Convert RPC types to database models and calculate H-1 deltas
+	dbPrices := make([]*indexer.DexPrice, 0, len(rpcPricesH))
+	for _, rpcPrice := range rpcPricesH {
 		dbPrice := transform.DexPrice(rpcPrice)
 		dbPrice.Height = in.Height
 		dbPrice.HeightTime = in.BlockTime
+
+		// Calculate deltas by comparing with H-1
+		key := transform.DexPriceKey(dbPrice.LocalChainID, dbPrice.RemoteChainID)
+		if priceH1, exists := rpcPricesH1[key]; exists {
+			dbPrice.PriceDelta = int64(dbPrice.PriceE6) - int64(priceH1.PriceE6)
+			dbPrice.LocalPoolDelta = int64(dbPrice.LocalPool) - int64(priceH1.LocalPool)
+			dbPrice.RemotePoolDelta = int64(dbPrice.RemotePool) - int64(priceH1.RemotePool)
+		} else {
+			// No H-1 data (new pool or height 1), deltas are zero
+			dbPrice.PriceDelta = 0
+			dbPrice.LocalPoolDelta = 0
+			dbPrice.RemotePoolDelta = 0
+		}
+
 		dbPrices = append(dbPrices, dbPrice)
 	}
 

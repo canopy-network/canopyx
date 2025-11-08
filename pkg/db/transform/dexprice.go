@@ -1,6 +1,8 @@
 package transform
 
 import (
+	"fmt"
+
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 )
@@ -16,4 +18,10 @@ func DexPrice(r *rpc.RpcDexPrice) *indexer.DexPrice {
 		PriceE6:       r.E6ScaledPrice,
 		// Height and HeightTime will be set by the activity layer
 	}
+}
+
+// DexPriceKey creates a unique key for DexPrice lookups based on chain pair.
+// Used for efficient map-based lookups when calculating H-1 deltas.
+func DexPriceKey(localChainID, remoteChainID uint64) string {
+	return fmt.Sprintf("%d:%d", localChainID, remoteChainID)
 }
