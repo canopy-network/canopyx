@@ -28,7 +28,8 @@ groupCtx := group.Context()
 group.Add(...)
 ```
 
-[] - MOVE THIS INTO A SEPARATE SCHEDULED WORKFLOW (@every 20s + OPTIMIZE to avoid duplication) /v1/gov/poll 
+[] - Add `/v1/query/supply` to the indexing life cycle. Should have snapshot.
+[] - Move `poll` into a scheduled workflow that will run every 20s, since is not height base information. The version property should be the date when we are "saving" should not use `staging` table. should not have `height` related info.
 [] - On every indexer for a chainID=X when we call `/v1/query/orders`, should be sent that `chainID` or 0? Or 0 if `chainID=1` (root) - Waiting Andrew answer.
 [] - Parse `startPoll` from send transactions -> `CheckForPollTransaction` -> `checkMemoForStartPoll`
 [] - Parse `votePoll` from send transactions -> `CheckForPollTransaction` -> `checkMemoForVotePoll`
@@ -50,10 +51,12 @@ group.Add(...)
 [] - Run a critical analysis over the BlockSummaries and any "good to have" aggregated number.
 [] - Add the upcoming params [PR #261](https://github.com/canopy-network/canopy/pull/261) - `MinimumStakeForValidators`, `MinimumStakeForDelegates` and `MaximumDelegatesPerCommittee`
 [] - Review and update/fix/enhance `pkg/rpc/event_types.go` I leave a bunch of TODOs there - Many of them are related to other tasks on this `todo.md`
+[] - Refactor crosschain.NewStore to be like adminstore.New which receive the database name as a parameter, so at the `admin` app we will read the ENV and pass the value to it.
 
 [x] - Separate dex-batch (aka current) from events maps, since once the event is triggered, the order will not be at dex-batch endpoint, needs to lookup into H-1
 [x] - Create dex orders constant for the state which should be (pending, locked, complete)
 [x] - /v1/query/double-signers
+[x] - Remove Genesis Activity/Models/etc - Confirmed dead code, safely removed
 
 --- DO NOT HANDLE RIGHT NOW UNTIL ALL THESE ABOVE ARE DONE ---
 

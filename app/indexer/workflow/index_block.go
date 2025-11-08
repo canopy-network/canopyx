@@ -77,15 +77,6 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	}
 	timings["fetch_block_ms"] = fetchOut.DurationMs
 
-	// 3. EnsureGenesisCached - cache genesis state BEFORE indexing height 1
-	// Height 1 requires comparing RPC(1) vs Genesis(0), so genesis must be cached first
-	if in.Height == 1 {
-		genesisErr := workflow.ExecuteActivity(ctx, wc.ActivityContext.EnsureGenesisCached).Get(ctx, nil)
-		if genesisErr != nil {
-			return genesisErr
-		}
-	}
-
 	heightTime := time.UnixMicro(fetchOut.Block.BlockHeader.Time)
 
 	var eventsOut types.ActivityIndexEventsOutput
@@ -200,8 +191,9 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	// Note: Some detailed breakdowns (e.g., NumOrdersNew, NumOrdersOpen) are not yet
 	// returned by activity outputs and will remain zero until those activities are enhanced.
 	summary := &indexermodels.BlockSummary{
-		Height:     in.Height,
-		HeightTime: heightTime,
+		Height:            in.Height,
+		HeightTime:        heightTime,
+		TotalTransactions: fetchOut.Block.BlockHeader.TotalTxs, // Lifetime number of transactions across all blocks
 		// TODO: Run a critical analysis over the BlockSummaries and any "good to have" aggregated number.
 		//   once that is done, map them here:
 		NumTxs:                            txOut.NumTxs,

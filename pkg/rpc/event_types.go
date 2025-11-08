@@ -72,7 +72,7 @@ type DexLiquidityDepositEvent struct {
 	Data map[string]interface{}
 }
 
-// TODO: ADD POINTS  - ADD ORDER ID
+// TODO: ADD POINTS
 func (e *DexLiquidityDepositEvent) Type() EventType    { return EventTypeDexLiquidityDeposit }
 func (e *DexLiquidityDepositEvent) GetAddress() string { return GetStringField(e.Data, "address") }
 func (e *DexLiquidityDepositEvent) GetAmount() *uint64 {
@@ -86,14 +86,16 @@ func (e *DexLiquidityDepositEvent) GetSuccess() *bool        { return nil }
 func (e *DexLiquidityDepositEvent) GetLocalOrigin() *bool {
 	return GetOptionalBoolField(e.Data, "localOrigin")
 }
-func (e *DexLiquidityDepositEvent) GetOrderID() *string { return nil }
+func (e *DexLiquidityDepositEvent) GetOrderID() *string {
+	return GetOptionalStringField(e.Data, "orderID")
+}
 
 // DexLiquidityWithdrawEvent represents removing liquidity from a DEX pool
 type DexLiquidityWithdrawEvent struct {
 	Data map[string]interface{}
 }
 
-// TODO: ADD POINTS - ADD ORDER ID
+// TODO: ADD POINTS
 func (e *DexLiquidityWithdrawEvent) Type() EventType          { return EventTypeDexLiquidityWithdraw }
 func (e *DexLiquidityWithdrawEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
 func (e *DexLiquidityWithdrawEvent) GetAmount() *uint64       { return nil }
@@ -107,14 +109,15 @@ func (e *DexLiquidityWithdrawEvent) GetRemoteAmount() *uint64 {
 }
 func (e *DexLiquidityWithdrawEvent) GetSuccess() *bool     { return nil }
 func (e *DexLiquidityWithdrawEvent) GetLocalOrigin() *bool { return nil }
-func (e *DexLiquidityWithdrawEvent) GetOrderID() *string   { return nil }
+func (e *DexLiquidityWithdrawEvent) GetOrderID() *string {
+	return GetOptionalStringField(e.Data, "orderID")
+}
 
 // DexSwapEvent represents a DEX swap event
 type DexSwapEvent struct {
 	Data map[string]interface{}
 }
 
-// TODO: ADD ORDER ID -
 func (e *DexSwapEvent) Type() EventType        { return EventTypeDexSwap }
 func (e *DexSwapEvent) GetAddress() string     { return GetStringField(e.Data, "address") }
 func (e *DexSwapEvent) GetAmount() *uint64     { return nil }
@@ -126,7 +129,9 @@ func (e *DexSwapEvent) GetLocalAmount() *uint64  { return nil }
 func (e *DexSwapEvent) GetRemoteAmount() *uint64 { return nil }
 func (e *DexSwapEvent) GetSuccess() *bool        { return GetOptionalBoolField(e.Data, "success") }
 func (e *DexSwapEvent) GetLocalOrigin() *bool    { return GetOptionalBoolField(e.Data, "localOrigin") }
-func (e *DexSwapEvent) GetOrderID() *string      { return nil }
+func (e *DexSwapEvent) GetOrderID() *string {
+	return GetOptionalStringField(e.Data, "orderID")
+}
 
 // OrderBookSwapEvent represents an order book swap event
 type OrderBookSwapEvent struct {

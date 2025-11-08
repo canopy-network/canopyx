@@ -20,6 +20,8 @@ type BlockByHeight struct {
 		Hash               string `json:"hash"`
 		NetworkID          int    `json:"networkID"`
 		Time               int64  `json:"time"`
+		NumTxs             uint64 `json:"numTxs"`
+		TotalTxs           uint64 `json:"totalTxs"`
 		TotalVDFIterations int    `json:"totalVDFIterations"`
 		LastBlockHash      string `json:"lastBlockHash"`
 		StateRoot          string `json:"stateRoot"`

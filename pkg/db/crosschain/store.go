@@ -8,7 +8,6 @@ import (
 
 	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.uber.org/zap"
 )
 
@@ -122,12 +121,9 @@ func GetTableConfigs() []TableConfig {
 	}
 }
 
-// NewStore creates a new cross-chain store instance.
-// Reads the database name from the CROSSCHAIN_DB environment variable (default: "canopyx_cross_chain").
+// NewStore creates a new cross-chain store instance with the specified database name.
 // This function is idempotent - safe to call multiple times.
-func NewStore(ctx context.Context, logger *zap.Logger) (*Store, error) {
-	dbName := utils.Env("CROSSCHAIN_DB", "canopyx_cross_chain")
-
+func NewStore(ctx context.Context, logger *zap.Logger, dbName string) (*Store, error) {
 	client, err := clickhouse.New(ctx, logger.With(
 		zap.String("db", dbName),
 		zap.String("component", "crosschain_db"),

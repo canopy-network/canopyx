@@ -7,6 +7,13 @@ import (
 const OrdersProductionTableName = "orders"
 const OrdersStagingTableName = "orders_staging"
 
+// Order status constants
+const (
+	OrderStatusOpen     = "open"
+	OrderStatusComplete = "complete"
+	OrderStatusCanceled = "canceled"
+)
+
 // OrderColumns defines the schema for the orders table.
 var OrderColumns = []ColumnDef{
 	{Name: "order_id", Type: "String", Codec: "ZSTD(1)"},

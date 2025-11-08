@@ -115,6 +115,9 @@ func convertRpcParamsToEntity(rpcParams *rpc.RpcAllParams, height uint64, blockT
 		params.DelegateRewardPercentage = rpcParams.ValidatorParams.DelegateRewardPercentage
 		params.BuyDeadlineBlocks = rpcParams.ValidatorParams.BuyDeadlineBlocks
 		params.LockOrderFeeMultiplier = rpcParams.ValidatorParams.LockOrderFeeMultiplier
+		params.MinimumStakeForValidators = rpcParams.ValidatorParams.MinimumStakeForValidators
+		params.MinimumStakeForDelegates = rpcParams.ValidatorParams.MinimumStakeForDelegates
+		params.MaximumDelegatesPerCommittee = rpcParams.ValidatorParams.MaximumDelegatesPerCommittee
 	}
 
 	// Fee params (handle nil)

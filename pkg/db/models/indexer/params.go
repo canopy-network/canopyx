@@ -36,6 +36,9 @@ var ParamsColumns = []ColumnDef{
 	{Name: "delegate_reward_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "buy_deadline_blocks", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "lock_order_fee_multiplier", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "minimum_stake_for_validators", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "minimum_stake_for_delegates", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "maximum_delegates_per_committee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	// Fee parameters
 	{Name: "send_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "stake_fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
@@ -71,23 +74,26 @@ type Params struct {
 	RootChainID     uint64 `ch:"root_chain_id" json:"root_chain_id"`       // Root chain ID (parent chain)
 	Retired         uint64 `ch:"retired" json:"retired"`                   // Whether chain is retired (0=active, 1=retired)
 
-	// Validator parameters (16 fields)
-	UnstakingBlocks           uint64 `ch:"unstaking_blocks" json:"unstaking_blocks"`                         // Number of blocks before unstaking completes
-	MaxPauseBlocks            uint64 `ch:"max_pause_blocks" json:"max_pause_blocks"`                         // Maximum blocks a validator can be paused
-	DoubleSignSlashPercentage uint64 `ch:"double_sign_slash_percentage" json:"double_sign_slash_percentage"` // Slash percentage for double signing
-	NonSignSlashPercentage    uint64 `ch:"non_sign_slash_percentage" json:"non_sign_slash_percentage"`       // Slash percentage for not signing
-	MaxNonSign                uint64 `ch:"max_non_sign" json:"max_non_sign"`                                 // Maximum allowed non-sign events
-	NonSignWindow             uint64 `ch:"non_sign_window" json:"non_sign_window"`                           // Window size for counting non-signs
-	MaxCommittees             uint64 `ch:"max_committees" json:"max_committees"`                             // Maximum number of committees
-	MaxCommitteeSize          uint64 `ch:"max_committee_size" json:"max_committee_size"`                     // Maximum size of a committee
-	EarlyWithdrawalPenalty    uint64 `ch:"early_withdrawal_penalty" json:"early_withdrawal_penalty"`         // Penalty for early withdrawal
-	DelegateUnstakingBlocks   uint64 `ch:"delegate_unstaking_blocks" json:"delegate_unstaking_blocks"`       // Blocks before delegate unstaking completes
-	MinimumOrderSize          uint64 `ch:"minimum_order_size" json:"minimum_order_size"`                     // Minimum size for an order
-	StakePercentForSubsidized uint64 `ch:"stake_percent_for_subsidized" json:"stake_percent_for_subsidized"` // Stake percentage required for subsidized committee
-	MaxSlashPerCommittee      uint64 `ch:"max_slash_per_committee" json:"max_slash_per_committee"`           // Maximum slash amount per committee
-	DelegateRewardPercentage  uint64 `ch:"delegate_reward_percentage" json:"delegate_reward_percentage"`     // Percentage of rewards that go to delegates
-	BuyDeadlineBlocks         uint64 `ch:"buy_deadline_blocks" json:"buy_deadline_blocks"`                   // Deadline in blocks for buy orders
-	LockOrderFeeMultiplier    uint64 `ch:"lock_order_fee_multiplier" json:"lock_order_fee_multiplier"`       // Fee multiplier for locked orders
+	// Validator parameters (19 fields)
+	UnstakingBlocks              uint64 `ch:"unstaking_blocks" json:"unstaking_blocks"`                               // Number of blocks before unstaking completes
+	MaxPauseBlocks               uint64 `ch:"max_pause_blocks" json:"max_pause_blocks"`                               // Maximum blocks a validator can be paused
+	DoubleSignSlashPercentage    uint64 `ch:"double_sign_slash_percentage" json:"double_sign_slash_percentage"`       // Slash percentage for double signing
+	NonSignSlashPercentage       uint64 `ch:"non_sign_slash_percentage" json:"non_sign_slash_percentage"`             // Slash percentage for not signing
+	MaxNonSign                   uint64 `ch:"max_non_sign" json:"max_non_sign"`                                       // Maximum allowed non-sign events
+	NonSignWindow                uint64 `ch:"non_sign_window" json:"non_sign_window"`                                 // Window size for counting non-signs
+	MaxCommittees                uint64 `ch:"max_committees" json:"max_committees"`                                   // Maximum number of committees
+	MaxCommitteeSize             uint64 `ch:"max_committee_size" json:"max_committee_size"`                           // Maximum size of a committee
+	EarlyWithdrawalPenalty       uint64 `ch:"early_withdrawal_penalty" json:"early_withdrawal_penalty"`               // Penalty for early withdrawal
+	DelegateUnstakingBlocks      uint64 `ch:"delegate_unstaking_blocks" json:"delegate_unstaking_blocks"`             // Blocks before delegate unstaking completes
+	MinimumOrderSize             uint64 `ch:"minimum_order_size" json:"minimum_order_size"`                           // Minimum size for an order
+	StakePercentForSubsidized    uint64 `ch:"stake_percent_for_subsidized" json:"stake_percent_for_subsidized"`       // Stake percentage required for subsidized committee
+	MaxSlashPerCommittee         uint64 `ch:"max_slash_per_committee" json:"max_slash_per_committee"`                 // Maximum slash amount per committee
+	DelegateRewardPercentage     uint64 `ch:"delegate_reward_percentage" json:"delegate_reward_percentage"`           // Percentage of rewards that go to delegates
+	BuyDeadlineBlocks            uint64 `ch:"buy_deadline_blocks" json:"buy_deadline_blocks"`                         // Deadline in blocks for buy orders
+	LockOrderFeeMultiplier       uint64 `ch:"lock_order_fee_multiplier" json:"lock_order_fee_multiplier"`             // Fee multiplier for locked orders
+	MinimumStakeForValidators    uint64 `ch:"minimum_stake_for_validators" json:"minimum_stake_for_validators"`       // Minimum stake required to become a validator (from PR #261)
+	MinimumStakeForDelegates     uint64 `ch:"minimum_stake_for_delegates" json:"minimum_stake_for_delegates"`         // Minimum stake required to delegate (from PR #261)
+	MaximumDelegatesPerCommittee uint64 `ch:"maximum_delegates_per_committee" json:"maximum_delegates_per_committee"` // Maximum number of delegates allowed per committee (from PR #261)
 
 	// Fee parameters (16 fields)
 	SendFee                 uint64 `ch:"send_fee" json:"send_fee"`                                     // Fee for send transactions

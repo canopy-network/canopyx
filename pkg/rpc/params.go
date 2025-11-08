@@ -54,22 +54,25 @@ type ConsensusParams struct {
 // ValidatorParams represents validator-related parameters.
 // Controls staking, slashing, committees, and order-related settings.
 type ValidatorParams struct {
-	UnstakingBlocks           uint64 `json:"unstakingBlocks"`                    // Number of blocks before unstaking completes
-	MaxPauseBlocks            uint64 `json:"maxPauseBlocks"`                     // Maximum blocks a validator can be paused
-	DoubleSignSlashPercentage uint64 `json:"doubleSignSlashPercentage"`          // Slash percentage for double signing
-	NonSignSlashPercentage    uint64 `json:"nonSignSlashPercentage"`             // Slash percentage for not signing
-	MaxNonSign                uint64 `json:"maxNonSign"`                         // Maximum allowed non-sign events
-	NonSignWindow             uint64 `json:"nonSignWindow"`                      // Window size for counting non-signs
-	MaxCommittees             uint64 `json:"maxCommittees"`                      // Maximum number of committees
-	MaxCommitteeSize          uint64 `json:"maxCommitteeSize"`                   // Maximum size of a committee
-	EarlyWithdrawalPenalty    uint64 `json:"earlyWithdrawalPenalty"`             // Penalty for early withdrawal
-	DelegateUnstakingBlocks   uint64 `json:"delegateUnstakingBlocks"`            // Blocks before delegate unstaking completes
-	MinimumOrderSize          uint64 `json:"minimumOrderSize"`                   // Minimum size for an order
-	StakePercentForSubsidized uint64 `json:"stakePercentForSubsidizedCommittee"` // Stake percentage required for subsidized committee
-	MaxSlashPerCommittee      uint64 `json:"maxSlashPerCommittee"`               // Maximum slash amount per committee
-	DelegateRewardPercentage  uint64 `json:"delegateRewardPercentage"`           // Percentage of rewards that go to delegates
-	BuyDeadlineBlocks         uint64 `json:"buyDeadlineBlocks"`                  // Deadline in blocks for buy orders
-	LockOrderFeeMultiplier    uint64 `json:"lockOrderFeeMultiplier"`             // Fee multiplier for locked orders
+	UnstakingBlocks              uint64 `json:"unstakingBlocks"`                    // Number of blocks before unstaking completes
+	MaxPauseBlocks               uint64 `json:"maxPauseBlocks"`                     // Maximum blocks a validator can be paused
+	DoubleSignSlashPercentage    uint64 `json:"doubleSignSlashPercentage"`          // Slash percentage for double signing
+	NonSignSlashPercentage       uint64 `json:"nonSignSlashPercentage"`             // Slash percentage for not signing
+	MaxNonSign                   uint64 `json:"maxNonSign"`                         // Maximum allowed non-sign events
+	NonSignWindow                uint64 `json:"nonSignWindow"`                      // Window size for counting non-signs
+	MaxCommittees                uint64 `json:"maxCommittees"`                      // Maximum number of committees
+	MaxCommitteeSize             uint64 `json:"maxCommitteeSize"`                   // Maximum size of a committee
+	EarlyWithdrawalPenalty       uint64 `json:"earlyWithdrawalPenalty"`             // Penalty for early withdrawal
+	DelegateUnstakingBlocks      uint64 `json:"delegateUnstakingBlocks"`            // Blocks before delegate unstaking completes
+	MinimumOrderSize             uint64 `json:"minimumOrderSize"`                   // Minimum size for an order
+	StakePercentForSubsidized    uint64 `json:"stakePercentForSubsidizedCommittee"` // Stake percentage required for subsidized committee
+	MaxSlashPerCommittee         uint64 `json:"maxSlashPerCommittee"`               // Maximum slash amount per committee
+	DelegateRewardPercentage     uint64 `json:"delegateRewardPercentage"`           // Percentage of rewards that go to delegates
+	BuyDeadlineBlocks            uint64 `json:"buyDeadlineBlocks"`                  // Deadline in blocks for buy orders
+	LockOrderFeeMultiplier       uint64 `json:"lockOrderFeeMultiplier"`             // Fee multiplier for locked orders
+	MinimumStakeForValidators    uint64 `json:"minimumStakeForValidators"`          // Minimum stake required to become a validator (from PR #261)
+	MinimumStakeForDelegates     uint64 `json:"minimumStakeForDelegates"`           // Minimum stake required to delegate (from PR #261)
+	MaximumDelegatesPerCommittee uint64 `json:"maximumDelegatesPerCommittee"`       // Maximum number of delegates allowed per committee (from PR #261)
 }
 
 // FeeParams represents fee-related parameters.

@@ -12,6 +12,7 @@ const BlockSummariesStagingTableName = "block_summaries_staging"
 var BlockSummaryColumns = []ColumnDef{
 	{Name: "height", Type: "UInt64"},
 	{Name: "height_time", Type: "DateTime64(6)"},
+	{Name: "total_transactions", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD"},
 	// Transaction counters (24 fields)
 	{Name: "num_txs", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_send", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
@@ -111,8 +112,9 @@ var BlockSummaryColumns = []ColumnDef{
 // All fields use individual typed columns (no maps) following the pattern from params.go.
 type BlockSummary struct {
 	// Block metadata
-	Height     uint64    `ch:"height" json:"height"`
-	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
+	Height            uint64    `ch:"height" json:"height"`
+	HeightTime        time.Time `ch:"height_time" json:"height_time"`              // Block timestamp for time-range queries
+	TotalTransactions uint64    `ch:"total_transactions" json:"total_transactions"` // Lifetime number of transactions across all blocks
 
 	// ========== Transactions (24 fields) ==========
 	NumTxs uint32 `ch:"num_txs" json:"num_txs"` // Total number of transactions

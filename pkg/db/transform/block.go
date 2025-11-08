@@ -13,6 +13,7 @@ func Block(bbh *rpc.BlockByHeight) *indexer.Block {
 		Height:          bbh.BlockHeader.Height,
 		Hash:            bbh.BlockHeader.Hash,
 		Time:            time.UnixMicro(bbh.BlockHeader.Time),
+		NetworkID:       uint64(bbh.BlockHeader.NetworkID),
 		LastBlockHash:   bbh.BlockHeader.LastBlockHash,
 		ProposerAddress: bbh.BlockHeader.ProposerAddress,
 		Size:            int32(bbh.Meta.Size),

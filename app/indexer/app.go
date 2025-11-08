@@ -212,7 +212,6 @@ func Initialize(ctx context.Context) *App {
 		w.RegisterActivity(activityContext.IndexCommittees)
 		w.RegisterActivity(activityContext.IndexDexBatch)
 		w.RegisterActivity(activityContext.IndexPoll)
-		w.RegisterActivity(activityContext.EnsureGenesisCached)
 		w.RegisterActivity(activityContext.SaveBlockSummary)
 		w.RegisterActivity(activityContext.PromoteData)
 		w.RegisterActivity(activityContext.RecordIndexed)

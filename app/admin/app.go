@@ -85,7 +85,8 @@ func Initialize(ctx context.Context) *types.App {
 	}
 
 	// Initialize cross-chain database (required)
-	crossChainDB, crossChainErr := crosschain.NewStore(ctx, logger)
+	crossChainDBName := utils.Env("CROSSCHAIN_DB", "canopyx_cross_chain")
+	crossChainDB, crossChainErr := crosschain.NewStore(ctx, logger, crossChainDBName)
 	if crossChainErr != nil {
 		logger.Fatal("Cross-chain database initialization failed",
 			zap.Error(crossChainErr))

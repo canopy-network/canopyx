@@ -2,7 +2,6 @@ package chain
 
 import (
 	"context"
-	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
@@ -32,7 +31,6 @@ type Store interface {
 	InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error
 	InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error
 	InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error
-	InsertGenesis(ctx context.Context, height uint64, data string, fetchedAt time.Time) error
 	InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error
 	InsertValidatorSigningInfoStaging(ctx context.Context, signingInfos []*indexermodels.ValidatorSigningInfo) error
 	InsertValidatorDoubleSigningInfoStaging(ctx context.Context, doubleSigningInfos []*indexermodels.ValidatorDoubleSigningInfo) error
@@ -45,8 +43,6 @@ type Store interface {
 	GetBlock(ctx context.Context, height uint64) (*indexermodels.Block, error)
 	GetBlockSummary(ctx context.Context, height uint64, staging bool) (*indexermodels.BlockSummary, error)
 	HasBlock(ctx context.Context, height uint64) (bool, error)
-	GetGenesisData(ctx context.Context, height uint64) (string, error)
-	HasGenesis(ctx context.Context, height uint64) (bool, error)
 	GetEventsByTypeAndHeight(ctx context.Context, height uint64, staging bool, eventTypes ...string) ([]*indexermodels.Event, error)
 
 	// --- Delete entities

@@ -132,11 +132,6 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
-	db.Logger.Debug("Initialize genesis table", zap.String("name", db.Name))
-	if err := db.initGenesis(ctx); err != nil {
-		return err
-	}
-
 	db.Logger.Debug("Initialize pool_points_by_holder model", zap.String("name", db.Name))
 	if err := db.initPoolPointsByHolder(ctx); err != nil {
 		return err
