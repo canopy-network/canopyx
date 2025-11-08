@@ -13,6 +13,8 @@ var CommitteeValidatorColumns = []ColumnDef{
 	{Name: "validator_address", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "staked_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "status", Type: "LowCardinality(String)"},
+	{Name: "delegate", Type: "Bool"},
+	{Name: "compound", Type: "Bool"},
 	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "height_time", Type: "DateTime64(3)", Codec: "DoubleDelta, ZSTD(1)"},
 }
@@ -41,6 +43,8 @@ type CommitteeValidator struct {
 	// Validator metadata (denormalized for query efficiency)
 	StakedAmount uint64 `ch:"staked_amount" json:"staked_amount"` // Amount staked by validator in uCNPY
 	Status       string `ch:"status" json:"status"`               // Validator status: active/paused/unstaking (derived from MaxPausedHeight/UnstakingHeight)
+	Delegate     bool   `ch:"delegate" json:"delegate"`           // Whether validator accepts delegations
+	Compound     bool   `ch:"compound" json:"compound"`           // Whether validator auto-compounds rewards
 
 	// Version tracking - every membership change creates a new snapshot
 	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created

@@ -13,7 +13,6 @@ var ValidatorColumns = []ColumnDef{
 	{Name: "public_key", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "net_address", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "staked_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
-	{Name: "committees", Type: "Array(UInt64)", Codec: "ZSTD(1)"},
 	{Name: "max_paused_height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "unstaking_height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "output", Type: "String", Codec: "ZSTD(1)"},
@@ -48,8 +47,8 @@ type Validator struct {
 	StakedAmount uint64 `ch:"staked_amount" json:"staked_amount"` // Amount staked by validator in uCNPY
 	Output       string `ch:"output" json:"output"`               // Reward recipient address (empty = self)
 
-	// Committee assignments
-	Committees []uint64 `ch:"committees" json:"committees"` // Array of committee IDs validator is assigned to
+	// Committee assignments (NOT stored in database - query from committee_validators table instead)
+	Committees []uint64 `ch:"-" json:"committees"` // Array of committee IDs validator is assigned to (ephemeral field for activity processing)
 
 	// State management
 	MaxPausedHeight uint64 `ch:"max_paused_height" json:"max_paused_height"` // Height when pause expires (0 = not paused)

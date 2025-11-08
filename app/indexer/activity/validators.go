@@ -375,6 +375,8 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 				ValidatorAddress: v.Address,
 				StakedAmount:     v.StakedAmount,
 				Status:           v.Status,
+				Delegate:         v.Delegate,
+				Compound:         v.Compound,
 				Height:           v.Height,
 				HeightTime:       v.HeightTime,
 			}

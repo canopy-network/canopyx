@@ -46,7 +46,7 @@ func (db *DB) InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*index
 	}
 
 	query := fmt.Sprintf(`INSERT INTO "%s".committee_validators_staging (
-		committee_id, validator_address, staked_amount, status, height, height_time
+		committee_id, validator_address, staked_amount, status, delegate, compound, height, height_time
 	) VALUES`, db.Name)
 
 	batch, err := db.PrepareBatch(ctx, query)
@@ -63,6 +63,8 @@ func (db *DB) InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*index
 			cv.ValidatorAddress,
 			cv.StakedAmount,
 			cv.Status,
+			cv.Delegate,
+			cv.Compound,
 			cv.Height,
 			cv.HeightTime,
 		)

@@ -15,8 +15,8 @@ import (
 // Schema design:
 // - ReplacingMergeTree(height): Deduplicates by (address, height), keeping latest
 // - ORDER BY (address, height): Enables efficient temporal queries
-// - Array(UInt64) for committees: ClickHouse native array type for committee IDs
 // - UInt8 for boolean fields (delegate, compound): ClickHouse doesn't have native bool
+// - Committee membership is tracked in committee_validators junction table instead
 func (db *DB) initValidators(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorColumns)
 	queryTemplate := `
@@ -51,7 +51,7 @@ func (db *DB) InsertValidatorsStaging(ctx context.Context, validators []*indexer
 	}
 
 	query := fmt.Sprintf(
-		`INSERT INTO %s (address, public_key, net_address, staked_amount, committees, max_paused_height, unstaking_height, output, delegate, compound, status, height, height_time) VALUES`,
+		`INSERT INTO %s (address, public_key, net_address, staked_amount, max_paused_height, unstaking_height, output, delegate, compound, status, height, height_time) VALUES`,
 		indexermodels.ValidatorsStagingTableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
@@ -68,7 +68,6 @@ func (db *DB) InsertValidatorsStaging(ctx context.Context, validators []*indexer
 			validator.PublicKey,
 			validator.NetAddress,
 			validator.StakedAmount,
-			validator.Committees,
 			validator.MaxPausedHeight,
 			validator.UnstakingHeight,
 			validator.Output,
