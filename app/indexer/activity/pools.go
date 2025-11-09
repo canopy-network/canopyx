@@ -117,6 +117,8 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
     // Each pool has its own chain_id (from the blockchain's nested chain structure)
     // We index all pools at each height (snapshot pattern)
     pools := make([]*indexer.Pool, 0, len(rpcPools))
+    var numPoolsNew uint32
+
     for _, rpcPool := range rpcPools {
         pool := transform.Pool(rpcPool, in.Height)
         pool.HeightTime = in.BlockTime
@@ -133,6 +135,7 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
             pool.AmountDelta = 0
             pool.TotalPointsDelta = 0
             pool.LPCountDelta = 0
+            numPoolsNew++
         }
 
         pools = append(pools, pool)
@@ -180,6 +183,8 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 
     // Compare and create snapshots only for changed holders
     changedHolders := make([]*indexer.PoolPointsByHolder, 0)
+    var numPoolHoldersNew uint32
+
     for _, rpcPool := range rpcPools {
         if len(rpcPool.Points) == 0 || rpcPool.TotalPoolPoints == 0 {
             continue
@@ -197,6 +202,10 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 
             // Snapshot-on-change: only insert if points changed or holder is new
             if !existed || pointEntry.Points != prevPoints {
+                // Track new holders
+                if !existed {
+                    numPoolHoldersNew++
+                }
                 var liquidityPoolPoints uint64
                 if rpcPool.TotalPoolPoints > 0 {
                     liquidityPoolPoints = (rpcPool.Amount * pointEntry.Points) / rpcPool.TotalPoolPoints
@@ -231,8 +240,10 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 
     durationMs := float64(time.Since(start).Microseconds()) / 1000.0
     return types.ActivityIndexPoolsOutput{
-        NumPools:       numPools,
-        NumPoolHolders: uint32(len(changedHolders)),
-        DurationMs:     durationMs,
+        NumPools:          numPools,
+        NumPoolsNew:       numPoolsNew,
+        NumPoolHolders:    uint32(len(changedHolders)),
+        NumPoolHoldersNew: numPoolHoldersNew,
+        DurationMs:        durationMs,
     }, nil
 }

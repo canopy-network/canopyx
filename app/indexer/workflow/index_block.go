@@ -237,9 +237,9 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumOrdersCancelled: 0, // TODO: Requires activity to return status breakdown
 		NumOrdersExpired:   0, // TODO: Requires activity to return status breakdown
 
-		// Pool counts (status breakdowns require activity enhancement)
+		// Pool counts (from pools activity)
 		NumPools:    poolsOut.NumPools,
-		NumPoolsNew: 0, // TODO: Requires activity to track new vs existing pools
+		NumPoolsNew: poolsOut.NumPoolsNew,
 
 		// DEX price counts
 		NumDexPrices: pricesOut.NumPrices,
@@ -262,9 +262,9 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumDexWithdrawalsPending:  0, // TODO: Requires activity to return status breakdown
 		NumDexWithdrawalsComplete: 0, // TODO: Requires activity to return status breakdown
 
-		// DEX pool points (populated from pool activity output)
+		// DEX pool points (from pools activity)
 		NumDexPoolPointsHolders:    poolsOut.NumPoolHolders,
-		NumDexPoolPointsHoldersNew: 0, // TODO: Requires activity to track new vs existing holders
+		NumDexPoolPointsHoldersNew: poolsOut.NumPoolHoldersNew,
 
 		// Params
 		ParamsChanged: paramsOut.ParamsChanged,
