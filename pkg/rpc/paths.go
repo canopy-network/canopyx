@@ -36,6 +36,9 @@ const (
 	valParamsPath = "/v1/query/val-params"
 	govParamsPath = "/v1/query/gov-params"
 
+	// Supply queries
+	supplyPath = "/v1/query/supply"
+
 	// Validator queries
 	validatorsPath    = "/v1/query/validators"
 	nonSignersPath    = "/v1/query/non-signers"

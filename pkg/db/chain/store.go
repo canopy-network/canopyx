@@ -37,6 +37,7 @@ type Store interface {
 	InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error
 	InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error
 	InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
+	InsertSupplyStaging(ctx context.Context, supplies []*indexermodels.Supply) error
 
 	// --- Query entities
 

@@ -26,6 +26,7 @@ type Client interface {
 	CommitteesDataByHeight(ctx context.Context, height uint64) ([]*RpcCommitteeData, error)
 	SubsidizedCommitteesByHeight(ctx context.Context, height uint64) ([]uint64, error)
 	RetiredCommitteesByHeight(ctx context.Context, height uint64) ([]uint64, error)
+	SupplyByHeight(ctx context.Context, height uint64) (*RpcSupply, error)
 	// Poll does not support historical query (aka by Height)
 	Poll(ctx context.Context) (RpcPoll, error)
 }

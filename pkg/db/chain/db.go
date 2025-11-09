@@ -192,6 +192,11 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
+	db.Logger.Debug("Initialize supply model", zap.String("name", db.Name))
+	if err := db.initSupply(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }
 

@@ -17,3 +17,9 @@ type ActivityIndexCommitteesOutput struct {
 	NumCommittees uint32  `json:"numCommittees"` // Number of committees that changed
 	DurationMs    float64 `json:"durationMs"`    // Execution time in milliseconds
 }
+
+// ActivityIndexSupplyOutput contains the result of indexing supply metrics along with execution duration.
+type ActivityIndexSupplyOutput struct {
+	Changed    bool    `json:"changed"`    // True if supply changed from previous height
+	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
+}
