@@ -108,8 +108,8 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 	}
 
 	// Build event maps by address for O(1) lookup
-	rewardEvents := make(map[string]*indexer.Event)
-	slashEvents := make(map[string]*indexer.Event)
+	rewardsByAddressMap := make(map[string]uint64)
+	slashesByAddressMap := make(map[string]uint64)
 
 	for _, event := range accountEvents {
 		// Events have Address field which corresponds to account/validator address
@@ -117,9 +117,9 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 
 		switch event.EventType {
 		case "EventReward":
-			rewardEvents[addr] = event
+			rewardsByAddressMap[addr] = rewardsByAddressMap[addr] + *event.Amount
 		case "EventSlash":
-			slashEvents[addr] = event
+			slashesByAddressMap[addr] = slashesByAddressMap[addr] + *event.Amount
 		}
 	}
 
@@ -135,6 +135,8 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 				Amount:     curr.Amount,
 				Height:     input.Height,
 				HeightTime: input.BlockTime,
+				Rewards:    rewardsByAddressMap[curr.Address],
+				Slashes:    slashesByAddressMap[curr.Address],
 			})
 		}
 	}
@@ -153,8 +155,6 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 		zap.Uint64("height", input.Height),
 		zap.Int("totalAccounts", len(currentAccounts)),
 		zap.Int("changedAccounts", len(changedAccounts)),
-		zap.Int("rewardEvents", len(rewardEvents)),
-		zap.Int("slashEvents", len(slashEvents)),
 		zap.Float64("durationMs", durationMs))
 
 	return types.ActivityIndexAccountsOutput{
