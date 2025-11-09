@@ -187,81 +187,105 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		Height:            in.Height,
 		HeightTime:        heightTime,
 		TotalTransactions: fetchOut.Block.BlockHeader.TotalTxs, // Lifetime number of transactions across all blocks
-		// TODO: Run a critical analysis over the BlockSummaries and any "good to have" aggregated number.
-		//   once that is done, map them here:
-		NumTxs:                            txOut.NumTxs,
-		NumTxsSend:                        txOut.TxCountsByType["send"], // repeat...
-		NumTxsDelegate:                    0,
-		NumTxsUndelegate:                  0,
-		NumTxsStake:                       0,
-		NumTxsUnstake:                     0,
-		NumTxsEditStake:                   0,
-		NumTxsVote:                        0,
-		NumTxsProposal:                    0,
-		NumTxsContract:                    0,
-		NumTxsSystem:                      0,
-		NumTxsUnknown:                     0,
-		NumTxsPause:                       0,
-		NumTxsUnpause:                     0,
-		NumTxsChangeParameter:             0,
-		NumTxsDaoTransfer:                 0,
-		NumTxsCertificateResults:          0,
-		NumTxsSubsidy:                     0,
-		NumTxsCreateOrder:                 0,
-		NumTxsEditOrder:                   0,
-		NumTxsDeleteOrder:                 0,
-		NumTxsDexLimitOrder:               0,
-		NumTxsDexLiquidityDeposit:         0,
-		NumTxsDexLiquidityWithdraw:        0,
-		NumAccounts:                       accountsOut.NumAccounts,
-		NumAccountsNew:                    0,
+
+		// Transaction counts by type (populated from TxCountsByType map)
+		NumTxs:                     txOut.NumTxs,
+		NumTxsSend:                 txOut.TxCountsByType["send"],
+		NumTxsDelegate:             0, // No delegate type exists in Canopy
+		NumTxsUndelegate:           0, // No undelegate type exists in Canopy
+		NumTxsStake:                txOut.TxCountsByType["stake"],
+		NumTxsUnstake:              txOut.TxCountsByType["unstake"],
+		NumTxsEditStake:            txOut.TxCountsByType["edit_stake"],
+		NumTxsVote:                 0, // Vote is embedded in memo, not a separate type
+		NumTxsProposal:             0, // Proposal is embedded in memo, not a separate type
+		NumTxsContract:             0, // Contract type not implemented
+		NumTxsSystem:               0, // System type not implemented
+		NumTxsUnknown:              txOut.TxCountsByType["unknown"],
+		NumTxsPause:                txOut.TxCountsByType["pause"],
+		NumTxsUnpause:              txOut.TxCountsByType["unpause"],
+		NumTxsChangeParameter:      txOut.TxCountsByType["changeParameter"],
+		NumTxsDaoTransfer:          txOut.TxCountsByType["daoTransfer"],
+		NumTxsCertificateResults:   txOut.TxCountsByType["certificateResults"],
+		NumTxsSubsidy:              txOut.TxCountsByType["subsidy"],
+		NumTxsCreateOrder:          txOut.TxCountsByType["createOrder"],
+		NumTxsEditOrder:            txOut.TxCountsByType["editOrder"],
+		NumTxsDeleteOrder:          txOut.TxCountsByType["deleteOrder"],
+		NumTxsDexLimitOrder:        txOut.TxCountsByType["dexLimitOrder"],
+		NumTxsDexLiquidityDeposit:  txOut.TxCountsByType["dexLiquidityDeposit"],
+		NumTxsDexLiquidityWithdraw: txOut.TxCountsByType["dexLiquidityWithdraw"],
+
+		// Account counts
+		NumAccounts:    accountsOut.NumAccounts,
+		NumAccountsNew: 0, // TODO: Requires activity to track new vs existing accounts
+
+		// Event counts by type (populated from EventCountsByType map)
 		NumEvents:                         eventsOut.NumEvents,
 		NumEventsReward:                   eventsOut.EventCountsByType["reward"],
-		NumEventsSlash:                    0,
-		NumEventsDexLiquidityDeposit:      0,
-		NumEventsDexLiquidityWithdraw:     0,
-		NumEventsDexSwap:                  0,
-		NumEventsOrderBookSwap:            0,
-		NumEventsAutomaticPause:           0,
-		NumEventsAutomaticBeginUnstaking:  0,
-		NumEventsAutomaticFinishUnstaking: 0,
-		NumOrders:                         ordersOut.NumOrders,
-		NumOrdersNew:                      0,
-		NumOrdersOpen:                     0,
-		NumOrdersFilled:                   0,
-		NumOrdersCancelled:                0,
-		NumOrdersExpired:                  0,
-		NumPools:                          poolsOut.NumPools,
-		NumPoolsNew:                       0,
-		NumDexPrices:                      pricesOut.NumPrices,
-		NumDexOrders:                      dexBatchOut.NumOrders,
-		NumDexOrdersFuture:                0,
-		NumDexOrdersLocked:                0,
-		NumDexOrdersComplete:              0,
-		NumDexOrdersSuccess:               0,
-		NumDexOrdersFailed:                0,
-		NumDexDeposits:                    dexBatchOut.NumDeposits,
-		NumDexDepositsPending:             0,
-		NumDexDepositsComplete:            0,
-		NumDexWithdrawals:                 dexBatchOut.NumWithdrawals,
-		NumDexWithdrawalsPending:          0,
-		NumDexWithdrawalsComplete:         0,
-		NumDexPoolPointsHolders:           0,
-		NumDexPoolPointsHoldersNew:        0,
-		ParamsChanged:                     paramsOut.ParamsChanged,
-		NumValidators:                     validatorsOut.NumValidators,
-		NumValidatorsNew:                  0,
-		NumValidatorsActive:               0,
-		NumValidatorsPaused:               0,
-		NumValidatorsUnstaking:            0,
-		NumValidatorSigningInfo:           validatorsOut.NumSigningInfos,
-		NumValidatorSigningInfoNew:        0,
-		NumCommittees:                     committeesOut.NumCommittees,
-		NumCommitteesNew:                  0,
-		NumCommitteesSubsidized:           0,
-		NumCommitteesRetired:              0,
-		NumCommitteeValidators:            0,
-		NumPollSnapshots:                  0, // Poll snapshots now captured via scheduled workflow, not per-block
+		NumEventsSlash:                    eventsOut.EventCountsByType["slash"],
+		NumEventsDexLiquidityDeposit:      eventsOut.EventCountsByType["dex-liquidity-deposit"],
+		NumEventsDexLiquidityWithdraw:     eventsOut.EventCountsByType["dex-liquidity-withdraw"],
+		NumEventsDexSwap:                  eventsOut.EventCountsByType["dex-swap"],
+		NumEventsOrderBookSwap:            eventsOut.EventCountsByType["order-book-swap"],
+		NumEventsAutomaticPause:           eventsOut.EventCountsByType["automatic-pause"],
+		NumEventsAutomaticBeginUnstaking:  eventsOut.EventCountsByType["automatic-begin-unstaking"],
+		NumEventsAutomaticFinishUnstaking: eventsOut.EventCountsByType["automatic-finish-unstaking"],
+		// Order counts (status breakdowns require activity enhancement)
+		NumOrders:          ordersOut.NumOrders,
+		NumOrdersNew:       0, // TODO: Requires activity to return status breakdown
+		NumOrdersOpen:      0, // TODO: Requires activity to return status breakdown
+		NumOrdersFilled:    0, // TODO: Requires activity to return status breakdown
+		NumOrdersCancelled: 0, // TODO: Requires activity to return status breakdown
+		NumOrdersExpired:   0, // TODO: Requires activity to return status breakdown
+
+		// Pool counts (status breakdowns require activity enhancement)
+		NumPools:    poolsOut.NumPools,
+		NumPoolsNew: 0, // TODO: Requires activity to track new vs existing pools
+
+		// DEX price counts
+		NumDexPrices: pricesOut.NumPrices,
+
+		// DEX order counts (status breakdowns require activity enhancement)
+		NumDexOrders:         dexBatchOut.NumOrders,
+		NumDexOrdersFuture:   0, // TODO: Requires activity to return status breakdown
+		NumDexOrdersLocked:   0, // TODO: Requires activity to return status breakdown
+		NumDexOrdersComplete: 0, // TODO: Requires activity to return status breakdown
+		NumDexOrdersSuccess:  0, // TODO: Requires activity to return status breakdown
+		NumDexOrdersFailed:   0, // TODO: Requires activity to return status breakdown
+
+		// DEX deposit counts (status breakdowns require activity enhancement)
+		NumDexDeposits:         dexBatchOut.NumDeposits,
+		NumDexDepositsPending:  0, // TODO: Requires activity to return status breakdown
+		NumDexDepositsComplete: 0, // TODO: Requires activity to return status breakdown
+
+		// DEX withdrawal counts (status breakdowns require activity enhancement)
+		NumDexWithdrawals:         dexBatchOut.NumWithdrawals,
+		NumDexWithdrawalsPending:  0, // TODO: Requires activity to return status breakdown
+		NumDexWithdrawalsComplete: 0, // TODO: Requires activity to return status breakdown
+
+		// DEX pool points (requires activity enhancement)
+		NumDexPoolPointsHolders:    0, // TODO: Requires activity to track pool points holders
+		NumDexPoolPointsHoldersNew: 0, // TODO: Requires activity to track new holders
+
+		// Params
+		ParamsChanged: paramsOut.ParamsChanged,
+
+		// Validator counts (status breakdowns require activity enhancement)
+		NumValidators:           validatorsOut.NumValidators,
+		NumValidatorsNew:        0, // TODO: Requires activity to track new vs existing validators
+		NumValidatorsActive:     0, // TODO: Requires activity to return status breakdown
+		NumValidatorsPaused:     0, // TODO: Requires activity to return status breakdown
+		NumValidatorsUnstaking:  0, // TODO: Requires activity to return status breakdown
+		NumValidatorSigningInfo: validatorsOut.NumSigningInfos,
+		NumValidatorSigningInfoNew: 0, // TODO: Requires activity to track new vs existing signing info
+
+		// Committee counts (status breakdowns require activity enhancement)
+		NumCommittees:           committeesOut.NumCommittees,
+		NumCommitteesNew:        0, // TODO: Requires activity to track new vs existing committees
+		NumCommitteesSubsidized: 0, // TODO: Requires activity to return status breakdown
+		NumCommitteesRetired:    0, // TODO: Requires activity to return status breakdown
+		NumCommitteeValidators:  0, // TODO: Requires activity to track committee validator count
+
+		NumPollSnapshots: 0, // Poll snapshots now captured via scheduled workflow, not per-block
 	}
 
 	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries
