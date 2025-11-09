@@ -14,8 +14,11 @@ type ActivityIndexPollOutput struct {
 
 // ActivityIndexCommitteesOutput contains the result of indexing committees along with execution duration.
 type ActivityIndexCommitteesOutput struct {
-	NumCommittees uint32  `json:"numCommittees"` // Number of committees that changed
-	DurationMs    float64 `json:"durationMs"`    // Execution time in milliseconds
+	NumCommittees           uint32  `json:"numCommittees"`           // Number of committees that changed
+	NumCommitteesNew        uint32  `json:"numCommitteesNew"`        // Number of new committees (first seen at this height)
+	NumCommitteesSubsidized uint32  `json:"numCommitteesSubsidized"` // Number of subsidized committees (all, not just changed)
+	NumCommitteesRetired    uint32  `json:"numCommitteesRetired"`    // Number of retired committees (all, not just changed)
+	DurationMs              float64 `json:"durationMs"`              // Execution time in milliseconds
 }
 
 // ActivityIndexSupplyOutput contains the result of indexing supply metrics along with execution duration.

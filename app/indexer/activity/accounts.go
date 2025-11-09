@@ -138,8 +138,10 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 
 	// Compare and collect changed accounts
 	changedAccounts := make([]*indexer.Account, 0)
+	var numAccountsNew uint32
+
 	for _, curr := range currentAccounts {
-		prevAmount := prevMap[curr.Address]
+		prevAmount, existed := prevMap[curr.Address]
 
 		// Only create snapshot if balance changed
 		if curr.Amount != prevAmount {
@@ -149,6 +151,11 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 				Height:     input.Height,
 				HeightTime: input.BlockTime,
 			})
+
+			// Track new accounts (didn't exist at H-1)
+			if !existed {
+				numAccountsNew++
+			}
 		}
 	}
 
@@ -171,7 +178,8 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 		zap.Float64("durationMs", durationMs))
 
 	return types.ActivityIndexAccountsOutput{
-		NumAccounts: uint32(len(changedAccounts)),
-		DurationMs:  durationMs,
+		NumAccounts:    uint32(len(changedAccounts)),
+		NumAccountsNew: numAccountsNew,
+		DurationMs:     durationMs,
 	}, nil
 }

@@ -214,9 +214,9 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumTxsDexLiquidityDeposit:  txOut.TxCountsByType["dexLiquidityDeposit"],
 		NumTxsDexLiquidityWithdraw: txOut.TxCountsByType["dexLiquidityWithdraw"],
 
-		// Account counts
+		// Account counts (from accounts activity)
 		NumAccounts:    accountsOut.NumAccounts,
-		NumAccountsNew: 0, // TODO: Requires activity to track new vs existing accounts
+		NumAccountsNew: accountsOut.NumAccountsNew,
 
 		// Event counts by type (populated from EventCountsByType map)
 		NumEvents:                         eventsOut.NumEvents,
@@ -262,28 +262,28 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumDexWithdrawalsPending:  0, // TODO: Requires activity to return status breakdown
 		NumDexWithdrawalsComplete: 0, // TODO: Requires activity to return status breakdown
 
-		// DEX pool points (requires activity enhancement)
-		NumDexPoolPointsHolders:    0, // TODO: Requires activity to track pool points holders
-		NumDexPoolPointsHoldersNew: 0, // TODO: Requires activity to track new holders
+		// DEX pool points (populated from pool activity output)
+		NumDexPoolPointsHolders:    poolsOut.NumPoolHolders,
+		NumDexPoolPointsHoldersNew: 0, // TODO: Requires activity to track new vs existing holders
 
 		// Params
 		ParamsChanged: paramsOut.ParamsChanged,
 
-		// Validator counts (status breakdowns require activity enhancement)
-		NumValidators:           validatorsOut.NumValidators,
-		NumValidatorsNew:        0, // TODO: Requires activity to track new vs existing validators
-		NumValidatorsActive:     0, // TODO: Requires activity to return status breakdown
-		NumValidatorsPaused:     0, // TODO: Requires activity to return status breakdown
-		NumValidatorsUnstaking:  0, // TODO: Requires activity to return status breakdown
-		NumValidatorSigningInfo: validatorsOut.NumSigningInfos,
-		NumValidatorSigningInfoNew: 0, // TODO: Requires activity to track new vs existing signing info
+		// Validator counts (populated from activity output)
+		NumValidators:              validatorsOut.NumValidators,
+		NumValidatorsNew:           validatorsOut.NumValidatorsNew,
+		NumValidatorsActive:        validatorsOut.NumValidatorsActive,
+		NumValidatorsPaused:        validatorsOut.NumValidatorsPaused,
+		NumValidatorsUnstaking:     validatorsOut.NumValidatorsUnstaking,
+		NumValidatorSigningInfo:    validatorsOut.NumSigningInfos,
+		NumValidatorSigningInfoNew: validatorsOut.NumSigningInfosNew,
 
-		// Committee counts (status breakdowns require activity enhancement)
+		// Committee counts (populated from activity output)
 		NumCommittees:           committeesOut.NumCommittees,
-		NumCommitteesNew:        0, // TODO: Requires activity to track new vs existing committees
-		NumCommitteesSubsidized: 0, // TODO: Requires activity to return status breakdown
-		NumCommitteesRetired:    0, // TODO: Requires activity to return status breakdown
-		NumCommitteeValidators:  0, // TODO: Requires activity to track committee validator count
+		NumCommitteesNew:        committeesOut.NumCommitteesNew,
+		NumCommitteesSubsidized: committeesOut.NumCommitteesSubsidized,
+		NumCommitteesRetired:    committeesOut.NumCommitteesRetired,
+		NumCommitteeValidators:  validatorsOut.NumCommitteeValidators,
 
 		NumPollSnapshots: 0, // Poll snapshots now captured via scheduled workflow, not per-block
 	}

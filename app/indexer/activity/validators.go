@@ -220,7 +220,10 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 	}
 
 	// Compare and collect changed validators
+	// Also count status breakdowns from all current validators (not just changed ones)
 	changedValidators := make([]*indexer.Validator, 0)
+	var numValidatorsNew, numValidatorsActive, numValidatorsPaused, numValidatorsUnstaking uint32
+
 	for _, curr := range currentValidators {
 		prev := prevValidatorMap[curr.Address]
 
@@ -249,6 +252,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		if prev == nil {
 			// New validator
 			changed = true
+			numValidatorsNew++
 		} else if !hasEvent {
 			// Only compare RPC fields if no event occurred
 			// If an event occurred, we already marked changed=true above
@@ -288,10 +292,22 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 			val.Status = val.DeriveStatus()
 			changedValidators = append(changedValidators, val)
 		}
+
+		// Count status breakdowns for ALL current validators (for BlockSummary aggregation)
+		// Note: We derive status here from RPC fields, not from the validator object
+		if curr.UnstakingHeight > 0 {
+			numValidatorsUnstaking++
+		} else if curr.MaxPausedHeight > 0 {
+			numValidatorsPaused++
+		} else {
+			numValidatorsActive++
+		}
 	}
 
 	// Build signing info for validators with non-signer data
 	changedSigningInfos := make([]*indexer.ValidatorSigningInfo, 0)
+	var numSigningInfosNew uint32
+
 	for _, curr := range currentNonSigners {
 		prev := prevNonSignerMap[curr.Address]
 
@@ -300,6 +316,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		if prev == nil {
 			// New non-signer entry
 			changed = true
+			numSigningInfosNew++
 		} else {
 			// Compare fields - only Counter exists in RpcNonSigner
 			if curr.Counter != prev.Counter {
@@ -429,10 +446,16 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		zap.Float64("durationMs", durationMs))
 
 	return types.ActivityIndexValidatorsOutput{
-		NumValidators:         uint32(len(changedValidators)),
-		NumSigningInfos:       uint32(len(changedSigningInfos)),
-		NumDoubleSigningInfos: uint32(len(changedDoubleSigningInfos)),
-		DurationMs:            durationMs,
+		NumValidators:          uint32(len(changedValidators)),
+		NumValidatorsNew:       numValidatorsNew,
+		NumValidatorsActive:    numValidatorsActive,
+		NumValidatorsPaused:    numValidatorsPaused,
+		NumValidatorsUnstaking: numValidatorsUnstaking,
+		NumSigningInfos:        uint32(len(changedSigningInfos)),
+		NumSigningInfosNew:     numSigningInfosNew,
+		NumDoubleSigningInfos:  uint32(len(changedDoubleSigningInfos)),
+		NumCommitteeValidators: uint32(len(committeeValidators)),
+		DurationMs:             durationMs,
 	}, nil
 }
 

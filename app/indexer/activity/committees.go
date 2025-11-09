@@ -168,12 +168,16 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 	}
 
 	// Determine which committees changed by comparing with H-1
+	// Also count status breakdowns from all current committees
 	var changedCommittees []*indexermodels.Committee
+	var numCommitteesNew uint32
+
 	if in.Height == 1 {
 		// Genesis block: always insert all committees
 		for _, committee := range currentCommittees {
 			changedCommittees = append(changedCommittees, committee)
 		}
+		numCommitteesNew = uint32(len(currentCommittees))
 		ac.Logger.Debug("IndexCommittees genesis block - inserting all committees",
 			zap.Uint64("height", in.Height),
 			zap.Int("numCommittees", len(changedCommittees)))
@@ -209,6 +213,7 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 			// New committee (didn't exist at H-1)
 			if !existed {
 				changedCommittees = append(changedCommittees, currentCommittee)
+				numCommitteesNew++
 				continue
 			}
 
@@ -266,8 +271,11 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 	return types.ActivityIndexCommitteesOutput{
-		NumCommittees: uint32(len(changedCommittees)),
-		DurationMs:    durationMs,
+		NumCommittees:           uint32(len(changedCommittees)),
+		NumCommitteesNew:        numCommitteesNew,
+		NumCommitteesSubsidized: uint32(len(subsidizedAtH)),
+		NumCommitteesRetired:    uint32(len(retiredAtH)),
+		DurationMs:              durationMs,
 	}, nil
 }
 
