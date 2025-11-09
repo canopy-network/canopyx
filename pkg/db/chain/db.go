@@ -187,6 +187,11 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
+	db.Logger.Debug("Initialize committee_payments model", zap.String("name", db.Name))
+	if err := db.initCommitteePayments(ctx); err != nil {
+		return err
+	}
+
 	db.Logger.Debug("Initialize poll_snapshots model", zap.String("name", db.Name))
 	if err := db.initPollSnapshots(ctx); err != nil {
 		return err

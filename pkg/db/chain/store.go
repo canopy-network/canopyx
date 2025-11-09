@@ -36,6 +36,7 @@ type Store interface {
 	InsertValidatorDoubleSigningInfoStaging(ctx context.Context, doubleSigningInfos []*indexermodels.ValidatorDoubleSigningInfo) error
 	InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error
 	InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error
+	InsertCommitteePaymentsStaging(ctx context.Context, payments []*indexermodels.CommitteePayment) error
 	InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
 	InsertPollSnapshots(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
 	InsertSupplyStaging(ctx context.Context, supplies []*indexermodels.Supply) error

@@ -150,6 +150,11 @@ const (
 	// Staging table: committee_validators_staging
 	CommitteeValidators Entity = "committee_validators"
 
+	// CommitteePayments represents the committee payment distribution entity.
+	// Production table: committee_payments
+	// Staging table: committee_payments_staging
+	CommitteePayments Entity = "committee_payments"
+
 	// PollSnapshots represents the governance poll snapshots entity.
 	// Production table: poll_snapshots
 	// Staging table: poll_snapshots_staging
@@ -183,6 +188,7 @@ var allEntities = []Entity{
 	ValidatorDoubleSigningInfo,
 	Committees,
 	CommitteeValidators,
+	CommitteePayments,
 	PollSnapshots,
 }
 
