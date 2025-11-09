@@ -37,7 +37,7 @@ type TableConfig struct {
 	ColumnNames      []string // Explicit column names for INSERT/SELECT
 }
 
-// GetTableConfigs returns the configuration for all 11 entities to sync.
+// GetTableConfigs returns the configuration for all 12 entities to sync.
 // Each config is now derived from the ColumnDef definitions in pkg/db/models/indexer/*.go
 func GetTableConfigs() []TableConfig {
 	return []TableConfig{
@@ -118,6 +118,13 @@ func GetTableConfigs() []TableConfig {
 			SchemaSQL:        indexer.ColumnsToSchemaSQL(indexer.FilterCrossChainColumns(indexer.BlockSummaryColumns)),
 			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.BlockSummaryColumns),
 		},
+		{
+			TableName:        indexer.CommitteePaymentsProductionTableName,
+			PrimaryKey:       []string{"chain_id", "committee_id", "address", "height"},
+			HasAddressColumn: true,
+			SchemaSQL:        indexer.ColumnsToSchemaSQL(indexer.FilterCrossChainColumns(indexer.CommitteePaymentColumns)),
+			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.CommitteePaymentColumns),
+		},
 	}
 }
 
@@ -140,7 +147,7 @@ func NewStore(ctx context.Context, logger *zap.Logger, dbName string) (*Store, e
 	return store, nil
 }
 
-// InitializeSchema creates all 11 global tables if they don't exist.
+// InitializeSchema creates all 12 global tables if they don't exist.
 // Tables use ReplacingMergeTree(height) engine for automatic deduplication.
 // Height is used as the version column to ensure the highest block height wins,
 // regardless of insertion order (protects against out-of-order materialized view writes).
@@ -255,7 +262,7 @@ func (s *Store) validateTableSchema(ctx context.Context, cfg TableConfig) error 
 	return nil
 }
 
-// SetupChainSync creates 11 materialized views to sync a chain's data to global tables.
+// SetupChainSync creates 12 materialized views to sync a chain's data to global tables.
 // Materialized views automatically copy new data as it arrives in the source chain database.
 // This operation is idempotent - safe to call multiple times.
 //
@@ -775,6 +782,8 @@ func getColumnsForTable(tableName string) []indexer.ColumnDef {
 		return indexer.DexWithdrawalColumns
 	case indexer.BlockSummariesProductionTableName:
 		return indexer.BlockSummaryColumns
+	case indexer.CommitteePaymentsProductionTableName:
+		return indexer.CommitteePaymentColumns
 	default:
 		// Return empty slice for unknown tables (should never happen if validateTableName is used)
 		return []indexer.ColumnDef{}

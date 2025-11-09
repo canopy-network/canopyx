@@ -239,6 +239,31 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 			zap.Int("numChanged", len(changedCommittees)))
 	}
 
+	// Extract and insert payment percents for all committees at height H
+	// PaymentPercents track reward distribution for each committee
+	var payments []*indexermodels.CommitteePayment
+	for _, rpcCommittee := range committeesAtH {
+		for _, pp := range rpcCommittee.PaymentPercents {
+			payments = append(payments, &indexermodels.CommitteePayment{
+				CommitteeID: rpcCommittee.ChainID,
+				Address:     pp.Address,
+				Percent:     pp.Percent,
+				Height:      in.Height,
+				HeightTime:  in.BlockTime,
+			})
+		}
+	}
+
+	// Insert payment percents to staging (always insert, even if committees didn't change)
+	if len(payments) > 0 {
+		if err := chainDb.InsertCommitteePaymentsStaging(ctx, payments); err != nil {
+			return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("insert committee payments: %w", err)
+		}
+		ac.Logger.Debug("Committee payments inserted",
+			zap.Uint64("height", in.Height),
+			zap.Int("numPayments", len(payments)))
+	}
+
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 	return types.ActivityIndexCommitteesOutput{
 		NumCommittees: uint32(len(changedCommittees)),
