@@ -8,63 +8,56 @@ import (
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
-// initPollSnapshots creates the poll_snapshots table and its staging table with ReplacingMergeTree engine.
-// Uses height as the deduplication version key.
-// The table stores governance poll snapshots at each height.
+// initPollSnapshots creates the poll_snapshots table with ReplacingMergeTree engine.
+// Uses snapshot_time as the deduplication version key.
+// The table stores time-series snapshots of governance polls.
 //
 // Compression strategy:
 // - Delta + ZSTD for uint64 fields (voting stats change incrementally)
 // - ZSTD for string fields (proposal hash/URL)
 // - Delta + ZSTD for DateTime64 (timestamps are monotonic)
 //
-// ARCHITECTURAL NOTE: Unlike other entities, poll data is snapshotted at every height
-// because the /v1/gov/poll RPC endpoint does not support historical queries.
-// We cannot use the typical RPC(H) vs RPC(H-1) comparison pattern.
+// ARCHITECTURAL NOTE: Unlike other entities, poll data is NOT height-based because
+// the /v1/gov/poll RPC endpoint does not support historical queries. Instead, snapshots
+// are captured via a scheduled workflow that runs every 20 seconds. No staging table is used.
 func (db *DB) initPollSnapshots(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PollSnapshotColumns)
 
-	queryTemplate := `
+	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (proposal_hash, height)
-	`
+		) ENGINE = ReplacingMergeTree(snapshot_time)
+		ORDER BY (proposal_hash, snapshot_time)
+	`, db.Name, indexermodels.PollSnapshotsProductionTableName, schemaSQL)
 
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PollSnapshotsProductionTableName, schemaSQL)
-	if err := db.Exec(ctx, productionQuery); err != nil {
+	if err := db.Exec(ctx, query); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PollSnapshotsProductionTableName, err)
-	}
-
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PollSnapshotsStagingTableName, schemaSQL)
-	if err := db.Exec(ctx, stagingQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.PollSnapshotsStagingTableName, err)
 	}
 
 	return nil
 }
 
-// InsertPollSnapshotsStaging inserts poll snapshots into the poll_snapshots_staging table.
-// This follows the two-phase commit pattern for data consistency.
+// InsertPollSnapshots inserts poll snapshots directly into the production poll_snapshots table.
+// Unlike other entities, poll snapshots do NOT use the staging pattern because they are
+// captured via scheduled workflow (not height-based indexing).
 //
-// ARCHITECTURAL NOTE: Unlike other entities that use sparse inserts (snapshot-on-change),
-// we insert poll snapshots at every height because the RPC endpoint doesn't support
-// historical queries. We cannot compare RPC(H) vs RPC(H-1) to detect changes.
-func (db *DB) InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error {
+// ARCHITECTURAL NOTE: Poll snapshots are time-based, captured every 20 seconds via a
+// scheduled workflow. The RPC endpoint doesn't support historical queries, so we cannot
+// use the typical RPC(H) vs RPC(H-1) comparison pattern.
+func (db *DB) InsertPollSnapshots(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error {
 	if len(snapshots) == 0 {
 		return nil
 	}
 
-	stagingTable := fmt.Sprintf("%s.poll_snapshots_staging", db.Name)
+	productionTable := fmt.Sprintf("%s.poll_snapshots", db.Name)
 	query := fmt.Sprintf(`INSERT INTO %s (
-		proposal_hash, height, proposal_url,
+		proposal_hash, proposal_url,
 		accounts_approve_tokens, accounts_reject_tokens, accounts_total_voted_tokens, accounts_total_tokens,
 		accounts_approve_percentage, accounts_reject_percentage, accounts_voted_percentage,
 		validators_approve_tokens, validators_reject_tokens, validators_total_voted_tokens, validators_total_tokens,
 		validators_approve_percentage, validators_reject_percentage, validators_voted_percentage,
-		height_time
-	) VALUES`, stagingTable)
+		snapshot_time
+	) VALUES`, productionTable)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
@@ -77,7 +70,6 @@ func (db *DB) InsertPollSnapshotsStaging(ctx context.Context, snapshots []*index
 	for _, snapshot := range snapshots {
 		err = batch.Append(
 			snapshot.ProposalHash,
-			snapshot.Height,
 			snapshot.ProposalURL,
 			snapshot.AccountsApproveTokens,
 			snapshot.AccountsRejectTokens,
@@ -93,7 +85,7 @@ func (db *DB) InsertPollSnapshotsStaging(ctx context.Context, snapshots []*index
 			snapshot.ValidatorsApprovePercentage,
 			snapshot.ValidatorsRejectPercentage,
 			snapshot.ValidatorsVotedPercentage,
-			snapshot.HeightTime,
+			snapshot.SnapshotTime,
 		)
 		if err != nil {
 			return err
@@ -101,4 +93,10 @@ func (db *DB) InsertPollSnapshotsStaging(ctx context.Context, snapshots []*index
 	}
 
 	return batch.Send()
+}
+
+// InsertPollSnapshotsStaging is deprecated - kept for backward compatibility.
+// Use InsertPollSnapshots instead.
+func (db *DB) InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error {
+	return db.InsertPollSnapshots(ctx, snapshots)
 }

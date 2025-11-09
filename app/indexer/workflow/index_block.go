@@ -104,7 +104,6 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		paramsOut     types.ActivityIndexParamsOutput
 		validatorsOut types.ActivityIndexValidatorsOutput
 		committeesOut types.ActivityIndexCommitteesOutput
-		pollOut       types.ActivityIndexPollOutput
 		dexBatchOut   types.ActivityIndexDexBatchOutput
 	)
 
@@ -123,7 +122,6 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	paramsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexParams, indexAtHeight)
 	validatorsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexValidators, indexAtHeight)
 	committeesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexCommittees, indexAtHeight)
-	pollFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexPoll, indexAtHeight)
 	dexBatchFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexBatch, indexAtHeight)
 
 	// Wait for all parallel operations to complete
@@ -176,11 +174,6 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		return err
 	}
 	timings["index_committees_ms"] = committeesOut.DurationMs
-
-	if err := pollFuture.Get(ctx, &pollOut); err != nil {
-		return err
-	}
-	timings["index_poll_ms"] = pollOut.DurationMs
 
 	if err := dexBatchFuture.Get(ctx, &dexBatchOut); err != nil {
 		return err
@@ -268,7 +261,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumCommitteesSubsidized:           0,
 		NumCommitteesRetired:              0,
 		NumCommitteeValidators:            0,
-		NumPollSnapshots:                  pollOut.NumProposals,
+		NumPollSnapshots:                  0, // Poll snapshots now captured via scheduled workflow, not per-block
 	}
 
 	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries

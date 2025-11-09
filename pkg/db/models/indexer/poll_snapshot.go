@@ -5,12 +5,12 @@ import (
 )
 
 const PollSnapshotsProductionTableName = "poll_snapshots"
-const PollSnapshotsStagingTableName = "poll_snapshots_staging"
 
 // PollSnapshotColumns defines the schema for the poll_snapshots table.
+// NOTE: Poll snapshots are NOT height-based since /v1/gov/poll endpoint doesn't support height queries.
+// Snapshots are time-based and inserted via scheduled workflow every 20 seconds.
 var PollSnapshotColumns = []ColumnDef{
 	{Name: "proposal_hash", Type: "String", Codec: "ZSTD(1)"},
-	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
 	{Name: "proposal_url", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "accounts_approve_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
 	{Name: "accounts_reject_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
@@ -26,21 +26,20 @@ var PollSnapshotColumns = []ColumnDef{
 	{Name: "validators_approve_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
 	{Name: "validators_reject_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
 	{Name: "validators_voted_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "height_time", Type: "DateTime64(6)", Codec: "Delta, ZSTD(1)"},
+	{Name: "snapshot_time", Type: "DateTime64(6)", Codec: "Delta, ZSTD(1)"},
 }
 
-// PollSnapshot stores historical poll results for governance proposals at each height.
-// Uses snapshot-on-change pattern: a new row is created only when poll state changes for a proposal.
-// ReplacingMergeTree deduplicates by (proposal_hash, height), keeping the latest state.
+// PollSnapshot stores time-series snapshots of governance poll results.
+// Unlike other entities, poll snapshots are NOT height-based because the /v1/gov/poll
+// endpoint does not support height parameters - it always returns current state.
 //
-// ARCHITECTURAL NOTE: Unlike other entities that use RPC(H) vs RPC(H-1) comparison,
-// the /v1/gov/poll endpoint does NOT support height parameters. It always returns current state.
-// Therefore, we snapshot the current poll state at each height instead of detecting changes.
+// Snapshots are captured via a scheduled workflow that runs every 20 seconds.
+// ReplacingMergeTree deduplicates by (proposal_hash, snapshot_time), keeping the latest state.
 //
 // Query patterns:
-//   - Latest poll state: SELECT * FROM poll_snapshots FINAL WHERE proposal_hash = ? ORDER BY height DESC LIMIT 1
-//   - Historical state: SELECT * FROM poll_snapshots FINAL WHERE proposal_hash = ? AND height <= ? ORDER BY height DESC LIMIT 1
-//   - All proposals at height: SELECT DISTINCT proposal_hash FROM poll_snapshots FINAL WHERE height = ?
+//   - Latest poll state: SELECT * FROM poll_snapshots FINAL WHERE proposal_hash = ? ORDER BY snapshot_time DESC LIMIT 1
+//   - Historical state: SELECT * FROM poll_snapshots FINAL WHERE proposal_hash = ? AND snapshot_time <= ? ORDER BY snapshot_time DESC LIMIT 1
+//   - All proposals at time: SELECT DISTINCT proposal_hash FROM poll_snapshots FINAL WHERE snapshot_time = ?
 type PollSnapshot struct {
 	// Primary key - composite key for deduplication
 	ProposalHash string `ch:"proposal_hash" json:"proposal_hash"` // Hex hash of proposal
@@ -66,7 +65,6 @@ type PollSnapshot struct {
 	ValidatorsRejectPercentage  uint64 `ch:"validators_reject_percentage" json:"validators_reject_percentage"`
 	ValidatorsVotedPercentage   uint64 `ch:"validators_voted_percentage" json:"validators_voted_percentage"`
 
-	Height uint64 `ch:"height" json:"height"` // REMOVE
-	// Time field for range queries
-	HeightTime time.Time `ch:"height_time" json:"height_time"` // REMOVE
+	// Time field for snapshot tracking
+	SnapshotTime time.Time `ch:"snapshot_time" json:"snapshot_time"` // When this snapshot was captured
 }

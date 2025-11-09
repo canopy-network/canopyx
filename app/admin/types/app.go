@@ -220,6 +220,42 @@ func (a *App) EnsureGapScanSchedule(ctx context.Context, chainID string) error {
 	return err
 }
 
+// EnsurePollSnapshotSchedule ensures the poll snapshot schedule is created if it does not already exist.
+// This schedule runs every 20 seconds to capture governance poll snapshots.
+func (a *App) EnsurePollSnapshotSchedule(ctx context.Context, chainID string) error {
+	// Convert string chainID to uint64
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	id := a.TemporalClient.GetPollSnapshotScheduleID(chainIDUint)
+	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
+	_, err := h.Describe(ctx)
+	if err == nil {
+		a.Logger.Info("Poll snapshot schedule already exists", zap.String("id", id), zap.String("chainID", chainID))
+		return nil
+	}
+
+	var notFound *serviceerror.NotFound
+	if errors.As(err, &notFound) {
+		a.Logger.Info("Creating poll snapshot schedule", zap.String("id", id))
+		_, scheduleErr := a.TemporalClient.TSClient.Create(
+			ctx,
+			client.ScheduleOptions{
+				ID:   id,
+				Spec: a.TemporalClient.TwentySecondSpec(),
+				Action: &client.ScheduleWorkflowAction{
+					Workflow:  indexer.PollSnapshotWorkflowName,
+					Args:      []interface{}{}, // No input args needed
+					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+				},
+			},
+		)
+		return scheduleErr
+	}
+	return err
+}
+
 // EnsureChainSchedules ensures the required schedules for indexing are created if they do not already exist.
 func (a *App) EnsureChainSchedules(ctx context.Context, chainID string) error {
 	if err := a.EnsureHeadSchedule(ctx, chainID); err != nil {
@@ -227,6 +263,10 @@ func (a *App) EnsureChainSchedules(ctx context.Context, chainID string) error {
 	}
 
 	if err := a.EnsureGapScanSchedule(ctx, chainID); err != nil {
+		return err
+	}
+
+	if err := a.EnsurePollSnapshotSchedule(ctx, chainID); err != nil {
 		return err
 	}
 

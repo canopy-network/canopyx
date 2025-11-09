@@ -211,7 +211,6 @@ func Initialize(ctx context.Context) *App {
 		w.RegisterActivity(activityContext.IndexValidators)
 		w.RegisterActivity(activityContext.IndexCommittees)
 		w.RegisterActivity(activityContext.IndexDexBatch)
-		w.RegisterActivity(activityContext.IndexPoll)
 		w.RegisterActivity(activityContext.SaveBlockSummary)
 		w.RegisterActivity(activityContext.PromoteData)
 		w.RegisterActivity(activityContext.RecordIndexed)
@@ -243,6 +242,10 @@ func Initialize(ctx context.Context) *App {
 		workflowContext.CleanupStagingWorkflow,
 		temporalworkflow.RegisterOptions{Name: indexer.CleanupStagingWorkflowName},
 	)
+	opsWorker.RegisterWorkflowWithOptions(
+		workflowContext.PollSnapshotWorkflow,
+		temporalworkflow.RegisterOptions{Name: indexer.PollSnapshotWorkflowName},
+	)
 	opsWorker.RegisterActivity(activityContext.GetLatestHead)
 	opsWorker.RegisterActivity(activityContext.GetLastIndexed)
 	opsWorker.RegisterActivity(activityContext.FindGaps)
@@ -250,6 +253,7 @@ func Initialize(ctx context.Context) *App {
 	opsWorker.RegisterActivity(activityContext.StartIndexWorkflowBatch)
 	opsWorker.RegisterActivity(activityContext.IsSchedulerWorkflowRunning)
 	opsWorker.RegisterActivity(activityContext.CleanPromotedData)
+	opsWorker.RegisterActivity(activityContext.IndexPoll)
 
 	return &App{
 		LiveWorker:       liveWorker,

@@ -30,6 +30,7 @@ type Client struct {
 	// Schedule IDs
 	HeadScheduleID                 string
 	GapScanScheduleID              string
+	PollSnapshotScheduleID         string
 	CrossChainCompactionScheduleID string
 
 	// Workflow IDs
@@ -88,6 +89,7 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		// schedule IDs
 		HeadScheduleID:                 "chain:%d:headscan",
 		GapScanScheduleID:              "chain:%d:gapscan",
+		PollSnapshotScheduleID:         "chain:%d:pollsnapshot",
 		CrossChainCompactionScheduleID: "crosschain:compaction",
 		// workflow IDs
 		IndexBlockWorkflowId:     "chain:%d:index:%d",
@@ -135,6 +137,11 @@ func (c *Client) GetGapScanScheduleID(chainID uint64) string {
 	return fmt.Sprintf(c.GapScanScheduleID, chainID)
 }
 
+// GetPollSnapshotScheduleID returns the schedule ID for the poll snapshot for the given chain.
+func (c *Client) GetPollSnapshotScheduleID(chainID uint64) string {
+	return fmt.Sprintf(c.PollSnapshotScheduleID, chainID)
+}
+
 // GetIndexBlockWorkflowId returns the workflow ID for the indexing block for the given chain and height.
 func (c *Client) GetIndexBlockWorkflowId(chainID uint64, height uint64) string {
 	return fmt.Sprintf(c.IndexBlockWorkflowId, chainID, height)
@@ -160,6 +167,12 @@ func (c *Client) GetCleanupStagingWorkflowID(chainID uint64, height uint64) stri
 // With 20s block time = 4 checks per block, max 5s delay for new blocks.
 func (c *Client) TwoSecondSpec() client.ScheduleSpec {
 	return c.GetScheduleSpec(5 * time.Second)
+}
+
+// TwentySecondSpec returns a schedule spec for poll snapshot workflow (20 seconds).
+// Captures governance poll snapshots at 20-second intervals.
+func (c *Client) TwentySecondSpec() client.ScheduleSpec {
+	return c.GetScheduleSpec(20 * time.Second)
 }
 
 // ThreeMinuteSpec returns a schedule spec for three minutes.

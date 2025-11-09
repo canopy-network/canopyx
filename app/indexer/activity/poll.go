@@ -10,17 +10,17 @@ import (
 	"go.uber.org/zap"
 )
 
-// IndexPoll indexes governance poll data for a given block height.
-// Fetches current poll state from RPC, converts to database models, and inserts to staging table.
+// IndexPoll captures governance poll data snapshots at regular intervals.
+// Fetches current poll state from RPC, converts to database models, and inserts directly to production table.
 // Returns output containing the number of indexed proposals and execution duration in milliseconds.
 //
-// ARCHITECTURAL NOTE: Unlike other indexing activities, this activity does NOT use the
-// RPC(H) vs RPC(H-1) comparison pattern because the /v1/gov/poll endpoint does not support
-// height parameters. It always returns the current poll state.
+// ARCHITECTURAL NOTE: This activity is executed via a scheduled workflow (every 20 seconds).
+// Unlike other indexing activities, it does NOT use height-based indexing because the /v1/gov/poll
+// endpoint does not support height parameters - it always returns the current poll state.
 //
-// This means we snapshot the current poll state at each height, even if it hasn't changed.
-// This is a necessary architectural exception due to RPC endpoint limitations.
-func (ac *Context) IndexPoll(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexPollOutput, error) {
+// Poll snapshots are time-based and inserted directly to the production table (no staging).
+// ReplacingMergeTree deduplicates by (proposal_hash, snapshot_time).
+func (ac *Context) IndexPoll(ctx context.Context) (types.ActivityIndexPollOutput, error) {
 	start := time.Now()
 
 	// Get chain configuration
@@ -44,11 +44,11 @@ func (ac *Context) IndexPoll(ctx context.Context, in types.ActivityIndexAtHeight
 
 	// Convert RPC poll results to database models
 	// Each proposal in the poll map becomes a separate snapshot row
+	snapshotTime := time.Now()
 	snapshots := make([]*indexer.PollSnapshot, 0, len(rpcPoll))
 	for proposalHash, pollResult := range rpcPoll {
 		snapshot := &indexer.PollSnapshot{
 			ProposalHash: proposalHash,
-			Height:       in.Height,
 			ProposalURL:  pollResult.ProposalURL,
 
 			// Account voting stats
@@ -69,19 +69,19 @@ func (ac *Context) IndexPoll(ctx context.Context, in types.ActivityIndexAtHeight
 			ValidatorsRejectPercentage:  pollResult.Validators.RejectPercentage,
 			ValidatorsVotedPercentage:   pollResult.Validators.VotedPercentage,
 
-			HeightTime: in.BlockTime,
+			SnapshotTime: snapshotTime,
 		}
 		snapshots = append(snapshots, snapshot)
 	}
 
 	numProposals := uint32(len(snapshots))
-	ac.Logger.Debug("IndexPoll fetched from RPC",
-		zap.Uint64("height", in.Height),
+	ac.Logger.Info("IndexPoll captured snapshot",
+		zap.Time("snapshotTime", snapshotTime),
 		zap.Uint32("numProposals", numProposals))
 
-	// Insert poll snapshots to the staging table (two-phase commit pattern)
+	// Insert poll snapshots directly to production table (no staging for time-based snapshots)
 	// Note: This may be an empty slice if no active proposals, which is valid
-	if err := chainDb.InsertPollSnapshotsStaging(ctx, snapshots); err != nil {
+	if err := chainDb.InsertPollSnapshots(ctx, snapshots); err != nil {
 		return types.ActivityIndexPollOutput{}, err
 	}
 
