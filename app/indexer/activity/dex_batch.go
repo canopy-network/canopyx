@@ -162,6 +162,14 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 	// Process withdrawals from ALL committees
 	withdrawals := make([]*indexer.DexWithdrawal, 0)
 
+	// Initialize state counters for orders
+	var numOrdersFuture, numOrdersLocked, numOrdersComplete uint32
+	var numOrdersSuccess, numOrdersFailed uint32
+	// Initialize state counters for deposits
+	var numDepositsPending, numDepositsLocked, numDepositsComplete uint32
+	// Initialize state counters for withdrawals
+	var numWithdrawalsPending, numWithdrawalsLocked, numWithdrawalsComplete uint32
+
 	// Process Dex event related against H-1 orders, deposits and withdrawals
 	for _, currentBatchH1 := range currentBatchesH1 {
 		for _, rpcOrder := range currentBatchH1.Orders {
@@ -182,6 +190,12 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				// Safely dereference pointer fields from event
 				if swapEvent.Success != nil {
 					order.Success = *swapEvent.Success
+					// Count success/failed orders
+					if order.Success {
+						numOrdersSuccess++
+					} else {
+						numOrdersFailed++
+					}
 				}
 				if swapEvent.SoldAmount != nil {
 					order.SoldAmount = *swapEvent.SoldAmount
@@ -193,6 +207,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 					order.LocalOrigin = *swapEvent.LocalOrigin
 				}
 
+				numOrdersComplete++
 				orders = append(orders, order)
 			}
 		}
@@ -218,6 +233,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 					deposit.PointsReceived = *depositEvent.PointsReceived
 				}
 
+				numDepositsComplete++
 				deposits = append(deposits, deposit)
 			}
 		}
@@ -246,6 +262,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 					withdrawal.PointsBurned = *withdrawalEvent.PointsBurned
 				}
 
+				numWithdrawalsComplete++
 				withdrawals = append(withdrawals, withdrawal)
 			}
 		}
@@ -266,6 +283,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				LockedHeight:    currentBatch.LockedHeight,
 			}
 
+			numOrdersLocked++
 			orders = append(orders, order)
 		}
 
@@ -280,6 +298,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				State:      indexer.DexLockedState,
 			}
 
+			numDepositsLocked++
 			deposits = append(deposits, deposit)
 		}
 
@@ -294,6 +313,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				State:      indexer.DexLockedState,
 			}
 
+			numWithdrawalsLocked++
 			withdrawals = append(withdrawals, withdrawal)
 		}
 	}
@@ -312,6 +332,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				State:           indexer.DexPendingState,
 				LockedHeight:    0, // Not locked yet
 			}
+			numOrdersFuture++
 			orders = append(orders, order)
 		}
 
@@ -325,6 +346,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				Amount:     rpcDeposit.Amount,
 				State:      indexer.DexPendingState,
 			}
+			numDepositsPending++
 			deposits = append(deposits, deposit)
 		}
 
@@ -338,6 +360,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 				Percent:    rpcWithdrawal.Percent,
 				State:      indexer.DexPendingState,
 			}
+			numWithdrawalsPending++
 			withdrawals = append(withdrawals, withdrawal)
 		}
 	}
@@ -373,10 +396,20 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		zap.Float64("durationMs", durationMs))
 
 	return types.ActivityIndexDexBatchOutput{
-		NumOrders:      uint32(len(orders)),
-		NumDeposits:    uint32(len(deposits)),
-		NumWithdrawals: uint32(len(withdrawals)),
-		// @TODO: Separate them into success/fail future/lock/completed - but leave the "total" for the block visibility
-		DurationMs: durationMs,
+		NumOrders:              uint32(len(orders)),
+		NumOrdersFuture:        numOrdersFuture,
+		NumOrdersLocked:        numOrdersLocked,
+		NumOrdersComplete:      numOrdersComplete,
+		NumOrdersSuccess:       numOrdersSuccess,
+		NumOrdersFailed:        numOrdersFailed,
+		NumDeposits:            uint32(len(deposits)),
+		NumDepositsPending:     numDepositsPending,
+		NumDepositsLocked:      numDepositsLocked,
+		NumDepositsComplete:    numDepositsComplete,
+		NumWithdrawals:         uint32(len(withdrawals)),
+		NumWithdrawalsPending:  numWithdrawalsPending,
+		NumWithdrawalsLocked:   numWithdrawalsLocked,
+		NumWithdrawalsComplete: numWithdrawalsComplete,
+		DurationMs:             durationMs,
 	}, nil
 }

@@ -9,9 +9,9 @@ import (
 // RpcSupply represents token supply information returned from /v1/query/supply endpoint.
 // This matches the Supply proto structure returned by Canopy.
 type RpcSupply struct {
-	Total          uint64 `json:"total"`          // Total tokens existing in the system (minted - burned)
-	Staked         uint64 `json:"staked"`         // Total locked tokens in the protocol (includes delegated)
-	DelegatedOnly  uint64 `json:"delegatedOnly"`  // Total locked tokens that are delegated only
+	Total         uint64 `json:"total"`         // Total tokens existing in the system (minted - burned)
+	Staked        uint64 `json:"staked"`        // Total locked tokens in the protocol (includes delegated)
+	DelegatedOnly uint64 `json:"delegatedOnly"` // Total locked tokens that are delegated only
 	// Note: committeeStaked and committeeDelegatedOnly arrays are omitted
 	// as this data is derivable from validator/committee tables
 }

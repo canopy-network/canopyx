@@ -33,18 +33,18 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 
 	// Parallel RPC fetch using shared worker pool for performance
 	var (
-		committeesAtH    []*rpc.RpcCommitteeData
-		committeesAtH1   []*rpc.RpcCommitteeData
-		subsidizedAtH    []uint64
-		subsidizedAtH1   []uint64
-		retiredAtH       []uint64
-		retiredAtH1      []uint64
-		committeesErr    error
-		committeesH1Err  error
-		subsidizedErr    error
-		subsidizedH1Err  error
-		retiredErr       error
-		retiredH1Err     error
+		committeesAtH   []*rpc.RpcCommitteeData
+		committeesAtH1  []*rpc.RpcCommitteeData
+		subsidizedAtH   []uint64
+		subsidizedAtH1  []uint64
+		retiredAtH      []uint64
+		retiredAtH1     []uint64
+		committeesErr   error
+		committeesH1Err error
+		subsidizedErr   error
+		subsidizedH1Err error
+		retiredErr      error
+		retiredH1Err    error
 	)
 
 	// Get a subgroup from the shared worker pool for parallel RPC fetching (6 workers)

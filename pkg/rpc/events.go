@@ -93,18 +93,18 @@ type UnknownEvent struct {
 	Data      map[string]interface{}
 }
 
-func (e *UnknownEvent) Type() EventType          { return e.EventType }
-func (e *UnknownEvent) GetAddress() string       { return GetStringField(e.Data, "address") }
-func (e *UnknownEvent) GetAmount() *uint64       { return nil }
-func (e *UnknownEvent) GetSoldAmount() *uint64   { return nil }
-func (e *UnknownEvent) GetBoughtAmount() *uint64 { return nil }
-func (e *UnknownEvent) GetLocalAmount() *uint64  { return nil }
-func (e *UnknownEvent) GetRemoteAmount() *uint64 { return nil }
-func (e *UnknownEvent) GetSuccess() *bool        { return nil }
-func (e *UnknownEvent) GetLocalOrigin() *bool    { return nil }
-func (e *UnknownEvent) GetOrderID() *string      { return nil }
+func (e *UnknownEvent) Type() EventType            { return e.EventType }
+func (e *UnknownEvent) GetAddress() string         { return GetStringField(e.Data, "address") }
+func (e *UnknownEvent) GetAmount() *uint64         { return nil }
+func (e *UnknownEvent) GetSoldAmount() *uint64     { return nil }
+func (e *UnknownEvent) GetBoughtAmount() *uint64   { return nil }
+func (e *UnknownEvent) GetLocalAmount() *uint64    { return nil }
+func (e *UnknownEvent) GetRemoteAmount() *uint64   { return nil }
+func (e *UnknownEvent) GetSuccess() *bool          { return nil }
+func (e *UnknownEvent) GetLocalOrigin() *bool      { return nil }
+func (e *UnknownEvent) GetOrderID() *string        { return nil }
 func (e *UnknownEvent) GetPointsReceived() *uint64 { return nil }
-func (e *UnknownEvent) GetPointsBurned() *uint64 { return nil }
+func (e *UnknownEvent) GetPointsBurned() *uint64   { return nil }
 
 // EventsByHeight returns all raw RPC events for a given height.
 // Callers should convert to indexer models using transform.Event() if needed.

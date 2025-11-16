@@ -128,12 +128,27 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 	}
 
 	// Compare and collect changed orders
+	// Also count status breakdowns for all current orders
 	changedOrders := make([]*indexer.Order, 0)
+	var numOrdersNew, numOrdersOpen, numOrdersFilled uint32
+
 	for _, curr := range currentOrders {
 		prev, existed := prevMap[curr.ID]
 
 		// Check if the order has a swap event (state transition to "complete")
 		_, hasSwapEvent := swapEvents[curr.ID]
+
+		// Count new orders
+		if !existed {
+			numOrdersNew++
+		}
+
+		// Count orders by status (for ALL current orders, not just changed)
+		if hasSwapEvent {
+			numOrdersFilled++
+		} else {
+			numOrdersOpen++
+		}
 
 		// Determine if order state changed
 		// We check all significant fields: amount, buyer details, deadline,
@@ -168,6 +183,7 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 	}
 
 	// Check for canceled orders (existed at H-1 but not at H, and no swap event)
+	var numOrdersCancelled uint32
 	for prevID, prevOrder := range prevMap {
 		// Check if order exists at current height
 		_, existsNow := func() (bool, bool) {
@@ -183,6 +199,7 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 		if !existsNow {
 			_, hasSwapEvent := swapEvents[prevID]
 			if !hasSwapEvent {
+				numOrdersCancelled++
 				// Order was canceled - create a final snapshot with "canceled" status
 				changedOrders = append(changedOrders, &indexer.Order{
 					OrderID:              prevOrder.ID,
@@ -221,8 +238,12 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 		zap.Float64("durationMs", durationMs))
 
 	return types.ActivityIndexOrdersOutput{
-		NumOrders:  uint32(len(changedOrders)),
-		DurationMs: durationMs,
+		NumOrders:          uint32(len(changedOrders)),
+		NumOrdersNew:       numOrdersNew,
+		NumOrdersOpen:      numOrdersOpen,
+		NumOrdersFilled:    numOrdersFilled,
+		NumOrdersCancelled: numOrdersCancelled,
+		DurationMs:         durationMs,
 	}, nil
 }
 

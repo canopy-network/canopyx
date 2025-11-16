@@ -23,6 +23,9 @@ type ActivityIndexCommitteesOutput struct {
 
 // ActivityIndexSupplyOutput contains the result of indexing supply metrics along with execution duration.
 type ActivityIndexSupplyOutput struct {
-	Changed    bool    `json:"changed"`    // True if supply changed from previous height
-	DurationMs float64 `json:"durationMs"` // Execution time in milliseconds
+	Changed       bool    `json:"changed"`       // True if supply changed from previous height
+	Total         uint64  `json:"total"`         // Total token supply
+	Staked        uint64  `json:"staked"`        // Total staked tokens (validators + delegators)
+	DelegatedOnly uint64  `json:"delegatedOnly"` // Delegated-only tokens (excluding validator stake)
+	DurationMs    float64 `json:"durationMs"`    // Execution time in milliseconds
 }

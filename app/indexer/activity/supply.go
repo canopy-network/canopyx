@@ -140,7 +140,10 @@ func (ac *Context) IndexSupply(ctx context.Context, input types.ActivityIndexAtH
 		zap.Float64("durationMs", durationMs))
 
 	return types.ActivityIndexSupplyOutput{
-		Changed:    changed,
-		DurationMs: durationMs,
+		Changed:       changed,
+		Total:         currentSupply.Total,
+		Staked:        currentSupply.Staked,
+		DelegatedOnly: currentSupply.DelegatedOnly,
+		DurationMs:    durationMs,
 	}, nil
 }

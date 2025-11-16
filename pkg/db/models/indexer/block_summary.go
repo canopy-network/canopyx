@@ -71,13 +71,15 @@ var BlockSummaryColumns = []ColumnDef{
 	{Name: "num_dex_orders_complete", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_dex_orders_success", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_dex_orders_failed", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	// Dex deposit counters (3 fields)
+	// Dex deposit counters (4 fields)
 	{Name: "num_dex_deposits", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_dex_deposits_pending", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "num_dex_deposits_locked", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_dex_deposits_complete", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	// Dex withdrawal counters (3 fields)
+	// Dex withdrawal counters (4 fields)
 	{Name: "num_dex_withdrawals", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_dex_withdrawals_pending", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "num_dex_withdrawals_locked", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_dex_withdrawals_complete", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	// Pool points counters (2 fields)
 	{Name: "num_pool_points_holders", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
@@ -93,6 +95,8 @@ var BlockSummaryColumns = []ColumnDef{
 	// Validator signing info counters (2 fields)
 	{Name: "num_validator_signing_info", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_validator_signing_info_new", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	// Validator double signing info counters (1 field)
+	{Name: "num_validator_double_signing_info", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	// Committee counters (4 fields)
 	{Name: "num_committees", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_committees_new", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
@@ -102,6 +106,10 @@ var BlockSummaryColumns = []ColumnDef{
 	{Name: "num_committee_validators", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	// Poll snapshot counters (1 field)
 	{Name: "num_poll_snapshots", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	// Supply metrics (3 fields)
+	{Name: "supply_total", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "supply_staked", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "supply_delegated_only", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD"},
 }
 
 // BlockSummary stores aggregated entity counts for each indexed block.
@@ -113,7 +121,7 @@ var BlockSummaryColumns = []ColumnDef{
 type BlockSummary struct {
 	// Block metadata
 	Height            uint64    `ch:"height" json:"height"`
-	HeightTime        time.Time `ch:"height_time" json:"height_time"`              // Block timestamp for time-range queries
+	HeightTime        time.Time `ch:"height_time" json:"height_time"`               // Block timestamp for time-range queries
 	TotalTransactions uint64    `ch:"total_transactions" json:"total_transactions"` // Lifetime number of transactions across all blocks
 
 	// ========== Transactions (24 fields) ==========
@@ -185,14 +193,16 @@ type BlockSummary struct {
 	NumDexOrdersSuccess  uint32 `ch:"num_dex_orders_success" json:"num_dex_orders_success"`   // Number of successful DEX orders
 	NumDexOrdersFailed   uint32 `ch:"num_dex_orders_failed" json:"num_dex_orders_failed"`     // Number of failed DEX orders
 
-	// ========== DexDeposits (3 fields) ==========
+	// ========== DexDeposits (4 fields) ==========
 	NumDexDeposits         uint32 `ch:"num_dex_deposits" json:"num_dex_deposits"`                   // Total number of DEX deposits
 	NumDexDepositsPending  uint32 `ch:"num_dex_deposits_pending" json:"num_dex_deposits_pending"`   // Number of pending DEX deposits
+	NumDexDepositsLocked   uint32 `ch:"num_dex_deposits_locked" json:"num_dex_deposits_locked"`     // Number of locked DEX deposits
 	NumDexDepositsComplete uint32 `ch:"num_dex_deposits_complete" json:"num_dex_deposits_complete"` // Number of complete DEX deposits
 
-	// ========== DexWithdrawals (3 fields) ==========
+	// ========== DexWithdrawals (4 fields) ==========
 	NumDexWithdrawals         uint32 `ch:"num_dex_withdrawals" json:"num_dex_withdrawals"`                   // Total number of DEX withdrawals
 	NumDexWithdrawalsPending  uint32 `ch:"num_dex_withdrawals_pending" json:"num_dex_withdrawals_pending"`   // Number of pending DEX withdrawals
+	NumDexWithdrawalsLocked   uint32 `ch:"num_dex_withdrawals_locked" json:"num_dex_withdrawals_locked"`     // Number of locked DEX withdrawals
 	NumDexWithdrawalsComplete uint32 `ch:"num_dex_withdrawals_complete" json:"num_dex_withdrawals_complete"` // Number of complete DEX withdrawals
 
 	// ========== PoolPointsByHolder (2 fields) ==========
@@ -213,6 +223,9 @@ type BlockSummary struct {
 	NumValidatorSigningInfo    uint32 `ch:"num_validator_signing_info" json:"num_validator_signing_info"`         // Total number of signing info records
 	NumValidatorSigningInfoNew uint32 `ch:"num_validator_signing_info_new" json:"num_validator_signing_info_new"` // Number of new signing info records
 
+	// ========== ValidatorDoubleSigningInfo (1 field) ==========
+	NumValidatorDoubleSigningInfo uint32 `ch:"num_validator_double_signing_info" json:"num_validator_double_signing_info"` // Total number of double signing info records
+
 	// ========== Committees (4 fields) ==========
 	NumCommittees           uint32 `ch:"num_committees" json:"num_committees"`                       // Total number of committees
 	NumCommitteesNew        uint32 `ch:"num_committees_new" json:"num_committees_new"`               // Number of new committees
@@ -224,4 +237,9 @@ type BlockSummary struct {
 
 	// ========== PollSnapshots (1 field) ==========
 	NumPollSnapshots uint32 `ch:"num_poll_snapshots" json:"num_poll_snapshots"` // Number of poll snapshot records
+
+	// ========== Supply (3 fields) ==========
+	SupplyTotal         uint64 `ch:"supply_total" json:"supply_total"`                   // Total token supply
+	SupplyStaked        uint64 `ch:"supply_staked" json:"supply_staked"`                 // Total staked tokens (validators + delegators)
+	SupplyDelegatedOnly uint64 `ch:"supply_delegated_only" json:"supply_delegated_only"` // Delegated-only tokens (excluding validator stake)
 }

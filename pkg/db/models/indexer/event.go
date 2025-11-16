@@ -47,11 +47,11 @@ type Event struct {
 	EventType string `ch:"event_type" json:"event_type"` // LowCardinality for efficient filtering
 
 	// Extracted queryable fields (nullable - NULL when not applicable)
-	Amount       *uint64 `ch:"amount" json:"amount,omitempty"`
-	SoldAmount   *uint64 `ch:"sold_amount" json:"sold_amount,omitempty"`
-	BoughtAmount *uint64 `ch:"bought_amount" json:"bought_amount,omitempty"`
-	LocalAmount  *uint64 `ch:"local_amount" json:"local_amount,omitempty"`
-	RemoteAmount *uint64 `ch:"remote_amount" json:"remote_amount,omitempty"`
+	Amount         *uint64 `ch:"amount" json:"amount,omitempty"`
+	SoldAmount     *uint64 `ch:"sold_amount" json:"sold_amount,omitempty"`
+	BoughtAmount   *uint64 `ch:"bought_amount" json:"bought_amount,omitempty"`
+	LocalAmount    *uint64 `ch:"local_amount" json:"local_amount,omitempty"`
+	RemoteAmount   *uint64 `ch:"remote_amount" json:"remote_amount,omitempty"`
 	Success        *bool   `ch:"success" json:"success,omitempty"`
 	LocalOrigin    *bool   `ch:"local_origin" json:"local_origin,omitempty"`
 	OrderID        *string `ch:"order_id" json:"order_id,omitempty"`

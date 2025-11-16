@@ -105,6 +105,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		validatorsOut types.ActivityIndexValidatorsOutput
 		committeesOut types.ActivityIndexCommitteesOutput
 		dexBatchOut   types.ActivityIndexDexBatchOutput
+		supplyOut     types.ActivityIndexSupplyOutput
 	)
 
 	// Create futures for all parallel operations
@@ -123,6 +124,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	validatorsFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexValidators, indexAtHeight)
 	committeesFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexCommittees, indexAtHeight)
 	dexBatchFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexDexBatch, indexAtHeight)
+	supplyFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexSupply, indexAtHeight)
 
 	// Wait for all parallel operations to complete
 	if err := saveBlockFuture.Get(ctx, &saveBlockOut); err != nil {
@@ -180,6 +182,11 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	}
 	timings["index_dex_batch_ms"] = dexBatchOut.DurationMs
 
+	if err := supplyFuture.Get(ctx, &supplyOut); err != nil {
+		return err
+	}
+	timings["index_supply_ms"] = supplyOut.DurationMs
+
 	// Collect all summaries for aggregation from all indexed entities
 	// Note: Some detailed breakdowns (e.g., NumOrdersNew, NumOrdersOpen) are not yet
 	// returned by activity outputs and will remain zero until those activities are enhanced.
@@ -229,13 +236,13 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumEventsAutomaticPause:           eventsOut.EventCountsByType["automatic-pause"],
 		NumEventsAutomaticBeginUnstaking:  eventsOut.EventCountsByType["automatic-begin-unstaking"],
 		NumEventsAutomaticFinishUnstaking: eventsOut.EventCountsByType["automatic-finish-unstaking"],
-		// Order counts (status breakdowns require activity enhancement)
+		// Order counts (from orders activity)
 		NumOrders:          ordersOut.NumOrders,
-		NumOrdersNew:       0, // TODO: Requires activity to return status breakdown
-		NumOrdersOpen:      0, // TODO: Requires activity to return status breakdown
-		NumOrdersFilled:    0, // TODO: Requires activity to return status breakdown
-		NumOrdersCancelled: 0, // TODO: Requires activity to return status breakdown
-		NumOrdersExpired:   0, // TODO: Requires activity to return status breakdown
+		NumOrdersNew:       ordersOut.NumOrdersNew,
+		NumOrdersOpen:      ordersOut.NumOrdersOpen,
+		NumOrdersFilled:    ordersOut.NumOrdersFilled,
+		NumOrdersCancelled: ordersOut.NumOrdersCancelled,
+		NumOrdersExpired:   0, // TODO: Expired detection not implemented
 
 		// Pool counts (from pools activity)
 		NumPools:    poolsOut.NumPools,
@@ -244,23 +251,25 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		// DEX price counts
 		NumDexPrices: pricesOut.NumPrices,
 
-		// DEX order counts (status breakdowns require activity enhancement)
+		// DEX order counts (from dex_batch activity)
 		NumDexOrders:         dexBatchOut.NumOrders,
-		NumDexOrdersFuture:   0, // TODO: Requires activity to return status breakdown
-		NumDexOrdersLocked:   0, // TODO: Requires activity to return status breakdown
-		NumDexOrdersComplete: 0, // TODO: Requires activity to return status breakdown
-		NumDexOrdersSuccess:  0, // TODO: Requires activity to return status breakdown
-		NumDexOrdersFailed:   0, // TODO: Requires activity to return status breakdown
+		NumDexOrdersFuture:   dexBatchOut.NumOrdersFuture,
+		NumDexOrdersLocked:   dexBatchOut.NumOrdersLocked,
+		NumDexOrdersComplete: dexBatchOut.NumOrdersComplete,
+		NumDexOrdersSuccess:  dexBatchOut.NumOrdersSuccess,
+		NumDexOrdersFailed:   dexBatchOut.NumOrdersFailed,
 
-		// DEX deposit counts (status breakdowns require activity enhancement)
+		// DEX deposit counts (from dex_batch activity)
 		NumDexDeposits:         dexBatchOut.NumDeposits,
-		NumDexDepositsPending:  0, // TODO: Requires activity to return status breakdown
-		NumDexDepositsComplete: 0, // TODO: Requires activity to return status breakdown
+		NumDexDepositsPending:  dexBatchOut.NumDepositsPending,
+		NumDexDepositsLocked:   dexBatchOut.NumDepositsLocked,
+		NumDexDepositsComplete: dexBatchOut.NumDepositsComplete,
 
-		// DEX withdrawal counts (status breakdowns require activity enhancement)
+		// DEX withdrawal counts (from dex_batch activity)
 		NumDexWithdrawals:         dexBatchOut.NumWithdrawals,
-		NumDexWithdrawalsPending:  0, // TODO: Requires activity to return status breakdown
-		NumDexWithdrawalsComplete: 0, // TODO: Requires activity to return status breakdown
+		NumDexWithdrawalsPending:  dexBatchOut.NumWithdrawalsPending,
+		NumDexWithdrawalsLocked:   dexBatchOut.NumWithdrawalsLocked,
+		NumDexWithdrawalsComplete: dexBatchOut.NumWithdrawalsComplete,
 
 		// DEX pool points (from pools activity)
 		NumDexPoolPointsHolders:    poolsOut.NumPoolHolders,
@@ -269,14 +278,15 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		// Params
 		ParamsChanged: paramsOut.ParamsChanged,
 
-		// Validator counts (populated from activity output)
-		NumValidators:              validatorsOut.NumValidators,
-		NumValidatorsNew:           validatorsOut.NumValidatorsNew,
-		NumValidatorsActive:        validatorsOut.NumValidatorsActive,
-		NumValidatorsPaused:        validatorsOut.NumValidatorsPaused,
-		NumValidatorsUnstaking:     validatorsOut.NumValidatorsUnstaking,
-		NumValidatorSigningInfo:    validatorsOut.NumSigningInfos,
-		NumValidatorSigningInfoNew: validatorsOut.NumSigningInfosNew,
+		// Validator counts (from validators activity)
+		NumValidators:                 validatorsOut.NumValidators,
+		NumValidatorsNew:              validatorsOut.NumValidatorsNew,
+		NumValidatorsActive:           validatorsOut.NumValidatorsActive,
+		NumValidatorsPaused:           validatorsOut.NumValidatorsPaused,
+		NumValidatorsUnstaking:        validatorsOut.NumValidatorsUnstaking,
+		NumValidatorSigningInfo:       validatorsOut.NumSigningInfos,
+		NumValidatorSigningInfoNew:    validatorsOut.NumSigningInfosNew,
+		NumValidatorDoubleSigningInfo: validatorsOut.NumDoubleSigningInfos,
 
 		// Committee counts (populated from activity output)
 		NumCommittees:           committeesOut.NumCommittees,
@@ -286,6 +296,11 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumCommitteeValidators:  validatorsOut.NumCommitteeValidators,
 
 		NumPollSnapshots: 0, // Poll snapshots now captured via scheduled workflow, not per-block
+
+		// Supply metrics (from supply activity)
+		SupplyTotal:         supplyOut.Total,
+		SupplyStaked:        supplyOut.Staked,
+		SupplyDelegatedOnly: supplyOut.DelegatedOnly,
 	}
 
 	// Phase 2: SaveBlockSummary - aggregate and save all entity summaries
