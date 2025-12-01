@@ -174,9 +174,11 @@ temporal_flags.append('--set=elasticsearch.replicas=1')
 temporal_flags.append('--set=elasticsearch.antiAffinity=soft')
 
 # Cassandra resource limits
-cass_mem_limit = temporal_cfg.get('cassandra_memory_limit', '8G')
-cass_heap = temporal_cfg.get('cassandra_heap_size', '8G')
+cass_mem_limit = temporal_cfg.get('cassandra_memory_limit', '4G')
+cass_heap = temporal_cfg.get('cassandra_heap_size', '2G')
 temporal_flags.append('--set=cassandra.config.max_heap_size=%s' % cass_heap)
+temporal_flags.append('--set=cassandra.resources.limits.memory=%s' % cass_mem_limit)
+temporal_flags.append('--set=cassandra.resources.requests.memory=%s' % cass_mem_limit)
 
 # Elasticsearch resource limits
 if temporal_cfg.get('elasticsearch_memory_limit'):

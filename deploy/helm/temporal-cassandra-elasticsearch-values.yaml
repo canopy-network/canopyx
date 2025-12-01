@@ -49,6 +49,8 @@ elasticsearch:
       cpu: "2000m"
   sysctlInitContainer:
     enabled: true
+  # Use yellow status for single-node cluster (green requires replicas)
+  clusterHealthCheckParams: "wait_for_status=yellow&timeout=1s"
 
 # Disable PostgreSQL
 postgresql:
