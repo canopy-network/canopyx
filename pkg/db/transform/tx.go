@@ -23,6 +23,11 @@ func Transaction(tx *rpc.Transaction) (*indexer.Transaction, error) {
 		return nil, fmt.Errorf("unmarshal message: %w", err)
 	}
 
+	// Add memo to msgMap if present (memo is at tx.Transaction.Memo, not in Msg)
+	if tx.Transaction.Memo != "" {
+		msgMap["memo"] = tx.Transaction.Memo
+	}
+
 	// Parse message into typed interface
 	msg, err := rpc.ParseMessage(tx.MessageType, msgMap)
 	if err != nil {
@@ -45,29 +50,43 @@ func Transaction(tx *rpc.Transaction) (*indexer.Transaction, error) {
 		signature = &tx.Transaction.Signature.Signature
 	}
 
+	// Extract optional memo field
+	var memo *string
+	if tx.Transaction.Memo != "" {
+		memo = &tx.Transaction.Memo
+	}
+
 	return &indexer.Transaction{
-		Height:           uint64(tx.Height),
-		TxHash:           tx.TxHash,
-		Time:             time.UnixMicro(tx.Transaction.Time),
-		MessageType:      string(msg.Type()),
-		Signer:           msg.GetSigner(),
-		Counterparty:     msg.GetCounterparty(),
-		Amount:           msg.GetAmount(),
-		Fee:              uint64(tx.Transaction.Fee),
-		ValidatorAddress: msg.GetValidatorAddress(),
-		Commission:       msg.GetCommission(),
-		ChainID:          msg.GetChainID(),
-		SellAmount:       msg.GetSellAmount(),
-		BuyAmount:        msg.GetBuyAmount(),
-		LiquidityAmt:     msg.GetLiquidityAmount(),
-		OrderID:          msg.GetOrderID(),
-		Price:            msg.GetPrice(),
-		ParamKey:         msg.GetParamKey(),
-		ParamValue:       msg.GetParamValue(),
-		CommitteeID:      msg.GetCommitteeID(),
-		Recipient:        msg.GetRecipient(),
-		Msg:              string(msgJSON),
-		PublicKey:        publicKey,
-		Signature:        signature,
+		Height:              uint64(tx.Height),
+		TxHash:              tx.TxHash,
+		TxIndex:             uint32(tx.Index),
+		Time:                time.UnixMicro(tx.Transaction.Time),
+		CreatedHeight:       uint64(tx.Transaction.CreatedHeight),
+		NetworkID:           uint64(tx.Transaction.NetworkID),
+		MessageType:         string(msg.Type()),
+		Signer:              msg.GetSigner(),
+		Counterparty:        msg.GetCounterparty(),
+		Amount:              msg.GetAmount(),
+		Fee:                 uint64(tx.Transaction.Fee),
+		Memo:                memo,
+		ValidatorAddress:    msg.GetValidatorAddress(),
+		Commission:          msg.GetCommission(),
+		ChainID:             msg.GetChainID(),
+		SellAmount:          msg.GetSellAmount(),
+		BuyAmount:           msg.GetBuyAmount(),
+		LiquidityAmt:        msg.GetLiquidityAmount(),
+		OrderID:             msg.GetOrderID(),
+		Price:               msg.GetPrice(),
+		ParamKey:            msg.GetParamKey(),
+		ParamValue:          msg.GetParamValue(),
+		CommitteeID:         msg.GetCommitteeID(),
+		Recipient:           msg.GetRecipient(),
+		PollHash:            msg.GetPollHash(),
+		BuyerReceiveAddress: msg.GetBuyerReceiveAddress(),
+		BuyerSendAddress:    msg.GetBuyerSendAddress(),
+		BuyerChainDeadline:  msg.GetBuyerChainDeadline(),
+		Msg:                 string(msgJSON),
+		PublicKey:           publicKey,
+		Signature:           signature,
 	}, nil
 }

@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 )
 
 // Transaction represents a transaction from the RPC.
@@ -10,6 +11,7 @@ type Transaction struct {
 	Recipient   string `json:"recipient"`
 	MessageType string `json:"messageType"`
 	Height      int    `json:"height"`
+	Index       int    `json:"index"` // Transaction index within block
 	Transaction struct {
 		Type string `json:"type"`
 		Msg  struct {
@@ -29,21 +31,76 @@ type Transaction struct {
 			PublicKey string `json:"publicKey"`
 			Signature string `json:"signature"`
 		} `json:"signature"`
-		Time          int64 `json:"time"`
-		CreatedHeight int   `json:"createdHeight"`
-		Fee           int   `json:"fee"`
-		NetworkID     int   `json:"networkID"`
-		ChainID       int   `json:"chainID"`
+		Time          int64  `json:"time"`
+		CreatedHeight int    `json:"createdHeight"`
+		Fee           int    `json:"fee"`
+		NetworkID     int    `json:"networkID"`
+		ChainID       int    `json:"chainID"`
+		Memo          string `json:"memo"`
 	} `json:"transaction"`
 	TxHash string `json:"txHash"`
 }
 
+// DetectMemoType checks if a memo contains a recognized pattern (poll/order operations).
+// Returns MsgTypeUnknown if memo is empty, invalid JSON, or doesn't match any pattern.
+func DetectMemoType(memo string) MessageType {
+	if len(memo) == 0 {
+		return MsgTypeUnknown
+	}
+
+	// Must be valid JSON
+	if !json.Valid([]byte(memo)) {
+		return MsgTypeUnknown
+	}
+
+	// Check for startPoll (must have >= 80 chars and startPoll key with valid hash)
+	if len(memo) >= 80 {
+		var startPoll StartPollMemo
+		if err := json.Unmarshal([]byte(memo), &startPoll); err == nil {
+			if len(startPoll.StartPoll) == 64 && startPoll.EndHeight > 0 {
+				return MsgTypeStartPoll
+			}
+		}
+	}
+
+	// Check for votePoll (poll hash must be 64 chars hex)
+	var votePoll VotePollMemo
+	if err := json.Unmarshal([]byte(memo), &votePoll); err == nil {
+		if len(votePoll.VotePoll) == 64 {
+			return MsgTypeVotePoll
+		}
+	}
+
+	// Check for closeOrder (check before lockOrder - closeOrder has the flag)
+	var closeOrder CloseOrderMemo
+	if err := json.Unmarshal([]byte(memo), &closeOrder); err == nil {
+		if closeOrder.CloseOrder && closeOrder.OrderID != "" {
+			return MsgTypeCloseOrder
+		}
+	}
+
+	// Check for lockOrder (requires orderID and both buyer addresses)
+	var lockOrder LockOrderMemo
+	if err := json.Unmarshal([]byte(memo), &lockOrder); err == nil {
+		if lockOrder.OrderID != "" && lockOrder.BuyerReceiveAddress != "" && lockOrder.BuyerSendAddress != "" {
+			return MsgTypeLockOrder
+		}
+	}
+
+	return MsgTypeUnknown
+}
+
 // DetectMessageType infers a message type from RPC transaction data.
 // This examines the messageType field and message structure to determine the type.
-func DetectMessageType(msgType string, msg map[string]interface{}) MessageType {
+// For send transactions, it also checks the memo field for embedded operations.
+func DetectMessageType(msgType string, msg map[string]interface{}, memo string) MessageType {
 	// Normalize the message type string
 	switch msgType {
 	case "send", "Send", "SEND":
+		// For send transactions, check if memo indicates a special operation
+		if memoType := DetectMemoType(memo); memoType != MsgTypeUnknown {
+			return memoType
+		}
 		return MsgTypeSend
 	case "stake", "Stake", "STAKE":
 		return MsgTypeStake
@@ -133,7 +190,8 @@ func DetectMessageType(msgType string, msg map[string]interface{}) MessageType {
 // ParseMessage converts RPC transaction message into a typed Message interface.
 // This handles all supported transaction types and falls back to UnknownMessage for unsupported types.
 func ParseMessage(msgType string, msgData map[string]interface{}) (Message, error) {
-	messageType := DetectMessageType(msgType, msgData)
+	memo := GetStringField(msgData, "memo")
+	messageType := DetectMessageType(msgType, msgData, memo)
 
 	switch messageType {
 	case MsgTypeSend:
@@ -141,7 +199,55 @@ func ParseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 			FromAddress: GetStringField(msgData, "fromAddress"),
 			ToAddress:   GetStringField(msgData, "toAddress"),
 			Amount:      uint64(GetIntField(msgData, "amount")),
-			Memo:        GetStringField(msgData, "memo"),
+			Memo:        memo,
+		}, nil
+
+	case MsgTypeStartPoll:
+		var pollMemo StartPollMemo
+		_ = json.Unmarshal([]byte(memo), &pollMemo)
+		return &StartPollMessage{
+			FromAddress: GetStringField(msgData, "fromAddress"),
+			ToAddress:   GetStringField(msgData, "toAddress"),
+			Amount:      uint64(GetIntField(msgData, "amount")),
+			PollHash:    pollMemo.StartPoll,
+			PollUrl:     pollMemo.Url,
+			EndHeight:   pollMemo.EndHeight,
+		}, nil
+
+	case MsgTypeVotePoll:
+		var pollMemo VotePollMemo
+		_ = json.Unmarshal([]byte(memo), &pollMemo)
+		return &VotePollMessage{
+			FromAddress: GetStringField(msgData, "fromAddress"),
+			ToAddress:   GetStringField(msgData, "toAddress"),
+			Amount:      uint64(GetIntField(msgData, "amount")),
+			PollHash:    pollMemo.VotePoll,
+			Approve:     pollMemo.Approve,
+		}, nil
+
+	case MsgTypeLockOrder:
+		var orderMemo LockOrderMemo
+		_ = json.Unmarshal([]byte(memo), &orderMemo)
+		return &LockOrderMessage{
+			FromAddress:         GetStringField(msgData, "fromAddress"),
+			ToAddress:           GetStringField(msgData, "toAddress"),
+			Amount:              uint64(GetIntField(msgData, "amount")),
+			OrderID:             orderMemo.OrderID,
+			ChainID:             orderMemo.ChainID,
+			BuyerReceiveAddress: orderMemo.BuyerReceiveAddress,
+			BuyerSendAddress:    orderMemo.BuyerSendAddress,
+			BuyerChainDeadline:  orderMemo.BuyerChainDeadline,
+		}, nil
+
+	case MsgTypeCloseOrder:
+		var orderMemo CloseOrderMemo
+		_ = json.Unmarshal([]byte(memo), &orderMemo)
+		return &CloseOrderMessage{
+			FromAddress: GetStringField(msgData, "fromAddress"),
+			ToAddress:   GetStringField(msgData, "toAddress"),
+			Amount:      uint64(GetIntField(msgData, "amount")),
+			OrderID:     orderMemo.OrderID,
+			ChainID:     orderMemo.ChainID,
 		}, nil
 
 	case MsgTypeStake:

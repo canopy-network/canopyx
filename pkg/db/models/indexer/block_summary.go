@@ -19,8 +19,10 @@ var BlockSummaryColumns = []ColumnDef{
 	{Name: "num_txs_stake", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_unstake", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_edit_stake", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	{Name: "num_txs_vote", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	{Name: "num_txs_proposal", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "num_txs_start_poll", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "num_txs_vote_poll", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "num_txs_lock_order", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "num_txs_close_order", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_unknown", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_pause", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_unpause", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
@@ -128,8 +130,10 @@ type BlockSummary struct {
 	NumTxsStake                uint32 `ch:"num_txs_stake" json:"num_txs_stake"`
 	NumTxsUnstake              uint32 `ch:"num_txs_unstake" json:"num_txs_unstake"`
 	NumTxsEditStake            uint32 `ch:"num_txs_edit_stake" json:"num_txs_edit_stake"`
-	NumTxsVote                 uint32 `ch:"num_txs_vote" json:"num_txs_vote"`         // TODO: parse from send tx memo
-	NumTxsProposal             uint32 `ch:"num_txs_proposal" json:"num_txs_proposal"` // TODO: parse from send tx memo
+	NumTxsStartPoll            uint32 `ch:"num_txs_start_poll" json:"num_txs_start_poll"`   // Send tx with startPoll memo
+	NumTxsVotePoll             uint32 `ch:"num_txs_vote_poll" json:"num_txs_vote_poll"`     // Send tx with votePoll memo
+	NumTxsLockOrder            uint32 `ch:"num_txs_lock_order" json:"num_txs_lock_order"`   // Send tx with lockOrder memo
+	NumTxsCloseOrder           uint32 `ch:"num_txs_close_order" json:"num_txs_close_order"` // Send tx with closeOrder memo
 	NumTxsUnknown              uint32 `ch:"num_txs_unknown" json:"num_txs_unknown"`
 	NumTxsPause                uint32 `ch:"num_txs_pause" json:"num_txs_pause"`
 	NumTxsUnpause              uint32 `ch:"num_txs_unpause" json:"num_txs_unpause"`

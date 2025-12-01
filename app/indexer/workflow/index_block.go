@@ -229,8 +229,10 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumTxsStake:                txOut.TxCountsByType["stake"],
 		NumTxsUnstake:              txOut.TxCountsByType["unstake"],
 		NumTxsEditStake:            txOut.TxCountsByType["edit_stake"],
-		NumTxsVote:                 0, // TODO: Vote is embedded in memo, parse from send tx
-		NumTxsProposal:             0, // TODO: Proposal is embedded in memo, parse from send tx
+		NumTxsStartPoll:            txOut.TxCountsByType["startPoll"],
+		NumTxsVotePoll:             txOut.TxCountsByType["votePoll"],
+		NumTxsLockOrder:            txOut.TxCountsByType["lockOrder"],
+		NumTxsCloseOrder:           txOut.TxCountsByType["closeOrder"],
 		NumTxsUnknown:              txOut.TxCountsByType["unknown"],
 		NumTxsPause:                txOut.TxCountsByType["pause"],
 		NumTxsUnpause:              txOut.TxCountsByType["unpause"],

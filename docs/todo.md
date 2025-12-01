@@ -22,15 +22,16 @@
 [x] - Separate dex-batch from events maps, lookup H-1 for completed orders (c48e0a3)
 [x] - Create dex orders constant for state: pending, locked, complete (01b4805)
 [x] - /v1/query/double-signers integration (67566bf)
+[x] - Parse `startPoll` from send transactions via memo detection (poll_hash extracted)
+[x] - Parse `votePoll` from send transactions via memo detection (poll_hash extracted)
+[x] - Parse `lockOrder` from send transactions via memo detection (buyer_receive_address, buyer_send_address, buyer_chain_deadline extracted)
+[x] - Parse `closeOrder` from send transactions via memo detection (order_id extracted)
+[x] - Add BlockSummary counters for memo-based tx types (num_txs_start_poll, num_txs_vote_poll, num_txs_lock_order, num_txs_close_order)
 
 --- PENDING ---
 
 [] - Rework/Review reindex feature - current implementation does not properly handle snapshot-on-change entities
-    (initial state not captured when indexer starts at height > 1, need to ensure first-seen records are inserted)
-[] - Parse `startPoll` from send transactions -> `CheckForPollTransaction` -> `checkMemoForStartPoll`
-[] - Parse `votePoll` from send transactions -> `CheckForPollTransaction` -> `checkMemoForVotePoll`
-[] - Parse `lockOrder` from send transactions -> `ParseLockOrder`
-[] - Parse `closeOrder` from send transactions -> `ParseCloseOrder`
+(initial state not captured when indexer starts at height > 1, need to ensure first-seen records are inserted)
 [] - Replace current RPC client types with Canopy RPC client
 
 --- DO NOT HANDLE RIGHT NOW UNTIL ALL ABOVE PENDING ARE DONE ---
