@@ -7,8 +7,8 @@ import (
 
 // PointsEntry represents a single address and points allocation in a pool.
 type PointsEntry struct {
-	Address string `json:"address"`
-	Points  uint64 `json:"points"`
+	Address string `json:"Address"`
+	Points  uint64 `json:"Points"`
 }
 
 // RpcPool represents a pool response from the RPC.
@@ -17,8 +17,8 @@ type RpcPool struct {
 	ID              uint64        `json:"id"`
 	ChainID         uint64        `json:"chainId,omitempty"` // Blockchain's internal chain/committee ID (if provided by RPC)
 	Amount          uint64        `json:"amount"`
-	Points          []PointsEntry `json:"poolPoints"`
-	TotalPoolPoints uint64        `json:"totalPoolPoints"`
+	Points          []PointsEntry `json:"points"`
+	TotalPoolPoints uint64        `json:"totalPoints"`
 }
 
 // PoolsByHeight returns all pools at the current chain head using pagination.

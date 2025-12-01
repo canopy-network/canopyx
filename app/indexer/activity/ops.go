@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -179,8 +180,10 @@ func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityInde
 			MaximumAttempts:    0,
 		},
 	}
-	if in.PriorityKey > 0 {
-		options.Priority = sdktemporal.Priority{PriorityKey: in.PriorityKey}
+	if in.PriorityKey != "" {
+		if pk, parseErr := strconv.Atoi(in.PriorityKey); parseErr == nil && pk > 0 {
+			options.Priority = sdktemporal.Priority{PriorityKey: pk}
+		}
 	}
 
 	_, err = ac.TemporalClient.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", in)
@@ -444,7 +447,7 @@ func (ac *Context) scheduleBatchToQueue(ctx context.Context, in types.ActivityBa
 
 			_, err := ac.TemporalClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
 				Height:      h,
-				PriorityKey: in.PriorityKey,
+				PriorityKey: strconv.Itoa(in.PriorityKey),
 			})
 			if err != nil {
 				var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted

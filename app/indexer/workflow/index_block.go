@@ -7,11 +7,39 @@ import (
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
-	"github.com/canopy-network/canopyx/pkg/db/entities"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
+
+// stagingEntities is the list of entities that use the two-phase commit pattern
+// (staging table -> promotion -> production table). These entities need both
+// promotion during indexing and cleanup after promotion.
+//
+// Note: poll_snapshots is NOT in this list because it uses direct inserts
+// to production via a scheduled workflow (not per-block indexing).
+var stagingEntities = []string{
+	"blocks",
+	"txs",
+	"block_summaries",
+	"accounts",
+	"events",
+	"pools",
+	"orders",
+	"dex_prices",
+	"params",
+	"validators",
+	"validator_signing_info",
+	"validator_double_signing_info",
+	"committees",
+	"committee_validators",
+	"committee_payments",
+	"dex_orders",
+	"dex_deposits",
+	"dex_withdrawals",
+	"pool_points_by_holder",
+	"supply",
+}
 
 // IndexBlockWorkflow kicks off indexing of a block for a given chain in a separate workflow at `index:<chain>` queue.
 // It tracks the execution time of each activity and records detailed timing metrics.
@@ -317,29 +345,10 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 
 	// Phase 3: Promote all entities in parallel from staging to production
 	// This follows the two-phase commit pattern for data consistency
-	promoteEntities := []string{
-		"blocks",
-		"txs",
-		"block_summaries",
-		"accounts",
-		"events",
-		"pools",
-		"orders",
-		"dex_prices",
-		"params",
-		"validators",
-		"validator_signing_info",
-		"committees",
-		"committee_validators",
-		"poll_snapshots",
-		"dex_orders",
-		"dex_deposits",
-		"dex_withdrawals",
-		"pool_points_by_holder",
-	}
-	promoteFutures := make([]workflow.Future, 0, len(promoteEntities))
+	// Uses stagingEntities which is the list of entities that use staging tables
+	promoteFutures := make([]workflow.Future, 0, len(stagingEntities))
 
-	for _, entity := range promoteEntities {
+	for _, entity := range stagingEntities {
 		f := workflow.ExecuteActivity(ctx, wc.ActivityContext.PromoteData, types.ActivityPromoteDataInput{
 			Entity: entity,
 			Height: in.Height,
@@ -425,29 +434,27 @@ func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input types.Work
 		},
 	})
 
-	// Get all entities that need cleanup
-	// Using entities.All() ensures we clean all defined entities
-	allEntities := entities.All()
-
+	// Use stagingEntities - the list of entities that use staging tables
+	// This excludes entities like poll_snapshots which use direct production inserts
 	workflow.GetLogger(ctx).Info("Starting staging cleanup",
 		"chainId", wc.ChainID,
 		"height", input.Height,
-		"numEntities", len(allEntities))
+		"numEntities", len(stagingEntities))
 
 	// Clean each entity's staging table
 	// We don't fail on individual entity cleanup failures - just log and continue
 	var successCount, failureCount int
 
-	for _, entity := range allEntities {
+	for _, entity := range stagingEntities {
 		var output types.ActivityCleanPromotedDataOutput
 		err := workflow.ExecuteActivity(ctx, wc.ActivityContext.CleanPromotedData, types.ActivityCleanPromotedDataInput{
-			Entity: entity.String(),
+			Entity: entity,
 			Height: input.Height,
 		}).Get(ctx, &output)
 
 		if err != nil {
 			workflow.GetLogger(ctx).Warn("Failed to clean staging data for entity",
-				"entity", entity.String(),
+				"entity", entity,
 				"chainId", wc.ChainID,
 				"height", input.Height,
 				"error", err)
@@ -455,7 +462,7 @@ func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input types.Work
 			// Continue cleaning other entities despite failure
 		} else {
 			workflow.GetLogger(ctx).Debug("Successfully cleaned staging data",
-				"entity", entity.String(),
+				"entity", entity,
 				"chainId", wc.ChainID,
 				"height", input.Height,
 				"durationMs", output.DurationMs)

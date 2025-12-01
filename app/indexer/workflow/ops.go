@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strconv"
 	"time"
 
 	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
@@ -575,7 +576,7 @@ func (wc *Context) scheduleDirectly(ctx workflow.Context, chainID uint64, start,
 			// Start local activity asynchronously - returns immediately with Future
 			future := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.StartIndexWorkflow, types.ActivityIndexBlockInput{
 				Height:      height,
-				PriorityKey: PriorityUltraHigh,
+				PriorityKey: strconv.Itoa(PriorityUltraHigh),
 			})
 			futures = append(futures, future)
 		}

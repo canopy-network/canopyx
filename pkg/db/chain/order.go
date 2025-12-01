@@ -41,7 +41,7 @@ func (db *DB) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.O
 		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s".orders_staging (order_id, height, height_time, committee, amount_for_sale, requested_amount, seller_address, buyer_address, deadline, status) VALUES`, db.Name)
+	query := fmt.Sprintf(`INSERT INTO "%s".orders_staging (order_id, height, height_time, committee, data, amount_for_sale, requested_amount, seller_receive_address, buyer_send_address, buyer_receive_address, buyer_chain_deadline, sellers_send_address, status) VALUES`, db.Name)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err

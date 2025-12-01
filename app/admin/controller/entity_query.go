@@ -302,8 +302,12 @@ func createEntitySlice(entity entities.Entity) interface{} {
 		return &[]indexermodels.Committee{}
 	case entities.CommitteeValidators:
 		return &[]indexermodels.CommitteeValidator{}
+	case entities.CommitteePayments:
+		return &[]indexermodels.CommitteePayment{}
 	case entities.PollSnapshots:
 		return &[]indexermodels.PollSnapshot{}
+	case entities.Supply:
+		return &[]indexermodels.Supply{}
 	default:
 		return nil
 	}
@@ -570,8 +574,12 @@ func (c *Controller) getEntitySchemaProperties(entity entities.Entity) map[strin
 		model = indexermodels.Committee{}
 	case entities.CommitteeValidators:
 		model = indexermodels.CommitteeValidator{}
+	case entities.CommitteePayments:
+		model = indexermodels.CommitteePayment{}
 	case entities.PollSnapshots:
 		model = indexermodels.PollSnapshot{}
+	case entities.Supply:
+		model = indexermodels.Supply{}
 	default:
 		return nil
 	}

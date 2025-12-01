@@ -9,13 +9,13 @@ import (
 
 type WorkflowIndexBlockInput struct {
 	Height      uint64 `json:"height"`
-	PriorityKey int    `json:"priorityKey"`
+	PriorityKey string `json:"priorityKey"`
 	Reindex     bool   `json:"reindex"`
 }
 
 type ActivityIndexBlockInput struct {
 	Height      uint64 `json:"height"`
-	PriorityKey int    `json:"priorityKey"`
+	PriorityKey string `json:"priorityKey"`
 	Reindex     bool   `json:"reindex"`
 }
 

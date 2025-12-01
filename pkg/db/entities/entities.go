@@ -160,6 +160,11 @@ const (
 	// Staging table: poll_snapshots_staging
 	PollSnapshots Entity = "poll_snapshots"
 
+	// Supply represents the chain supply metrics entity.
+	// Production table: supply
+	// Staging table: supply_staging
+	Supply Entity = "supply"
+
 	// Future entities (uncomment and add to allEntities when implementing):
 	// Logs Entity = "logs"
 )
@@ -190,6 +195,7 @@ var allEntities = []Entity{
 	CommitteeValidators,
 	CommitteePayments,
 	PollSnapshots,
+	Supply,
 }
 
 // entitySet is a pre-computed map for O(1) validation lookups.
