@@ -275,6 +275,7 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 		NumCommitteesNew:        numCommitteesNew,
 		NumCommitteesSubsidized: uint32(len(subsidizedAtH)),
 		NumCommitteesRetired:    uint32(len(retiredAtH)),
+		NumCommitteePayments:    uint32(len(payments)),
 		DurationMs:              durationMs,
 	}, nil
 }

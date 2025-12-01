@@ -1,64 +1,39 @@
+--- DONE ---
 
-[] - This code is repeated in multiple activities for the RPC H-1 pattern but I think we can run on goroutines issues do to spam
-so for the best will be to refactor to use pond worker subpool from the current activity context.
+[x] - Refactor RPC H-1 pattern to use pond worker subpool from activity context (3f43c6f)
+[x] - Add `/v1/query/supply` to indexing life cycle with snapshot-on-change (ae4d7e0, c48e0a3)
+[x] - Move `poll` into a scheduled workflow that runs every 20s (f509cfe)
+[x] - Add `paymentPercents` map - CommitteePayment entity (0536fb5, 3225df6)
+[x] - Add `TotalTransactions` from Block RPC to `BlockSummary` (01b4805)
+[x] - Add `NetworkID uint64` to Block from Block RPC (01b4805)
+[x] - Add `H-1` (snapshots) to `dexprice` - PriceDelta, LocalPoolDelta, RemotePoolDelta (1538660)
+[x] - Add `H-1` (snapshots) to pools - AmountDelta, TotalPointsDelta, LPCountDelta (1538660)
+[x] - Remove Genesis Activity/Models/etc - Confirmed dead code, safely removed (01b4805)
+[x] - Add `Delegate` and `Compound` to CommitteeValidator (4dffaba)
+[x] - Remove `Committees []uint64` from validator model (4dffaba)
+[x] - Review/Refactor `orders` fields since Canopy split Seller/Buyer - aligned with SellOrder protobuf (f3b44d4)
+[x] - Ensure Status for the `orders` are constants: `open`, `complete`, `canceled` (01b4805)
+[x] - Update `activity/dex_batch.go` -> `indexer.DexWithdrawal` -> `PointsBurned` (f103678)
+[x] - Update `activity/dex_batch.go` -> `indexer.DexDeposit` -> `PointsReceived` (f103678)
+[x] - Run critical analysis over BlockSummaries - added supply, order status, DEX state, pool, account, validator counters (c48e0a3, 3467a64, 67566bf, 2a7dac7)
+[x] - Add params PR #261 - MinimumStakeForValidators, MinimumStakeForDelegates, MaximumDelegatesPerCommittee (01b4805)
+[x] - Review and clean up `pkg/rpc/event_types.go` TODOs (5e4f19b)
+[x] - Refactor crosschain.NewStore to accept database name as parameter (01b4805)
+[x] - Separate dex-batch from events maps, lookup H-1 for completed orders (c48e0a3)
+[x] - Create dex orders constant for state: pending, locked, complete (01b4805)
+[x] - /v1/query/double-signers integration (67566bf)
 
-```go
-wg.Add(2)
+--- PENDING ---
 
-// Worker 1: Fetch ALL current batches (locked orders across all committees)
-go func() {
-    defer wg.Done()
-    currentBatches, currentErr = cli.AllDexBatchesByHeight(ctx, in.Height)
-}()
-
-// Worker 2: Fetch ALL next batches (future orders across all committees)
-go func() {
-    defer wg.Done()
-    nextBatches, nextErr = cli.AllNextDexBatchesByHeight(ctx, in.Height)
-}()
-
-// Wait for both workers
-wg.Wait()
-```
-
-```go
-pool := ac.schedulerBatchPool(totalHeights)
-group := pool.NewGroupContext(ctx)
-groupCtx := group.Context()
-group.Add(...)
-```
-
-[] - Add `/v1/query/supply` to the indexing life cycle. Should have snapshot.
-[] - Move `poll` into a scheduled workflow that will run every 20s, since is not height base information. The version property should be the date when we are "saving" should not use `staging` table. should not have `height` related info.
-[] - On every indexer for a chainID=X when we call `/v1/query/orders`, should be sent that `chainID` or 0? Or 0 if `chainID=1` (root) - Waiting Andrew answer.
+[] - Rework/Review reindex feature - current implementation does not properly handle snapshot-on-change entities
+    (initial state not captured when indexer starts at height > 1, need to ensure first-seen records are inserted)
 [] - Parse `startPoll` from send transactions -> `CheckForPollTransaction` -> `checkMemoForStartPoll`
 [] - Parse `votePoll` from send transactions -> `CheckForPollTransaction` -> `checkMemoForVotePoll`
 [] - Parse `lockOrder` from send transactions -> `ParseLockOrder`
 [] - Parse `closeOrder` from send transactions -> `ParseCloseOrder`
-[] - Add `paymentPercents` map between address (val) and committee + percentage
-[] - Add `TotalTransactions` from Block RPC to `BlockSummary` (is the lifetime number of transactions)
-[] - Add `NetworkID uint64` to Block from Block RPC
-[] - Add `H-1` (snapshots) to `dexprice` 
-[] - Remove Genesis Activity/Models/etc - Not useful
-[] - Join Validator and Committee data indexing handler in a single one, to avoid re-requests the other side to achieve the task below
-[] - Add `Delegate` and `Compound` to CommitteeValidator
-[] - Remove `Committees []uint64` from validator model.
-[] - Review/Refactor `orders` fields since Canopy split Seller/Buyer in two fields - Check not at `pkg/db/models/indexer/order.go`
-[] - Ensure Status for the `orders` are: `open`, `complete`, `canceled` - Make them been constants like we are doing for DexOrders.
-[] - Update `activity/dex_batch.go` -> `indexer.DexWithdrawal` -> `PointsBurned` - Re check `../canopy` since Andrew already manage to add this (EventType will need to manage Points)
-[] - Update `activity/dex_batch.go` -> `indexer.DexDeposit` -> `PointsReceived` - Re check `../canopy` since Andrew already manage to add this (EventType will need to manage Points)
-[] - Add `H-1` (snapshots) to pools
-[] - Run a critical analysis over the BlockSummaries and any "good to have" aggregated number.
-[] - Add the upcoming params [PR #261](https://github.com/canopy-network/canopy/pull/261) - `MinimumStakeForValidators`, `MinimumStakeForDelegates` and `MaximumDelegatesPerCommittee`
-[] - Review and update/fix/enhance `pkg/rpc/event_types.go` I leave a bunch of TODOs there - Many of them are related to other tasks on this `todo.md`
-[] - Refactor crosschain.NewStore to be like adminstore.New which receive the database name as a parameter, so at the `admin` app we will read the ENV and pass the value to it.
+[] - Replace current RPC client types with Canopy RPC client
 
-[x] - Separate dex-batch (aka current) from events maps, since once the event is triggered, the order will not be at dex-batch endpoint, needs to lookup into H-1
-[x] - Create dex orders constant for the state which should be (pending, locked, complete)
-[x] - /v1/query/double-signers
-[x] - Remove Genesis Activity/Models/etc - Confirmed dead code, safely removed
-
---- DO NOT HANDLE RIGHT NOW UNTIL ALL THESE ABOVE ARE DONE ---
+--- DO NOT HANDLE RIGHT NOW UNTIL ALL ABOVE PENDING ARE DONE ---
 
 [] Integration Tests (db layer)
 [] Unit Tests (canopy rpc, admin api, workflows, activities)

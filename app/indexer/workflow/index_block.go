@@ -226,15 +226,11 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		// Transaction counts by type (populated from TxCountsByType map)
 		NumTxs:                     txOut.NumTxs,
 		NumTxsSend:                 txOut.TxCountsByType["send"],
-		NumTxsDelegate:             0, // No delegate type exists in Canopy
-		NumTxsUndelegate:           0, // No undelegate type exists in Canopy
 		NumTxsStake:                txOut.TxCountsByType["stake"],
 		NumTxsUnstake:              txOut.TxCountsByType["unstake"],
 		NumTxsEditStake:            txOut.TxCountsByType["edit_stake"],
-		NumTxsVote:                 0, // Vote is embedded in memo, not a separate type
-		NumTxsProposal:             0, // Proposal is embedded in memo, not a separate type
-		NumTxsContract:             0, // Contract type not implemented
-		NumTxsSystem:               0, // System type not implemented
+		NumTxsVote:                 0, // TODO: Vote is embedded in memo, parse from send tx
+		NumTxsProposal:             0, // TODO: Proposal is embedded in memo, parse from send tx
 		NumTxsUnknown:              txOut.TxCountsByType["unknown"],
 		NumTxsPause:                txOut.TxCountsByType["pause"],
 		NumTxsUnpause:              txOut.TxCountsByType["unpause"],
@@ -270,7 +266,6 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumOrdersOpen:      ordersOut.NumOrdersOpen,
 		NumOrdersFilled:    ordersOut.NumOrdersFilled,
 		NumOrdersCancelled: ordersOut.NumOrdersCancelled,
-		NumOrdersExpired:   0, // TODO: Expired detection not implemented
 
 		// Pool counts (from pools activity)
 		NumPools:    poolsOut.NumPools,
@@ -322,10 +317,10 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumCommitteesSubsidized: committeesOut.NumCommitteesSubsidized,
 		NumCommitteesRetired:    committeesOut.NumCommitteesRetired,
 		NumCommitteeValidators:  validatorsOut.NumCommitteeValidators,
-
-		NumPollSnapshots: 0, // Poll snapshots now captured via scheduled workflow, not per-block
+		NumCommitteePayments:    committeesOut.NumCommitteePayments,
 
 		// Supply metrics (from supply activity)
+		SupplyChanged:       supplyOut.Changed,
 		SupplyTotal:         supplyOut.Total,
 		SupplyStaked:        supplyOut.Staked,
 		SupplyDelegatedOnly: supplyOut.DelegatedOnly,

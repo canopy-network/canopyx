@@ -18,6 +18,7 @@ type ActivityIndexCommitteesOutput struct {
 	NumCommitteesNew        uint32  `json:"numCommitteesNew"`        // Number of new committees (first seen at this height)
 	NumCommitteesSubsidized uint32  `json:"numCommitteesSubsidized"` // Number of subsidized committees (all, not just changed)
 	NumCommitteesRetired    uint32  `json:"numCommitteesRetired"`    // Number of retired committees (all, not just changed)
+	NumCommitteePayments    uint32  `json:"numCommitteePayments"`    // Number of committee payment records indexed
 	DurationMs              float64 `json:"durationMs"`              // Execution time in milliseconds
 }
 

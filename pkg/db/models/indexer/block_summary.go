@@ -13,18 +13,14 @@ var BlockSummaryColumns = []ColumnDef{
 	{Name: "height", Type: "UInt64"},
 	{Name: "height_time", Type: "DateTime64(6)"},
 	{Name: "total_transactions", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD"},
-	// Transaction counters (24 fields)
+	// Transaction counters (20 fields)
 	{Name: "num_txs", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_send", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	{Name: "num_txs_delegate", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	{Name: "num_txs_undelegate", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_stake", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_unstake", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_edit_stake", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_vote", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_proposal", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	{Name: "num_txs_contract", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	{Name: "num_txs_system", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_unknown", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_pause", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_txs_unpause", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
@@ -52,13 +48,12 @@ var BlockSummaryColumns = []ColumnDef{
 	{Name: "num_events_automatic_pause", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_events_automatic_begin_unstaking", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_events_automatic_finish_unstaking", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	// Order counters (6 fields)
+	// Order counters (5 fields)
 	{Name: "num_orders", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_orders_new", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_orders_open", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_orders_filled", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_orders_cancelled", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	{Name: "num_orders_expired", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	// Pool counters (2 fields)
 	{Name: "num_pools", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_pools_new", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
@@ -104,9 +99,10 @@ var BlockSummaryColumns = []ColumnDef{
 	{Name: "num_committees_retired", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	// Committee validator counters (1 field)
 	{Name: "num_committee_validators", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	// Poll snapshot counters (1 field)
-	{Name: "num_poll_snapshots", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	// Supply metrics (3 fields)
+	// Committee payment counters (1 field)
+	{Name: "num_committee_payments", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	// Supply metrics (4 fields)
+	{Name: "supply_changed", Type: "Bool DEFAULT false", Codec: "ZSTD"},
 	{Name: "supply_total", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "supply_staked", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "supply_delegated_only", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD"},
@@ -124,20 +120,16 @@ type BlockSummary struct {
 	HeightTime        time.Time `ch:"height_time" json:"height_time"`               // Block timestamp for time-range queries
 	TotalTransactions uint64    `ch:"total_transactions" json:"total_transactions"` // Lifetime number of transactions across all blocks
 
-	// ========== Transactions (24 fields) ==========
+	// ========== Transactions (20 fields) ==========
 	NumTxs uint32 `ch:"num_txs" json:"num_txs"` // Total number of transactions
 
-	// Transaction counts by message type (23 types)
+	// Transaction counts by message type (19 types)
 	NumTxsSend                 uint32 `ch:"num_txs_send" json:"num_txs_send"`
-	NumTxsDelegate             uint32 `ch:"num_txs_delegate" json:"num_txs_delegate"`
-	NumTxsUndelegate           uint32 `ch:"num_txs_undelegate" json:"num_txs_undelegate"`
 	NumTxsStake                uint32 `ch:"num_txs_stake" json:"num_txs_stake"`
 	NumTxsUnstake              uint32 `ch:"num_txs_unstake" json:"num_txs_unstake"`
 	NumTxsEditStake            uint32 `ch:"num_txs_edit_stake" json:"num_txs_edit_stake"`
-	NumTxsVote                 uint32 `ch:"num_txs_vote" json:"num_txs_vote"`
-	NumTxsProposal             uint32 `ch:"num_txs_proposal" json:"num_txs_proposal"`
-	NumTxsContract             uint32 `ch:"num_txs_contract" json:"num_txs_contract"`
-	NumTxsSystem               uint32 `ch:"num_txs_system" json:"num_txs_system"`
+	NumTxsVote                 uint32 `ch:"num_txs_vote" json:"num_txs_vote"`         // TODO: parse from send tx memo
+	NumTxsProposal             uint32 `ch:"num_txs_proposal" json:"num_txs_proposal"` // TODO: parse from send tx memo
 	NumTxsUnknown              uint32 `ch:"num_txs_unknown" json:"num_txs_unknown"`
 	NumTxsPause                uint32 `ch:"num_txs_pause" json:"num_txs_pause"`
 	NumTxsUnpause              uint32 `ch:"num_txs_unpause" json:"num_txs_unpause"`
@@ -170,13 +162,12 @@ type BlockSummary struct {
 	NumEventsAutomaticBeginUnstaking  uint32 `ch:"num_events_automatic_begin_unstaking" json:"num_events_automatic_begin_unstaking"`
 	NumEventsAutomaticFinishUnstaking uint32 `ch:"num_events_automatic_finish_unstaking" json:"num_events_automatic_finish_unstaking"`
 
-	// ========== Orders (6 fields) ==========
+	// ========== Orders (5 fields) ==========
 	NumOrders          uint32 `ch:"num_orders" json:"num_orders"`                     // Total number of orders
 	NumOrdersNew       uint32 `ch:"num_orders_new" json:"num_orders_new"`             // Number of new orders
 	NumOrdersOpen      uint32 `ch:"num_orders_open" json:"num_orders_open"`           // Number of open orders
 	NumOrdersFilled    uint32 `ch:"num_orders_filled" json:"num_orders_filled"`       // Number of filled orders
 	NumOrdersCancelled uint32 `ch:"num_orders_cancelled" json:"num_orders_cancelled"` // Number of cancelled orders
-	NumOrdersExpired   uint32 `ch:"num_orders_expired" json:"num_orders_expired"`     // Number of expired orders
 
 	// ========== PoolsByHeight (2 fields) ==========
 	NumPools    uint32 `ch:"num_pools" json:"num_pools"`         // Total number of pools
@@ -235,10 +226,11 @@ type BlockSummary struct {
 	// ========== CommitteeValidators (1 field) ==========
 	NumCommitteeValidators uint32 `ch:"num_committee_validators" json:"num_committee_validators"` // Number of committee-validator relationships
 
-	// ========== PollSnapshots (1 field) ==========
-	NumPollSnapshots uint32 `ch:"num_poll_snapshots" json:"num_poll_snapshots"` // Number of poll snapshot records
+	// ========== CommitteePayments (1 field) ==========
+	NumCommitteePayments uint32 `ch:"num_committee_payments" json:"num_committee_payments"` // Number of committee payment records
 
-	// ========== Supply (3 fields) ==========
+	// ========== Supply (4 fields) ==========
+	SupplyChanged       bool   `ch:"supply_changed" json:"supply_changed"`               // Whether supply changed at this height
 	SupplyTotal         uint64 `ch:"supply_total" json:"supply_total"`                   // Total token supply
 	SupplyStaked        uint64 `ch:"supply_staked" json:"supply_staked"`                 // Total staked tokens (validators + delegators)
 	SupplyDelegatedOnly uint64 `ch:"supply_delegated_only" json:"supply_delegated_only"` // Delegated-only tokens (excluding validator stake)

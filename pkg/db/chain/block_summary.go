@@ -49,15 +49,11 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 			height_time,
 			num_txs,
 			num_txs_send,
-			num_txs_delegate,
-			num_txs_undelegate,
 			num_txs_stake,
 			num_txs_unstake,
 			num_txs_edit_stake,
 			num_txs_vote,
 			num_txs_proposal,
-			num_txs_contract,
-			num_txs_system,
 			num_txs_unknown,
 			num_txs_pause,
 			num_txs_unpause,
@@ -88,7 +84,6 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 			num_orders_open,
 			num_orders_filled,
 			num_orders_cancelled,
-			num_orders_expired,
 			num_pools,
 			num_pools_new,
 			num_dex_prices,
@@ -119,7 +114,11 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 			num_committees_subsidized,
 			num_committees_retired,
 			num_committee_validators,
-			num_poll_snapshots
+			num_committee_payments,
+			supply_changed,
+			supply_total,
+			supply_staked,
+			supply_delegated_only
 		) VALUES`, db.Name)
 
 	batch, err := db.PrepareBatch(ctx, query)
@@ -133,15 +132,11 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 		summary.HeightTime,
 		summary.NumTxs,
 		summary.NumTxsSend,
-		summary.NumTxsDelegate,
-		summary.NumTxsUndelegate,
 		summary.NumTxsStake,
 		summary.NumTxsUnstake,
 		summary.NumTxsEditStake,
 		summary.NumTxsVote,
 		summary.NumTxsProposal,
-		summary.NumTxsContract,
-		summary.NumTxsSystem,
 		summary.NumTxsUnknown,
 		summary.NumTxsPause,
 		summary.NumTxsUnpause,
@@ -172,7 +167,6 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 		summary.NumOrdersOpen,
 		summary.NumOrdersFilled,
 		summary.NumOrdersCancelled,
-		summary.NumOrdersExpired,
 		summary.NumPools,
 		summary.NumPoolsNew,
 		summary.NumDexPrices,
@@ -203,7 +197,11 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 		summary.NumCommitteesSubsidized,
 		summary.NumCommitteesRetired,
 		summary.NumCommitteeValidators,
-		summary.NumPollSnapshots,
+		summary.NumCommitteePayments,
+		summary.SupplyChanged,
+		summary.SupplyTotal,
+		summary.SupplyStaked,
+		summary.SupplyDelegatedOnly,
 	)
 	if err != nil {
 		return err
