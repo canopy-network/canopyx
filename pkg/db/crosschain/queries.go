@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 
@@ -249,12 +250,26 @@ func (s *Store) queryLatestEntityTyped(ctx context.Context, config TableConfig, 
 		whereClauses = append(whereClauses, fmt.Sprintf("chain_id IN (%s)", strings.Join(placeholders, ",")))
 	}
 
-	// Field-based filtering (exact match)
+	// Field-based filtering
 	// Use a whitelist approach to prevent SQL injection
+	// Supports comma-separated values for IN queries (e.g., "addr1,addr2,addr3")
 	if len(opts.Filters) > 0 {
 		for field, value := range opts.Filters {
 			// Validate field name contains only safe characters (alphanumeric + underscore)
-			if isValidColumnName(field) {
+			if !isValidColumnName(field) {
+				continue
+			}
+
+			// Check if value contains multiple comma-separated values
+			if strings.Contains(value, ",") {
+				values := strings.Split(value, ",")
+				placeholders := make([]string, len(values))
+				for i, v := range values {
+					placeholders[i] = "?"
+					args = append(args, strings.TrimSpace(v))
+				}
+				whereClauses = append(whereClauses, fmt.Sprintf("%s IN (%s)", field, strings.Join(placeholders, ",")))
+			} else {
 				whereClauses = append(whereClauses, fmt.Sprintf("%s = ?", field))
 				args = append(args, value)
 			}
@@ -295,10 +310,15 @@ func (s *Store) queryLatestEntityTyped(ctx context.Context, config TableConfig, 
 		)
 	`, s.Name, globalTableName, whereClause, orderClause, limitByClause)
 
+	log.Printf("[DEBUG] queryLatestEntityTyped: countQuery=%s args=%v", countQuery, args)
+
 	var total uint64
 	if err := s.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		log.Printf("[DEBUG] queryLatestEntityTyped: count query error=%v", err)
 		return nil, fmt.Errorf("failed to query count: %w", err)
 	}
+
+	log.Printf("[DEBUG] queryLatestEntityTyped: count result total=%d", total)
 
 	// Query for data with pagination
 	// LIMIT BY must come before LIMIT/OFFSET
@@ -313,8 +333,11 @@ func (s *Store) queryLatestEntityTyped(ctx context.Context, config TableConfig, 
 
 	dataArgs := append(args, opts.Limit+1, opts.Offset) // Request limit+1 to detect if there are more results
 
+	log.Printf("[DEBUG] queryLatestEntityTyped: dataQuery=%s dataArgs=%v", dataQuery, dataArgs)
+
 	// Execute query
 	if err := s.Select(ctx, dest, dataQuery, dataArgs...); err != nil {
+		log.Printf("[DEBUG] queryLatestEntityTyped: data query error=%v", err)
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
 
