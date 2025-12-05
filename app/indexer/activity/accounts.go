@@ -36,8 +36,8 @@ import (
 func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexAtHeight) (types.ActivityIndexAccountsOutput, error) {
 	start := time.Now()
 
-	// Create RPC client
-	cli, cliErr := ac.rpcClient(ctx)
+	// Create RPC client with height-aware endpoint selection
+	cli, cliErr := ac.rpcClientForHeight(ctx, input.Height)
 	if cliErr != nil {
 		return types.ActivityIndexAccountsOutput{}, cliErr
 	}

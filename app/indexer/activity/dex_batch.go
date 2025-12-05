@@ -47,7 +47,8 @@ import (
 func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexDexBatchOutput, error) {
 	start := time.Now()
 
-	cli, err := ac.rpcClient(ctx)
+	// Get RPC client with height-aware endpoint selection
+	cli, err := ac.rpcClientForHeight(ctx, in.Height)
 	if err != nil {
 		return types.ActivityIndexDexBatchOutput{}, err
 	}

@@ -31,8 +31,8 @@ import (
 func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityIndexAtHeight) (types.ActivityIndexValidatorsOutput, error) {
 	start := time.Now()
 
-	// Get chain metadata
-	cli, err := ac.rpcClient(ctx)
+	// Get RPC client with height-aware endpoint selection
+	cli, err := ac.rpcClientForHeight(ctx, input.Height)
 	if err != nil {
 		return types.ActivityIndexValidatorsOutput{}, err
 	}

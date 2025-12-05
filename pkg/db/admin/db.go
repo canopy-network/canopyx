@@ -60,5 +60,10 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
+	db.Logger.Debug("Initialize rpc_endpoints model", zap.String("name", db.Name))
+	if err := db.initRPCEndpoints(ctx); err != nil {
+		return err
+	}
+
 	return nil
 }

@@ -38,7 +38,8 @@ import (
 func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtHeight) (types.ActivityIndexOrdersOutput, error) {
 	start := time.Now()
 
-	cli, err := ac.rpcClient(ctx)
+	// Get RPC client with height-aware endpoint selection
+	cli, err := ac.rpcClientForHeight(ctx, input.Height)
 	if err != nil {
 		return types.ActivityIndexOrdersOutput{}, err
 	}

@@ -9,6 +9,16 @@ type HealthInfo struct {
 	UpdatedAt time.Time `json:"updated_at"` // when this health info was last updated
 }
 
+// EndpointHealth represents health status for a single RPC endpoint
+type EndpointHealth struct {
+	Endpoint  string    `json:"endpoint"`        // RPC endpoint URL
+	Status    string    `json:"status"`          // healthy, unreachable, degraded
+	Height    uint64    `json:"height"`          // last known block height
+	LatencyMs float64   `json:"latency_ms"`      // response time in milliseconds
+	Error     string    `json:"error,omitempty"` // last error message (empty if healthy)
+	UpdatedAt time.Time `json:"updated_at"`      // when this endpoint was last checked
+}
+
 type ChainStatus struct {
 	ChainID        uint64         `json:"chain_id"`
 	ChainName      string         `json:"chain_name"`
@@ -43,6 +53,9 @@ type ChainStatus struct {
 	RPCHealth        HealthInfo `json:"rpc_health"`        // RPC endpoint health (from headscan)
 	QueueHealth      HealthInfo `json:"queue_health"`      // queue backlog health (from queue monitor)
 	DeploymentHealth HealthInfo `json:"deployment_health"` // k8s deployment health (from controller)
+
+	// Per-Endpoint Health - individual RPC endpoint status with height tracking
+	Endpoints []EndpointHealth `json:"endpoints,omitempty"` // per-endpoint health status
 }
 
 type QueueStatus struct {

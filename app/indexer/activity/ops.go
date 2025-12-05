@@ -66,69 +66,149 @@ func (ac *Context) GetLastIndexed(ctx context.Context) (uint64, error) {
 	return ac.AdminDB.LastIndexed(ctx, ac.ChainID)
 }
 
-// GetLatestHead returns the latest block height for the given chain by hitting RPC endpoints.
-// It also updates the RPC health status in the database based on the success/failure of the RPC call.
-// NOTE: /v1/height may return blocks before they're ready, causing IndexBlock workflows to hang.
-// We verify block availability by attempting to fetch the block. If unavailable, we return head-1.
+// GetLatestHead returns the latest block height for the given chain by checking ALL RPC endpoints in parallel.
+// It updates the health status for each individual endpoint and the overall chain health.
+// Returns the maximum height found across all healthy endpoints.
+// NOTE: /v1/height may return blocks before they're ready, so we verify block availability.
 func (ac *Context) GetLatestHead(ctx context.Context) (uint64, error) {
 	logger := activity.GetLogger(ctx)
 
-	cli, err := ac.rpcClient(ctx)
+	// Get chain to access RPC endpoints
+	chain, err := ac.AdminDB.GetChain(ctx, ac.ChainID)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to get chain: %w", err)
 	}
 
-	head, err := cli.ChainHead(ctx)
+	endpoints := chain.RPCEndpoints
+	if len(endpoints) == 0 {
+		return 0, fmt.Errorf("no RPC endpoints configured for chain %d", ac.ChainID)
+	}
 
-	// Update RPC health status based on the result
-	if err != nil {
-		// RPC call failed - mark as unreachable
+	// Result type for parallel endpoint checks
+	type endpointResult struct {
+		endpoint  string
+		height    uint64
+		latencyMs float64
+		err       error
+	}
+
+	results := make(chan endpointResult, len(endpoints))
+
+	// Query all endpoints in parallel
+	for _, ep := range endpoints {
+		go func(endpoint string) {
+			// Check for context cancellation before making RPC calls
+			if ctx.Err() != nil {
+				results <- endpointResult{endpoint: endpoint, err: ctx.Err()}
+				return
+			}
+
+			start := time.Now()
+			factory := ac.RPCFactory
+			if factory == nil {
+				results <- endpointResult{endpoint: endpoint, err: fmt.Errorf("RPC factory not initialized")}
+				return
+			}
+			cli := factory.NewClient([]string{endpoint})
+			height, err := cli.ChainHead(ctx)
+			latencyMs := float64(time.Since(start).Milliseconds())
+
+			// If we got a height, verify the block is actually available
+			if err == nil && height > 0 {
+				_, blockErr := cli.BlockByHeight(ctx, height)
+				if blockErr != nil {
+					// Head block not available yet, adjust height
+					logger.Debug("Head block not yet available at endpoint, adjusting",
+						zap.String("endpoint", endpoint),
+						zap.Uint64("reported_head", height),
+						zap.Uint64("adjusted_head", height-1),
+					)
+					height = height - 1
+				}
+			}
+
+			results <- endpointResult{
+				endpoint:  endpoint,
+				height:    height,
+				latencyMs: latencyMs,
+				err:       err,
+			}
+		}(ep)
+	}
+
+	// Collect results and update database
+	var maxHeight uint64
+	var healthyCount int
+
+	for i := 0; i < len(endpoints); i++ {
+		r := <-results
+
+		status := "healthy"
+		errMsg := ""
+		if r.err != nil {
+			status = "unreachable"
+			errMsg = r.err.Error()
+		}
+
+		// Update individual endpoint health in DB
+		upsertErr := ac.AdminDB.UpsertEndpointHealth(ctx, &adminmodels.RPCEndpoint{
+			ChainID:   ac.ChainID,
+			Endpoint:  r.endpoint,
+			Status:    status,
+			Height:    r.height,
+			LatencyMs: r.latencyMs,
+			Error:     errMsg,
+			UpdatedAt: time.Now().UTC(),
+		})
+		if upsertErr != nil {
+			logger.Warn("failed to update endpoint health",
+				zap.String("endpoint", r.endpoint),
+				zap.Error(upsertErr),
+			)
+		}
+
+		if r.err == nil {
+			healthyCount++
+			if r.height > maxHeight {
+				maxHeight = r.height
+			}
+		}
+	}
+
+	// Update chain-level RPC health (aggregate status)
+	if healthyCount == 0 {
 		healthErr := ac.AdminDB.UpdateRPCHealth(
 			ctx,
 			ac.ChainID,
 			"unreachable",
-			fmt.Sprintf("RPC endpoints failed x: %v", err),
+			"All RPC endpoints failed",
 		)
 		if healthErr != nil {
-			logger.Warn("failed to update RPC health status",
+			logger.Warn("failed to update chain RPC health status",
 				zap.Uint64("chain_id", ac.ChainID),
 				zap.Error(healthErr),
 			)
 		}
-		return 0, err
+		return 0, fmt.Errorf("all RPC endpoints unreachable for chain %d", ac.ChainID)
 	}
 
-	// Verify head block is actually available before returning it
-	// This prevents scheduling workflows for blocks that aren't ready yet
-	if head > 0 {
-		_, err := cli.BlockByHeight(ctx, head)
-		if err != nil {
-			// Head block not available yet, use head-1 instead
-			logger.Debug("Head block not yet available, using head-1",
-				zap.Uint64("chain_id", ac.ChainID),
-				zap.Uint64("reported_head", head),
-				zap.Uint64("adjusted_head", head-1),
-				zap.Error(err),
-			)
-			head = head - 1
-		}
-	}
-
-	// RPC call succeeded - mark as healthy
-	healthErr := ac.AdminDB.UpdateRPCHealth(
-		ctx,
-		ac.ChainID,
-		"healthy",
-		fmt.Sprintf("RPC endpoints responding, head at block %d", head),
-	)
+	msg := fmt.Sprintf("%d/%d endpoints healthy, max height %d", healthyCount, len(endpoints), maxHeight)
+	healthErr := ac.AdminDB.UpdateRPCHealth(ctx, ac.ChainID, "healthy", msg)
 	if healthErr != nil {
-		logger.Warn("failed to update RPC health status",
+		logger.Warn("failed to update chain RPC health status",
 			zap.Uint64("chain_id", ac.ChainID),
 			zap.Error(healthErr),
 		)
 	}
 
-	return head, nil
+	logger.Debug("GetLatestHead completed",
+		zap.Uint64("chain_id", ac.ChainID),
+		zap.Int("healthy_endpoints", healthyCount),
+		zap.Int("total_endpoints", len(endpoints)),
+		zap.Uint64("max_height", maxHeight),
+	)
+
+	return maxHeight, nil
 }
 
 // FindGaps identifies and retrieves missing height ranges (gaps) in the indexing progress for a chain.

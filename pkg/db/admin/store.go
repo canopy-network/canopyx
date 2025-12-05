@@ -16,4 +16,9 @@ type Store interface {
 	FindGaps(ctx context.Context, chainID uint64) ([]admin.Gap, error)
 	UpdateRPCHealth(ctx context.Context, chainID uint64, status, message string) error
 	IndexProgressHistory(ctx context.Context, chainID uint64, hours, intervalMinutes int) ([]admin.ProgressPoint, error)
+
+	// RPC Endpoint Health
+	UpsertEndpointHealth(ctx context.Context, ep *admin.RPCEndpoint) error
+	GetEndpointsForChain(ctx context.Context, chainID uint64) ([]admin.RPCEndpoint, error)
+	GetEndpointsWithMinHeight(ctx context.Context, chainID uint64, minHeight uint64) ([]admin.RPCEndpoint, error)
 }

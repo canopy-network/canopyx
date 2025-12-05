@@ -11,11 +11,12 @@ import (
 
 // FetchBlockFromRPC is a local activity that fetches a block from the RPC endpoint.
 // This is a local activity to enable fast retries when waiting for block propagation.
+// Uses height-aware endpoint selection to ensure the endpoint has the required block.
 // Returns the block data wrapped in ActivityFetchBlockOutput.
 func (ac *Context) FetchBlockFromRPC(ctx context.Context, in types.ActivityFetchBlockInput) (types.ActivityFetchBlockOutput, error) {
 	start := time.Now()
 
-	cli, err := ac.rpcClient(ctx)
+	cli, err := ac.rpcClientForHeight(ctx, in.Height)
 	if err != nil {
 		return types.ActivityFetchBlockOutput{}, err
 	}

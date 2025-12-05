@@ -13,11 +13,12 @@ import (
 )
 
 // IndexEvents indexes events for a given block.
+// Uses height-aware endpoint selection to ensure the endpoint has the required block.
 // Returns output containing the number of indexed events, counts by type, and execution duration in milliseconds.
 func (ac *Context) IndexEvents(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexEventsOutput, error) {
 	start := time.Now()
 
-	cli, err := ac.rpcClient(ctx)
+	cli, err := ac.rpcClientForHeight(ctx, in.Height)
 	if err != nil {
 		return types.ActivityIndexEventsOutput{}, err
 	}

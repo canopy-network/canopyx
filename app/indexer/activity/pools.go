@@ -22,8 +22,8 @@ import (
 func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexPoolsOutput, error) {
 	start := time.Now()
 
-	// Get chain configuration
-	cli, err := ac.rpcClient(ctx)
+	// Get RPC client with height-aware endpoint selection
+	cli, err := ac.rpcClientForHeight(ctx, in.Height)
 	if err != nil {
 		return types.ActivityIndexPoolsOutput{}, err
 	}

@@ -7,11 +7,15 @@
 ### System
 - [GET /api/health](#health) - Health check endpoint
 
+### Authentication
+- [POST /api/auth/login](#admin-login) - Admin login
+- [POST /api/auth/logout](#admin-logout) - Admin logout
+
 ### Chains Management
 - [GET /api/chains](#list-chains) - List all registered chains
 - [POST /api/chains](#register-chain) - Register a new chain
 - [GET /api/chains/{id}](#get-chain) - Get chain details
-- [PUT /api/chains/{id}](#update-chain) - Update chain configuration
+- [PATCH /api/chains/{id}](#update-chain) - Partial update chain configuration
 - [DELETE /api/chains/{id}](#delete-chain) - Delete a chain
 - [GET /api/chains/{id}/schema](#get-chain-schema) - Get chain database schema
 - [GET /api/chains/{id}/progress](#get-chain-progress) - Get indexing progress for chain
@@ -21,13 +25,16 @@
 - [POST /api/chains/{id}/headscan](#trigger-headscan) - Manually trigger head scan
 - [POST /api/chains/{id}/gapscan](#trigger-gapscan) - Manually trigger gap scan
 - [GET /api/chains/status](#get-all-chains-status) - Get status for all chains
-- [POST /api/chains/status](#bulk-get-chains-status) - Bulk status check with filters
+- [PATCH /api/chains/status](#bulk-update-chains-status) - Bulk update chain status fields
 
 ### Chain Entities
 - [GET /api/entities](#list-entities) - List available entity types
 - [GET /api/chains/{id}/entity/{entity}](#query-chain-entity) - Query entity data for a chain
 - [GET /api/chains/{id}/entity/{entity}/lookup](#lookup-entity) - Lookup entity by ID
 - [GET /api/chains/{id}/entity/{entity}/schema](#get-entity-schema) - Get entity schema
+
+### WebSocket
+- [GET /api/ws](#websocket) - Real-time events via WebSocket
 
 ### Cross-Chain Queries
 - [GET /api/crosschain/health](#crosschain-health) - Cross-chain database health
@@ -63,6 +70,68 @@
 **Example**:
 ```bash
 curl http://localhost:3000/api/health
+```
+
+<hr/>
+
+# Authentication
+
+## Admin Login
+
+**Route**: `POST /api/auth/login`
+
+**Description**: Authenticate an admin user and establish a session
+
+**Authentication**: None required
+
+**Request**:
+```json
+{
+  "username": "admin",
+  "password": "admin"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "ok": "1"
+}
+```
+
+Sets a `cx_session` cookie with JWT token for subsequent authenticated requests.
+
+**Error Response** (401 Unauthorized):
+```json
+{
+  "error": "invalid credentials"
+}
+```
+
+**Example**:
+```bash
+curl -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -c cookies.txt \
+  -d '{"username": "admin", "password": "admin"}'
+```
+
+## Admin Logout
+
+**Route**: `POST /api/auth/logout`
+
+**Description**: Clear admin session and log out
+
+**Authentication**: None required (clears existing session)
+
+**Request**: None
+
+**Response**: 204 No Content
+
+**Example**:
+```bash
+curl -X POST http://localhost:3000/api/auth/logout \
+  -b cookies.txt
 ```
 
 <hr/>
@@ -172,9 +241,9 @@ curl -H "Authorization: Bearer devtoken" \
 
 ## Update Chain
 
-**Route**: `PUT /api/chains/{id}`
+**Route**: `PATCH /api/chains/{id}`
 
-**Description**: Update chain configuration
+**Description**: Partial update chain configuration
 
 **Authentication**: Required (Bearer token)
 
@@ -193,13 +262,10 @@ curl -H "Authorization: Bearer devtoken" \
 
 **Example**:
 ```bash
-curl -X PUT http://localhost:3000/api/chains/1 \
+curl -X PATCH http://localhost:3000/api/chains/1 \
   -H "Authorization: Bearer devtoken" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "Canopy Mainnet Updated",
-    "rpc_url": "http://new-node:50002"
-  }'
+  -d '{"chain_name": "Canopy Mainnet Updated"}'
 ```
 
 ## Delete Chain
@@ -449,23 +515,124 @@ curl -X POST http://localhost:3000/api/chains/1/gapscan \
 
 **Route**: `GET /api/chains/status`
 
-**Description**: Get status summary for all registered chains
+**Description**: Get status summary for all registered chains including per-endpoint health data
 
 **Authentication**: Required (Bearer token)
 
-**Response**:
+**Response**: Map of chain IDs to chain status objects
 ```json
-[
-  {
+{
+  "1": {
     "chain_id": 1,
-    "name": "Canopy Mainnet",
-    "status": "syncing",
-    "latest_indexed_height": 12345,
-    "chain_height": 12350,
-    "behind": 5
+    "chain_name": "Canopy Mainnet",
+    "image": "ghcr.io/canopy-network/canopyx-indexer:latest",
+    "notes": "",
+    "paused": false,
+    "deleted": false,
+    "min_replicas": 1,
+    "max_replicas": 3,
+    "last_indexed": 12345,
+    "head": 12350,
+    "queue": {
+      "pending_workflow": 2,
+      "pending_activity": 5,
+      "backlog_age_secs": 0.5,
+      "pollers": 4
+    },
+    "ops_queue": {
+      "pending_workflow": 0,
+      "pending_activity": 1,
+      "backlog_age_secs": 0.0,
+      "pollers": 2
+    },
+    "indexer_queue": {
+      "pending_workflow": 2,
+      "pending_activity": 5,
+      "backlog_age_secs": 0.5,
+      "pollers": 4
+    },
+    "missing_blocks_count": 0,
+    "gap_ranges_count": 0,
+    "largest_gap_start": 0,
+    "largest_gap_end": 0,
+    "is_live_sync": true,
+    "live_queue_depth": 2,
+    "live_queue_backlog_age": 0.3,
+    "historical_queue_depth": 5,
+    "historical_queue_backlog_age": 1.2,
+    "health": {
+      "status": "healthy",
+      "message": "",
+      "updated_at": "2025-11-07T12:34:56Z"
+    },
+    "rpc_health": {
+      "status": "healthy",
+      "message": "3/3 endpoints healthy, max height 12350",
+      "updated_at": "2025-11-07T12:34:56Z"
+    },
+    "queue_health": {
+      "status": "healthy",
+      "message": "backlog within threshold",
+      "updated_at": "2025-11-07T12:34:56Z"
+    },
+    "deployment_health": {
+      "status": "healthy",
+      "message": "2/2 replicas ready",
+      "updated_at": "2025-11-07T12:34:56Z"
+    },
+    "endpoints": [
+      {
+        "endpoint": "http://node-1:50002",
+        "status": "healthy",
+        "height": 12350,
+        "latency_ms": 45.2,
+        "updated_at": "2025-11-07T12:34:56Z"
+      },
+      {
+        "endpoint": "http://node-2:50002",
+        "status": "healthy",
+        "height": 12348,
+        "latency_ms": 62.1,
+        "updated_at": "2025-11-07T12:34:56Z"
+      },
+      {
+        "endpoint": "http://node-3:50002",
+        "status": "unreachable",
+        "height": 0,
+        "latency_ms": 0,
+        "error": "connection refused",
+        "updated_at": "2025-11-07T12:34:56Z"
+      }
+    ],
+    "reindex_history": []
   }
-]
+}
 ```
+
+**Response Fields**:
+- **chain_id**: Unique chain identifier
+- **chain_name**: Human-readable chain name
+- **image**: Docker image used for indexer workers
+- **paused**: Whether indexing is paused
+- **deleted**: Whether chain is soft-deleted
+- **min_replicas/max_replicas**: Scaling configuration
+- **last_indexed**: Last successfully indexed block height
+- **head**: Current chain head from RPC
+- **queue/ops_queue/indexer_queue**: Temporal queue metrics
+- **missing_blocks_count**: Total missing blocks across all gaps
+- **gap_ranges_count**: Number of contiguous gap ranges
+- **is_live_sync**: True if within 2 blocks of chain head
+- **health/rpc_health/queue_health/deployment_health**: Health status for subsystems
+- **endpoints**: Per-endpoint health data (see below)
+- **reindex_history**: Recent reindex requests
+
+**Endpoint Health Object**:
+- **endpoint**: RPC endpoint URL
+- **status**: `healthy`, `unreachable`, or `degraded`
+- **height**: Last known block height from this endpoint
+- **latency_ms**: Response time in milliseconds
+- **error**: Error message if unhealthy (omitted if healthy)
+- **updated_at**: When this endpoint was last checked
 
 **Example**:
 ```bash
@@ -473,30 +640,46 @@ curl -H "Authorization: Bearer devtoken" \
   http://localhost:3000/api/chains/status
 ```
 
-## Bulk Get Chains Status
+## Bulk Update Chains Status
 
-**Route**: `POST /api/chains/status`
+**Route**: `PATCH /api/chains/status`
 
-**Description**: Get status for multiple chains with optional filters
+**Description**: Bulk update status fields for multiple chains in a single request
 
-**Authentication**: Required (Bearer token)
+**Authentication**: Required (Bearer token or session cookie)
 
-**Request**:
+**Request**: Array of chain objects with partial fields to update
 ```json
-{
-  "chain_ids": [1, 2],
-  "include_progress": true
-}
+[
+  {
+    "chain_id": 1,
+    "paused": 1,
+    "rpc_endpoints": ["http://node-1:50002", "http://node-2:50002"]
+  },
+  {
+    "chain_id": 2,
+    "min_replicas": 2,
+    "max_replicas": 4
+  }
+]
 ```
 
-**Response**: Array of detailed chain status objects
+**Response**: 204 No Content
+
+**Error Response** (400 Bad Request):
+```
+chain_id is required
+```
 
 **Example**:
 ```bash
-curl -X POST http://localhost:3000/api/chains/status \
+curl -X PATCH http://localhost:3000/api/chains/status \
   -H "Authorization: Bearer devtoken" \
   -H "Content-Type: application/json" \
-  -d '{"chain_ids": [1, 2]}'
+  -d '[
+    {"chain_id": 1, "paused": 1},
+    {"chain_id": 2, "paused": 0}
+  ]'
 ```
 
 <hr/>
@@ -646,6 +829,82 @@ curl -H "Authorization: Bearer devtoken" \
 ```bash
 curl -H "Authorization: Bearer devtoken" \
   http://localhost:3000/api/chains/1/entity/accounts/schema
+```
+
+<hr/>
+
+# WebSocket
+
+## Real-Time Events
+
+**Route**: `GET /api/ws`
+
+**Description**: WebSocket connection for real-time blockchain indexing events. Requires Redis to be enabled.
+
+**Authentication**: None required
+
+**Protocol**:
+
+Client messages:
+```json
+// Subscribe to specific chain
+{"action": "subscribe", "chainId": "1"}
+
+// Subscribe to ALL chains
+{"action": "subscribe", "chainId": "*"}
+
+// Unsubscribe from chain
+{"action": "unsubscribe", "chainId": "1"}
+```
+
+Server messages:
+```json
+// Block indexed event
+{
+  "type": "block.indexed",
+  "payload": {
+    "chain_id": 1,
+    "height": 12345,
+    "timestamp": "2025-11-07T12:34:56Z"
+  }
+}
+
+// Subscription confirmed
+{
+  "type": "subscribed",
+  "payload": {"chainId": "1"}
+}
+
+// Unsubscription confirmed
+{
+  "type": "unsubscribed",
+  "payload": {"chainId": "1"}
+}
+
+// Keep-alive ping
+{
+  "type": "ping",
+  "payload": {"timestamp": 1699356896}
+}
+
+// Error
+{
+  "type": "error",
+  "payload": {"message": "chainId is required"}
+}
+```
+
+**Error Response** (503 Service Unavailable):
+```
+Real-time events not available (Redis disabled)
+```
+
+**Example** (using wscat):
+```bash
+wscat -c ws://localhost:3000/api/ws
+> {"action": "subscribe", "chainId": "*"}
+< {"type": "subscribed", "payload": {"chainId": "*"}}
+< {"type": "block.indexed", "payload": {...}}
 ```
 
 <hr/>
@@ -911,15 +1170,26 @@ curl -H "Authorization: Bearer devtoken" \
 
 <hr/>
 
-# Authentication
+# Authentication Methods
 
-All API endpoints (except `/api/health`) require authentication using a Bearer token in the Authorization header:
+The Admin API supports two authentication methods:
 
+## 1. Bearer Token (Header)
+Include a Bearer token in the Authorization header:
 ```bash
 Authorization: Bearer <your-token>
 ```
 
 For development, the default token is `devtoken`. In production, tokens should be generated securely and rotated regularly.
+
+## 2. Session Cookie (Browser)
+Use the `/api/auth/login` endpoint to establish a session. The server sets a `cx_session` HTTP-only cookie that will be automatically sent with subsequent requests.
+
+**Endpoints not requiring authentication:**
+- `GET /api/health`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/ws`
 
 # Query Filtering
 

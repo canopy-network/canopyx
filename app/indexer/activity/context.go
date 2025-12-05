@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"sync"
 
@@ -66,6 +67,34 @@ func (ac *Context) rpcClient(ctx context.Context) (rpc.Client, error) {
 	}
 
 	return factory.NewClient(ch.RPCEndpoints), nil
+}
+
+// rpcClientForHeight returns an RPC client configured with endpoints that have height >= minHeight.
+// Endpoints are ordered by height (highest first) for optimal failover.
+// Returns an error if no endpoints have sufficient height.
+func (ac *Context) rpcClientForHeight(ctx context.Context, minHeight uint64) (rpc.Client, error) {
+	// Get endpoints with sufficient height from the database
+	endpoints, err := ac.AdminDB.GetEndpointsWithMinHeight(ctx, ac.ChainID, minHeight)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query endpoint health: %w", err)
+	}
+
+	if len(endpoints) == 0 {
+		return nil, fmt.Errorf("no endpoints available with height >= %d for chain %d", minHeight, ac.ChainID)
+	}
+
+	// Extract endpoint URLs, already ordered by height descending
+	urls := make([]string, len(endpoints))
+	for i, ep := range endpoints {
+		urls[i] = ep.Endpoint
+	}
+
+	factory := ac.RPCFactory
+	if factory == nil {
+		factory = rpc.NewHTTPFactory(ac.RPCOpts)
+	}
+
+	return factory.NewClient(urls), nil
 }
 
 // WorkerPool returns a shared worker pool for parallel RPC fetching and batch operations.

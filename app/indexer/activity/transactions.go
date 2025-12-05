@@ -13,11 +13,12 @@ import (
 )
 
 // IndexTransactions indexes transactions for a given block.
+// Uses height-aware endpoint selection to ensure the endpoint has the required block.
 // Returns output containing the number of indexed transactions, counts by type, and execution duration in milliseconds.
 func (ac *Context) IndexTransactions(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexTransactionsOutput, error) {
 	start := time.Now()
 
-	cli, err := ac.rpcClient(ctx)
+	cli, err := ac.rpcClientForHeight(ctx, in.Height)
 	if err != nil {
 		return types.ActivityIndexTransactionsOutput{}, err
 	}

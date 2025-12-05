@@ -579,6 +579,35 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 		return true
 	})
 
+	// 7) Fetch per-endpoint health data for each chain
+	for _, chn := range chains {
+		chainIDStr := strconv.FormatUint(chn.ChainID, 10)
+		endpoints, err := c.App.AdminDB.GetEndpointsForChain(ctx, chn.ChainID)
+		if err != nil {
+			c.App.Logger.Warn("failed to fetch endpoint health",
+				zap.String("chain_id", chainIDStr),
+				zap.Error(err))
+			continue
+		}
+
+		// Convert admin.RPCEndpoint to admintypes.EndpointHealth
+		endpointHealth := make([]admintypes.EndpointHealth, 0, len(endpoints))
+		for _, ep := range endpoints {
+			endpointHealth = append(endpointHealth, admintypes.EndpointHealth{
+				Endpoint:  ep.Endpoint,
+				Status:    ep.Status,
+				Height:    ep.Height,
+				LatencyMs: ep.LatencyMs,
+				Error:     ep.Error,
+				UpdatedAt: ep.UpdatedAt,
+			})
+		}
+
+		cs, _ := out.Load(chainIDStr)
+		cs.Endpoints = endpointHealth
+		out.Store(chainIDStr, cs)
+	}
+
 	// Convert xsync.Map to regular map for JSON encoding
 	result := make(map[string]admintypes.ChainStatus)
 	out.Range(func(key string, value admintypes.ChainStatus) bool {
@@ -1252,6 +1281,11 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 
 	// 6. Clear queue stats cache for this chain
 	c.App.QueueStatsCache.Delete(id)
+
+	// 7. Delete endpoint health records for this chain
+	if err := c.App.AdminDB.DeleteEndpointsForChain(ctx, chainIDUint); err != nil {
+		c.App.Logger.Warn("failed to delete endpoint health records", zap.String("chain_id", id), zap.Error(err))
+	}
 
 	c.App.Logger.Info("chain deleted successfully", zap.String("chain_id", id), zap.String("user", user))
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})

@@ -27,7 +27,8 @@ import (
 func (ac *Context) IndexSupply(ctx context.Context, input types.ActivityIndexAtHeight) (types.ActivityIndexSupplyOutput, error) {
 	start := time.Now()
 
-	cli, err := ac.rpcClient(ctx)
+	// Get RPC client with height-aware endpoint selection
+	cli, err := ac.rpcClientForHeight(ctx, input.Height)
 	if err != nil {
 		return types.ActivityIndexSupplyOutput{}, err
 	}
