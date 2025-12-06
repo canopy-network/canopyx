@@ -13,3 +13,16 @@ func GetChannel(chainID uint64, eventType string) string {
 func GetBlockIndexedChannel(chainID uint64) string {
 	return GetChannel(chainID, "block.indexed")
 }
+
+// Stream name constants for Redis Streams
+const (
+	// StreamBlockIndexed is the Redis stream for block.indexed events.
+	// Unlike Pub/Sub channels (per-chain), we use a single stream for all chains
+	// to simplify consumer group management. Chain ID is included in each entry.
+	StreamBlockIndexed = "canopy:stream:block.indexed"
+)
+
+// GetStream returns the Redis stream name for a given event type.
+func GetStream(eventType string) string {
+	return fmt.Sprintf("canopy:stream:%s", eventType)
+}
