@@ -6,8 +6,8 @@ cassandra:
   enabled: true
   config:
     cluster_size: 1
-    max_heap_size: 8G
-    heap_new_size: 1600M
+    max_heap_size: 4G          # Reduced to 4G to fit in 6GB container with off-heap buffers
+    heap_new_size: 800M        # 20% of max heap (reduced from 1600M)
     # Optimize for high write throughput
     concurrent_writes: 256      # Doubled from default 128
     concurrent_reads: 128       # Doubled from default 64
@@ -38,14 +38,14 @@ elasticsearch:
   # NOTE: The Elastic Elasticsearch chart doesn't support persistentVolumeClaimRetentionPolicy
   # PVCs must be manually deleted: kubectl delete pvc -l app.kubernetes.io/instance=temporal
   imageTag: 7.17.18
-  # Fix for cgroup v2 on newer kernels + resource constraints
-  esJavaOpts: "-Xmx1g -Xms1g"
+  # Fix for cgroup v2 on newer kernels + increased heap for production workload
+  esJavaOpts: "-Xmx1536m -Xms1536m"  # Increased to 1.5GB heap (fits in 3GB container)
   resources:
     requests:
-      memory: "2Gi"
+      memory: "3Gi"
       cpu: "1000m"
     limits:
-      memory: "2Gi"
+      memory: "3Gi"
       cpu: "2000m"
   sysctlInitContainer:
     enabled: true
