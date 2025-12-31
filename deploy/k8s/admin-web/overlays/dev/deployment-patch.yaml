@@ -1,0 +1,31 @@
+# Dev environment patches for canopyx-admin-web
+# Updates service endpoints for canopy-dev namespace
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopyx-admin-web
+spec:
+  template:
+    spec:
+      containers:
+        - name: admin-web
+          image: canopyx-admin-web:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Backend API endpoint - canopy-dev namespace
+            - name: ADMIN_API_BASE
+              value: "http://canopyx-admin.canopy-dev.svc.cluster.local:3000"
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3003"
+            - name: HOSTNAME
+              value: "0.0.0.0"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+

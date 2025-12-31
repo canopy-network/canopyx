@@ -1,0 +1,15 @@
+# Dev environment overlay for canopyx-controller
+# Deploys to canopy-dev namespace with dev-specific service endpoints
+
+namespace: canopy-dev
+
+resources:
+  - ../../base
+
+# Common labels
+commonLabels:
+  environment: dev
+
+patches:
+  - path: deployment-patch.yaml
+

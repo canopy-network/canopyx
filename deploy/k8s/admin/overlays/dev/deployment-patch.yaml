@@ -1,0 +1,46 @@
+# Dev environment patches for canopyx-admin
+# Updates service endpoints for canopy-dev namespace
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopyx-admin
+spec:
+  template:
+    spec:
+      containers:
+        - name: admin
+          image: canopyx-admin:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Logging - debug for dev
+            - { name: LOG_LEVEL, value: "debug" }
+            # ADMIN server
+            - { name: ADDR, value: ":3000" }
+            - { name: ADMIN_TOKEN, value: "devtoken" }
+            - { name: ADMIN_USER, value: "admin" }
+            - { name: ADMIN_PASSWORD, value: "admin" }
+            - { name: ADMIN_USERS, value: "" }
+            - { name: SESSION_SECRET, value: "change-me-please" }
+            # ClickHouse connection - canopy-dev namespace
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://default:@clickhouse-hdx-oss-v2-clickhouse.canopy-dev.svc.cluster.local:9000?sslmode=disable" }
+            - { name: CLICKHOUSE_CONN_STRATEGY, value: "in_order" }
+            - { name: CLICKHOUSE_CONN_MAX_LIFETIME, value: "1h" }
+            # Databases
+            - { name: INDEXER_DB, value: "canopyx_indexer" }
+            - { name: CROSSCHAIN_DB, value: "canopyx_cross_chain" }
+            # Temporal Connection - canopy-dev namespace
+            - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.canopy-dev.svc.cluster.local:7233" }
+            - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
+            # Redis Connection - canopy-dev namespace (OT Redis Operator)
+            - { name: REDIS_ENABLED, value: "true" }
+            - { name: REDIS_HOST, value: "redis.canopy-dev.svc.cluster.local" }
+            - { name: REDIS_PORT, value: "6379" }
+            - { name: REDIS_PASSWORD, value: "" }
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+

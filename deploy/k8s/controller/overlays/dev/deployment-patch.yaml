@@ -1,0 +1,57 @@
+# Dev environment patches for canopyx-controller
+# Updates service endpoints for canopy-dev namespace
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopyx-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: controller
+          image: canopyx-controller:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Logging - debug for dev
+            - { name: LOG_LEVEL, value: "debug" }
+            # Controller server
+            - { name: ADDR, value: ":3002" }
+            - { name: K8S_NAMESPACE, value: "canopy-dev" }
+            - { name: INDEXER_IMAGE, value: "canopyx-indexer" }
+            - { name: INDEXER_TAG, value: "latest" }
+            - { name: INDEXER_REPLICAS, value: "1" }
+            - { name: INDEXER_ENABLE_HPA, value: "true" }
+            - { name: INDEXER_HPA_MIN, value: "1" }
+            - { name: INDEXER_HPA_MAX, value: "1" }
+            - { name: INDEXER_HPA_CPU_TARGET, value: "80" }
+            - { name: INDEXER_CPU, value: "2000m" }
+            - { name: INDEXER_MEM, value: "2Gi" }
+            - { name: TEMPORAL_TASK_QUEUE_PREFIX, value: "index:" }
+            # Temporal Connection - canopy-dev namespace
+            - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.canopy-dev.svc.cluster.local:7233" }
+            - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
+            # ClickHouse connection - canopy-dev namespace
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://default:@clickhouse-hdx-oss-v2-clickhouse.canopy-dev.svc.cluster.local:9000?sslmode=disable" }
+            - { name: CLICKHOUSE_CONN_STRATEGY, value: "in_order" }
+            - { name: CLICKHOUSE_CONN_MAX_LIFETIME, value: "1h" }
+            # Parallelism configuration
+            - { name: LIVE_PARALLEL_BLOCKS, value: "5" }
+            - { name: HISTORICAL_PARALLEL_BLOCKS, value: "10" }
+            - { name: REINDEX_PARALLEL_BLOCKS, value: "10" }
+            # Databases
+            - { name: INDEXER_DB, value: "canopyx_indexer" }
+            # Redis - canopy-dev namespace (OT Redis Operator)
+            - { name: REDIS_HOST, value: "redis.canopy-dev.svc.cluster.local" }
+            - { name: REDIS_PORT, value: "6379" }
+            - { name: REDIS_PASSWORD, value: "" }
+            - { name: REDIS_DB, value: "0" }
+            # Provider
+            - { name: PROVIDER, value: "k8s" }
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
