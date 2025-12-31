@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -91,7 +92,7 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 		// Connection strategy (configurable via CLICKHOUSE_CONN_STRATEGY)
 		// Default: in_order for backward compatibility and indexer read-after-write consistency
 		ConnOpenStrategy: connStrategy,
-
+		TLS:              &tls.Config{},
 		Auth: clickhouse.Auth{
 			Database: "default", // Connect to default database first
 			Username: username,
@@ -105,8 +106,8 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 			Method: clickhouse.CompressionLZ4,
 		},
 		Settings: clickhouse.Settings{
-			"prefer_column_name_to_alias":    1,
-			"allow_experimental_object_type": 1,
+			"prefer_column_name_to_alias": 1,
+			//"allow_experimental_object_type": 1,
 			// Replication consistency: NOT NEEDED with ConnOpenInOrder
 			// ConnOpenInOrder ensures same-replica routing for read-after-write consistency
 			// Only use WithSequentialConsistency() for rare edge cases where you cannot
@@ -372,12 +373,14 @@ func (c *Client) Close() error {
 // OnCluster returns ON CLUSTER statement
 // This is required to force the replicas sync on some operations: https://clickhouse.com/docs/sql-reference/distributed-ddl
 func (c *Client) OnCluster() string {
-	return "ON CLUSTER canopyx"
+	//return "ON CLUSTER canopyx"
+	return ""
 }
 
 // DbEngine returns the database engine type as a string.
 func (c *Client) DbEngine() string {
-	return "ENGINE = Atomic"
+	//return "ENGINE = Atomic"
+	return ""
 }
 
 // CreateDbIfNotExists ensures that the specified database exists by creating it if it does not already exist.
