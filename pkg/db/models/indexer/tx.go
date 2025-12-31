@@ -23,7 +23,6 @@ var TransactionColumns = []ColumnDef{
 	{Name: "network_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "message_type", Type: "LowCardinality(String)", Codec: "ZSTD(1)"},
 	{Name: "signer", Type: "String", Codec: "ZSTD(1)"},
-	{Name: "counterparty", Type: "Nullable(String)", Codec: "ZSTD(1)"},
 	{Name: "amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
 	{Name: "fee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "memo", Type: "Nullable(String)", Codec: "ZSTD(1)"},
@@ -33,6 +32,7 @@ var TransactionColumns = []ColumnDef{
 	{Name: "sell_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
 	{Name: "buy_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
 	{Name: "liquidity_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "liquidity_percent", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
 	{Name: "order_id", Type: "Nullable(String)", Codec: "ZSTD(1)"},
 	{Name: "price", Type: "Nullable(Float64)", Codec: "ZSTD(3)"},
 	{Name: "param_key", Type: "Nullable(String)", Codec: "ZSTD(1)"},
@@ -65,12 +65,11 @@ type Transaction struct {
 	NetworkID     uint64    `ch:"network_id" json:"network_id"`         // Network identifier
 
 	// Common filterable fields
-	MessageType  string  `ch:"message_type" json:"message_type"`           // LowCardinality(String) for efficient filtering
-	Signer       string  `ch:"signer" json:"signer"`                       // Transaction signer address
-	Counterparty *string `ch:"counterparty" json:"counterparty,omitempty"` // Recipient/validator/pool address
-	Amount       *uint64 `ch:"amount" json:"amount,omitempty"`             // Amount transferred/staked/delegated (null for votes, etc.)
-	Fee          uint64  `ch:"fee" json:"fee"`                             // Transaction fee
-	Memo         *string `ch:"memo" json:"memo,omitempty"`                 // Transaction memo (poll/order operations)
+	MessageType string  `ch:"message_type" json:"message_type"` // LowCardinality(String) for efficient filtering
+	Signer      string  `ch:"signer" json:"signer"`             // Transaction signer address
+	Amount      *uint64 `ch:"amount" json:"amount,omitempty"`   // Amount transferred/staked/delegated (null for votes, etc.)
+	Fee         uint64  `ch:"fee" json:"fee"`                   // Transaction fee
+	Memo        *string `ch:"memo" json:"memo,omitempty"`       // Transaction memo (poll/order operations)
 
 	// ===== NEW EXTRACTED FIELDS (for efficient querying) =====
 
@@ -79,10 +78,11 @@ type Transaction struct {
 	Commission       *float64 `ch:"commission" json:"commission,omitempty"`
 
 	// DEX-related (dexLimitOrder, dexLiquidityDeposit, dexLiquidityWithdraw)
-	ChainID      *uint64 `ch:"chain_id" json:"chain_id,omitempty"`
-	SellAmount   *uint64 `ch:"sell_amount" json:"sell_amount,omitempty"`
-	BuyAmount    *uint64 `ch:"buy_amount" json:"buy_amount,omitempty"`
-	LiquidityAmt *uint64 `ch:"liquidity_amount" json:"liquidity_amount,omitempty"`
+	ChainID          *uint64 `ch:"chain_id" json:"chain_id,omitempty"`
+	SellAmount       *uint64 `ch:"sell_amount" json:"sell_amount,omitempty"`
+	BuyAmount        *uint64 `ch:"buy_amount" json:"buy_amount,omitempty"`
+	LiquidityAmt     *uint64 `ch:"liquidity_amount" json:"liquidity_amount,omitempty"`   // For dexLiquidityDeposit
+	LiquidityPercent *uint64 `ch:"liquidity_percent" json:"liquidity_percent,omitempty"` // For dexLiquidityWithdraw
 
 	// Order-related (createOrder, editOrder, deleteOrder)
 	OrderID *string  `ch:"order_id" json:"order_id,omitempty"`

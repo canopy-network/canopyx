@@ -10,7 +10,9 @@ import (
 	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -42,7 +44,7 @@ import (
 // uses height H (when the event occurred), but entity data comes from RPC(H-1).
 //
 // Performance:
-// - Parallel RPC fetching reduces latency by ~50% (2 concurrent requests)
+// - Parallel RPC fetching reduces latency by ~50% (4 concurrent requests)
 // - Events are queried from staging DB (already indexed by IndexEvents activity)
 // - Only changed entities are stored (snapshot-on-change pattern)
 func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexDexBatchOutput, error) {
@@ -60,19 +62,130 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		return types.ActivityIndexDexBatchOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
 	}
 
-	// Parallel RPC fetch: ALL DexBatches(H) and ALL NextDexBatches(H) in a single call each
-	// Using committee=0 returns all committees' batches
+	// Fetch batch data from RPC (H and H-1) in parallel
+	currentBatchesH1, nextBatchesH1, currentBatches, nextBatches, err := ac.fetchBatchData(ctx, cli, in.Height)
+	if err != nil {
+		return types.ActivityIndexDexBatchOutput{}, err
+	}
+
+	// Query and build event maps
+	swapEvents, depositEvents, withdrawalEvents, err := ac.buildEventMaps(ctx, chainDb, in.Height)
+	if err != nil {
+		return types.ActivityIndexDexBatchOutput{}, err
+	}
+
+	// Build H-1 comparison maps for change detection
+	h1Maps := ac.buildH1ComparisonMaps(currentBatchesH1, nextBatchesH1)
+
+	// Initialize collections and counters
+	orders := make([]*indexer.DexOrder, 0)
+	deposits := make([]*indexer.DexDeposit, 0)
+	withdrawals := make([]*indexer.DexWithdrawal, 0)
+	counters := &dexBatchCounters{}
+
+	// Process complete items (from H-1 batch with completion events)
+	ac.processCompleteItems(
+		currentBatchesH1, swapEvents, depositEvents, withdrawalEvents,
+		in.Height, in.BlockTime, &orders, &deposits, &withdrawals, counters,
+	)
+
+	// Process locked items (from current batch with change detection)
+	ac.processLockedItems(
+		currentBatches, h1Maps, in.Height, in.BlockTime,
+		&orders, &deposits, &withdrawals, counters,
+	)
+
+	// Process pending items (from next batch with change detection)
+	ac.processPendingItems(
+		nextBatches, h1Maps, in.Height, in.BlockTime,
+		&orders, &deposits, &withdrawals, counters,
+	)
+
+	// Insert to staging tables
+	if err := ac.insertDexBatchData(ctx, chainDb, orders, deposits, withdrawals); err != nil {
+		return types.ActivityIndexDexBatchOutput{}, err
+	}
+
+	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+
+	ac.Logger.Info("Indexed DEX batches (all committees)",
+		zap.Uint64("chainId", ac.ChainID),
+		zap.Uint64("height", in.Height),
+		zap.Int("committees", len(currentBatches)+len(nextBatches)),
+		zap.Int("orders", len(orders)),
+		zap.Int("deposits", len(deposits)),
+		zap.Int("withdrawals", len(withdrawals)),
+		zap.Float64("durationMs", durationMs))
+
+	return types.ActivityIndexDexBatchOutput{
+		NumOrders:              uint32(len(orders)),
+		NumOrdersFuture:        counters.NumOrdersFuture,
+		NumOrdersLocked:        counters.NumOrdersLocked,
+		NumOrdersComplete:      counters.NumOrdersComplete,
+		NumOrdersSuccess:       counters.NumOrdersSuccess,
+		NumOrdersFailed:        counters.NumOrdersFailed,
+		NumDeposits:            uint32(len(deposits)),
+		NumDepositsPending:     counters.NumDepositsPending,
+		NumDepositsLocked:      counters.NumDepositsLocked,
+		NumDepositsComplete:    counters.NumDepositsComplete,
+		NumWithdrawals:         uint32(len(withdrawals)),
+		NumWithdrawalsPending:  counters.NumWithdrawalsPending,
+		NumWithdrawalsLocked:   counters.NumWithdrawalsLocked,
+		NumWithdrawalsComplete: counters.NumWithdrawalsComplete,
+		DurationMs:             durationMs,
+	}, nil
+}
+
+// dexBatchCounters holds counters for different states and outcomes of DEX batch items
+type dexBatchCounters struct {
+	NumOrdersFuture             uint32
+	NumOrdersLocked             uint32
+	NumOrdersComplete           uint32
+	NumOrdersSuccess            uint32
+	NumOrdersFailed             uint32
+	NumDepositsPending          uint32
+	NumDepositsLocked           uint32
+	NumDepositsComplete         uint32
+	NumWithdrawalsPending       uint32
+	NumWithdrawalsLocked        uint32
+	NumWithdrawalsComplete      uint32
+	OrdersLockedChanged         int
+	OrdersLockedUnchanged       int
+	OrdersPendingChanged        int
+	OrdersPendingUnchanged      int
+	DepositsLockedChanged       int
+	DepositsLockedUnchanged     int
+	DepositsPendingChanged      int
+	DepositsPendingUnchanged    int
+	WithdrawalsLockedChanged    int
+	WithdrawalsLockedUnchanged  int
+	WithdrawalsPendingChanged   int
+	WithdrawalsPendingUnchanged int
+}
+
+// h1ComparisonMaps holds H-1 data organized by orderID for change detection
+type h1ComparisonMaps struct {
+	OrdersLocked       map[string]*lib.DexLimitOrder
+	OrdersPending      map[string]*lib.DexLimitOrder
+	DepositsLocked     map[string]*lib.DexLiquidityDeposit
+	DepositsPending    map[string]*lib.DexLiquidityDeposit
+	WithdrawalsLocked  map[string]*lib.DexLiquidityWithdraw
+	WithdrawalsPending map[string]*lib.DexLiquidityWithdraw
+}
+
+// fetchBatchData fetches all batch data from RPC in parallel (H and H-1)
+func (ac *Context) fetchBatchData(ctx context.Context, cli rpc.Client, height uint64) (
+	currentBatchesH1, nextBatchesH1, currentBatches, nextBatches []*lib.DexBatch, err error,
+) {
 	var (
-		currentBatchesH1 []*lib.DexBatch
-		currentBatches   []*lib.DexBatch
-		nextBatches      []*lib.DexBatch
-		currentH1Err     error
-		currentErr       error
-		nextErr          error
+		currentH1Err error
+		nextH1Err    error
+		currentErr   error
+		nextErr      error
 	)
 
 	// Get a subgroup from the shared worker pool for parallel RPC fetching
-	pool := ac.WorkerPool(3)
+	pool := ac.WorkerPool(4)
 	group := pool.NewGroupContext(ctx)
 	groupCtx := group.Context()
 
@@ -81,7 +194,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		if err := groupCtx.Err(); err != nil {
 			return
 		}
-		currentBatches, currentErr = cli.AllDexBatchesByHeight(groupCtx, in.Height)
+		currentBatches, currentErr = cli.AllDexBatchesByHeight(groupCtx, height)
 	})
 
 	// Worker 2: Fetch ALL next batches (future orders across all committees)
@@ -89,56 +202,78 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		if err := groupCtx.Err(); err != nil {
 			return
 		}
-		nextBatches, nextErr = cli.AllNextDexBatchesByHeight(groupCtx, in.Height)
+		nextBatches, nextErr = cli.AllNextDexBatchesByHeight(groupCtx, height)
 	})
 
-	// Worker 3: Fetch current batches at H-1 for event processing
+	// Worker 3: Fetch current batches at H-1 for event processing and change detection
 	group.Submit(func() {
 		if err := groupCtx.Err(); err != nil {
 			return
 		}
-		if in.Height <= 1 {
+		if height <= 1 {
 			currentBatchesH1 = make([]*lib.DexBatch, 0)
 			return
 		}
-		currentBatchesH1, currentH1Err = cli.AllDexBatchesByHeight(groupCtx, in.Height-1)
+		currentBatchesH1, currentH1Err = cli.AllDexBatchesByHeight(groupCtx, height-1)
+	})
+
+	// Worker 4: Fetch next batches at H-1 for change detection
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		if height <= 1 {
+			nextBatchesH1 = make([]*lib.DexBatch, 0)
+			return
+		}
+		nextBatchesH1, nextH1Err = cli.AllNextDexBatchesByHeight(groupCtx, height-1)
 	})
 
 	// Wait for all workers to complete
-	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+	if waitErr := group.Wait(); waitErr != nil && !errors.Is(waitErr, context.Canceled) && !errors.Is(waitErr, pond.ErrGroupStopped) {
 		ac.Logger.Warn("parallel RPC fetch encountered error",
 			zap.Uint64("chainId", ac.ChainID),
-			zap.Uint64("height", in.Height),
-			zap.Error(err),
+			zap.Uint64("height", height),
+			zap.Error(waitErr),
 		)
 	}
 
 	// Check for errors (empty batches are acceptable - means no batches at this height)
 	if currentErr != nil {
-		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("fetch all dex batches at height %d: %w", in.Height, currentErr)
+		return nil, nil, nil, nil, fmt.Errorf("fetch all dex batches at height %d: %w", height, currentErr)
 	}
 	if nextErr != nil {
-		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("fetch all next dex batches at height %d: %w", in.Height, nextErr)
+		return nil, nil, nil, nil, fmt.Errorf("fetch all next dex batches at height %d: %w", height, nextErr)
 	}
 	if currentH1Err != nil {
-		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("fetch all dex batches at height %d: %w", in.Height-1, currentH1Err)
+		return nil, nil, nil, nil, fmt.Errorf("fetch all dex batches at height %d: %w", height-1, currentH1Err)
+	}
+	if nextH1Err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("fetch all next dex batches at height %d: %w", height-1, nextH1Err)
 	}
 
+	return currentBatchesH1, nextBatchesH1, currentBatches, nextBatches, nil
+}
+
+// buildEventMaps queries events and builds lookup maps by orderID
+func (ac *Context) buildEventMaps(ctx context.Context, chainDb chainstore.Store, height uint64) (
+	swapEvents, depositEvents, withdrawalEvents map[string]*indexer.Event, err error,
+) {
 	// Query events from the staging table
 	events, err := chainDb.GetEventsByTypeAndHeight(
-		ctx, in.Height, true,
+		ctx, height, true,
 		string(lib.EventTypeDexSwap),
 		string(lib.EventTypeDexLiquidityDeposit),
 		string(lib.EventTypeDexLiquidityWithdraw),
 	)
 	if err != nil {
-		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("query events at height %d: %w", in.Height, err)
+		return nil, nil, nil, fmt.Errorf("query events at height %d: %w", height, err)
 	}
 
 	// Build event maps for O(1) lookups
-	swapEvents := make(map[string]*indexer.Event)
-	depositEvents := make(map[string]*indexer.Event)
-	withdrawalEvents := make(map[string]*indexer.Event)
+	swapEvents = make(map[string]*indexer.Event)
+	depositEvents = make(map[string]*indexer.Event)
+	withdrawalEvents = make(map[string]*indexer.Event)
 
 	for _, event := range events {
 		// Events have nullable OrderID field
@@ -157,47 +292,84 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		}
 	}
 
-	// Diagnostic: Log withdrawal event details for debugging OrderID matching
+	// Diagnostic logging for withdrawal events
 	if len(withdrawalEvents) > 0 {
 		ac.Logger.Info("Loaded DEX withdrawal events",
-			zap.Uint64("height", in.Height),
+			zap.Uint64("height", height),
 			zap.Int("count", len(withdrawalEvents)))
-		for orderID := range withdrawalEvents {
-			ac.Logger.Debug("Event OrderID",
-				zap.String("orderId", orderID),
-				zap.Int("length", len(orderID)))
+	}
+
+	return swapEvents, depositEvents, withdrawalEvents, nil
+}
+
+// buildH1ComparisonMaps builds H-1 comparison maps for change detection
+func (ac *Context) buildH1ComparisonMaps(currentBatchesH1, nextBatchesH1 []*lib.DexBatch) *h1ComparisonMaps {
+	maps := &h1ComparisonMaps{
+		OrdersLocked:       make(map[string]*lib.DexLimitOrder),
+		OrdersPending:      make(map[string]*lib.DexLimitOrder),
+		DepositsLocked:     make(map[string]*lib.DexLiquidityDeposit),
+		DepositsPending:    make(map[string]*lib.DexLiquidityDeposit),
+		WithdrawalsLocked:  make(map[string]*lib.DexLiquidityWithdraw),
+		WithdrawalsPending: make(map[string]*lib.DexLiquidityWithdraw),
+	}
+
+	// Build maps from currentBatchesH1 (locked items at H-1)
+	for _, batch := range currentBatchesH1 {
+		for _, order := range batch.Orders {
+			orderID := hex.EncodeToString(order.OrderId)
+			maps.OrdersLocked[orderID] = order
+		}
+		for _, deposit := range batch.Deposits {
+			orderID := hex.EncodeToString(deposit.OrderId)
+			maps.DepositsLocked[orderID] = deposit
+		}
+		for _, withdrawal := range batch.Withdrawals {
+			orderID := hex.EncodeToString(withdrawal.OrderId)
+			maps.WithdrawalsLocked[orderID] = withdrawal
 		}
 	}
 
-	// Process orders from ALL committees
-	orders := make([]*indexer.DexOrder, 0)
-	// Process deposits from ALL committees
-	deposits := make([]*indexer.DexDeposit, 0)
-	// Process withdrawals from ALL committees
-	withdrawals := make([]*indexer.DexWithdrawal, 0)
+	// Build maps from nextBatchesH1 (pending items at H-1)
+	for _, batch := range nextBatchesH1 {
+		for _, order := range batch.Orders {
+			orderID := hex.EncodeToString(order.OrderId)
+			maps.OrdersPending[orderID] = order
+		}
+		for _, deposit := range batch.Deposits {
+			orderID := hex.EncodeToString(deposit.OrderId)
+			maps.DepositsPending[orderID] = deposit
+		}
+		for _, withdrawal := range batch.Withdrawals {
+			orderID := hex.EncodeToString(withdrawal.OrderId)
+			maps.WithdrawalsPending[orderID] = withdrawal
+		}
+	}
 
-	// Initialize state counters for orders
-	var numOrdersFuture, numOrdersLocked, numOrdersComplete uint32
-	var numOrdersSuccess, numOrdersFailed uint32
-	// Initialize state counters for deposits
-	var numDepositsPending, numDepositsLocked, numDepositsComplete uint32
-	// Initialize state counters for withdrawals
-	var numWithdrawalsPending, numWithdrawalsLocked, numWithdrawalsComplete uint32
+	return maps
+}
 
-	// Process Dex event related against H-1 orders, deposits and withdrawals
+// processCompleteItems processes items from H-1 batch that have completion events
+func (ac *Context) processCompleteItems(
+	currentBatchesH1 []*lib.DexBatch,
+	swapEvents, depositEvents, withdrawalEvents map[string]*indexer.Event,
+	height uint64, blockTime time.Time,
+	orders *[]*indexer.DexOrder,
+	deposits *[]*indexer.DexDeposit,
+	withdrawals *[]*indexer.DexWithdrawal,
+	counters *dexBatchCounters,
+) {
 	for _, currentBatchH1 := range currentBatchesH1 {
+		// Process complete orders
 		for _, rpcOrder := range currentBatchH1.Orders {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcOrder.OrderId)
 			address := hex.EncodeToString(rpcOrder.Address)
 
-			// Check if this order has a completion event
 			if swapEvent, exists := swapEvents[orderID]; exists {
 				order := &indexer.DexOrder{
 					OrderID:         orderID,
-					Height:          in.Height, // complete at the height of the event
-					HeightTime:      in.BlockTime,
-					Committee:       currentBatchH1.Committee, // Use committee from batch
+					Height:          height,
+					HeightTime:      blockTime,
+					Committee:       currentBatchH1.Committee,
 					Address:         address,
 					AmountForSale:   rpcOrder.AmountForSale,
 					RequestedAmount: rpcOrder.RequestedAmount,
@@ -205,14 +377,12 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 					LockedHeight:    currentBatchH1.LockedHeight,
 				}
 
-				// Safely dereference pointer fields from event
 				if swapEvent.Success != nil {
 					order.Success = *swapEvent.Success
-					// Count success/failed orders
 					if order.Success {
-						numOrdersSuccess++
+						counters.NumOrdersSuccess++
 					} else {
-						numOrdersFailed++
+						counters.NumOrdersFailed++
 					}
 				}
 				if swapEvent.SoldAmount != nil {
@@ -225,29 +395,27 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 					order.LocalOrigin = *swapEvent.LocalOrigin
 				}
 
-				numOrdersComplete++
-				orders = append(orders, order)
+				counters.NumOrdersComplete++
+				*orders = append(*orders, order)
 			}
 		}
 
+		// Process complete deposits
 		for _, rpcDeposit := range currentBatchH1.Deposits {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcDeposit.OrderId)
 			address := hex.EncodeToString(rpcDeposit.Address)
 
-			// Check if this deposit has a completion event
 			if depositEvent, exists := depositEvents[orderID]; exists {
 				deposit := &indexer.DexDeposit{
 					OrderID:    orderID,
-					Height:     in.Height,
-					HeightTime: in.BlockTime,
-					Committee:  currentBatchH1.Committee, // Use committee from batch
+					Height:     height,
+					HeightTime: blockTime,
+					Committee:  currentBatchH1.Committee,
 					Address:    address,
 					Amount:     rpcDeposit.Amount,
 					State:      indexer.DexCompleteState,
 				}
 
-				// Safely dereference pointer fields from event
 				if depositEvent.LocalOrigin != nil {
 					deposit.LocalOrigin = *depositEvent.LocalOrigin
 				}
@@ -255,37 +423,34 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 					deposit.PointsReceived = *depositEvent.PointsReceived
 				}
 
-				numDepositsComplete++
-				deposits = append(deposits, deposit)
+				counters.NumDepositsComplete++
+				*deposits = append(*deposits, deposit)
 			}
 		}
 
+		// Process complete withdrawals
 		for _, rpcWithdrawal := range currentBatchH1.Withdrawals {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcWithdrawal.OrderId)
 			address := hex.EncodeToString(rpcWithdrawal.Address)
 
-			// Diagnostic: Log withdrawal matching attempt
 			ac.Logger.Debug("Checking H-1 batch withdrawal for completion",
 				zap.String("orderID_batch", orderID),
 				zap.Int("length", len(orderID)),
 				zap.Int("available_events", len(withdrawalEvents)))
 
-			// Check if this withdrawal has a completion event
 			if withdrawalEvent, exists := withdrawalEvents[orderID]; exists {
 				ac.Logger.Info("MATCHED: Withdrawal completed",
 					zap.String("orderID", orderID))
 				withdrawal := &indexer.DexWithdrawal{
 					OrderID:    orderID,
-					Height:     in.Height,
-					HeightTime: in.BlockTime,
-					Committee:  currentBatchH1.Committee, // Use committee from batch
+					Height:     height,
+					HeightTime: blockTime,
+					Committee:  currentBatchH1.Committee,
 					Address:    address,
 					Percent:    rpcWithdrawal.Percent,
 					State:      indexer.DexCompleteState,
 				}
 
-				// Safely dereference pointer fields from event
 				if withdrawalEvent.LocalAmount != nil {
 					withdrawal.LocalAmount = *withdrawalEvent.LocalAmount
 				}
@@ -296,183 +461,276 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 					withdrawal.PointsBurned = *withdrawalEvent.PointsBurned
 				}
 
-				numWithdrawalsComplete++
-				withdrawals = append(withdrawals, withdrawal)
+				counters.NumWithdrawalsComplete++
+				*withdrawals = append(*withdrawals, withdrawal)
 			} else {
-				// Diagnostic: Log when withdrawal event not found
 				ac.Logger.Warn("NO MATCH: Withdrawal event not found",
 					zap.String("orderID_batch", orderID),
 					zap.Int("available_events", len(withdrawalEvents)))
 			}
 		}
 	}
+}
 
-	// Process current batch orders, deposits and withdrawals
+// processLockedItems processes locked items from current batch with change detection
+func (ac *Context) processLockedItems(
+	currentBatches []*lib.DexBatch,
+	h1Maps *h1ComparisonMaps,
+	height uint64, blockTime time.Time,
+	orders *[]*indexer.DexOrder,
+	deposits *[]*indexer.DexDeposit,
+	withdrawals *[]*indexer.DexWithdrawal,
+	counters *dexBatchCounters,
+) {
 	for _, currentBatch := range currentBatches {
+		// Process locked orders
 		for _, rpcOrder := range currentBatch.Orders {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcOrder.OrderId)
 			address := hex.EncodeToString(rpcOrder.Address)
 
-			order := &indexer.DexOrder{
-				OrderID:         orderID,
-				Height:          in.Height,
-				HeightTime:      in.BlockTime,
-				Committee:       currentBatch.Committee, // Use committee from batch
-				Address:         address,
-				AmountForSale:   rpcOrder.AmountForSale,
-				RequestedAmount: rpcOrder.RequestedAmount,
-				State:           indexer.DexLockedState,
-				LockedHeight:    currentBatch.LockedHeight,
+			orderChanged := true
+			if orderH1, existsLocked := h1Maps.OrdersLocked[orderID]; existsLocked {
+				if orderH1.AmountForSale == rpcOrder.AmountForSale &&
+					orderH1.RequestedAmount == rpcOrder.RequestedAmount &&
+					hex.EncodeToString(orderH1.Address) == address {
+					orderChanged = false
+					counters.OrdersLockedUnchanged++
+				}
+			} else if _, existsPending := h1Maps.OrdersPending[orderID]; existsPending {
+				orderChanged = true // State transition pending → locked
 			}
 
-			numOrdersLocked++
-			orders = append(orders, order)
+			if orderChanged {
+				order := &indexer.DexOrder{
+					OrderID:         orderID,
+					Height:          height,
+					HeightTime:      blockTime,
+					Committee:       currentBatch.Committee,
+					Address:         address,
+					AmountForSale:   rpcOrder.AmountForSale,
+					RequestedAmount: rpcOrder.RequestedAmount,
+					State:           indexer.DexLockedState,
+					LockedHeight:    currentBatch.LockedHeight,
+				}
+				counters.NumOrdersLocked++
+				counters.OrdersLockedChanged++
+				*orders = append(*orders, order)
+			}
 		}
 
+		// Process locked deposits
 		for _, rpcDeposit := range currentBatch.Deposits {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcDeposit.OrderId)
 			address := hex.EncodeToString(rpcDeposit.Address)
 
-			deposit := &indexer.DexDeposit{
-				OrderID:    orderID,
-				Height:     in.Height,
-				HeightTime: in.BlockTime,
-				Committee:  currentBatch.Committee, // Use committee from batch
-				Address:    address,
-				Amount:     rpcDeposit.Amount,
-				State:      indexer.DexLockedState,
+			depositChanged := true
+			if depositH1, existsLocked := h1Maps.DepositsLocked[orderID]; existsLocked {
+				if depositH1.Amount == rpcDeposit.Amount &&
+					hex.EncodeToString(depositH1.Address) == address {
+					depositChanged = false
+					counters.DepositsLockedUnchanged++
+				}
+			} else if _, existsPending := h1Maps.DepositsPending[orderID]; existsPending {
+				depositChanged = true // State transition pending → locked
 			}
 
-			numDepositsLocked++
-			deposits = append(deposits, deposit)
+			if depositChanged {
+				deposit := &indexer.DexDeposit{
+					OrderID:    orderID,
+					Height:     height,
+					HeightTime: blockTime,
+					Committee:  currentBatch.Committee,
+					Address:    address,
+					Amount:     rpcDeposit.Amount,
+					State:      indexer.DexLockedState,
+				}
+				counters.NumDepositsLocked++
+				counters.DepositsLockedChanged++
+				*deposits = append(*deposits, deposit)
+			}
 		}
 
+		// Process locked withdrawals
 		for _, rpcWithdrawal := range currentBatch.Withdrawals {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcWithdrawal.OrderId)
 			address := hex.EncodeToString(rpcWithdrawal.Address)
 
-			withdrawal := &indexer.DexWithdrawal{
-				OrderID:    orderID,
-				Height:     in.Height,
-				HeightTime: in.BlockTime,
-				Committee:  currentBatch.Committee, // Use committee from batch
-				Address:    address,
-				Percent:    rpcWithdrawal.Percent,
-				State:      indexer.DexLockedState,
+			withdrawalChanged := true
+			if withdrawalH1, existsLocked := h1Maps.WithdrawalsLocked[orderID]; existsLocked {
+				if withdrawalH1.Percent == rpcWithdrawal.Percent &&
+					hex.EncodeToString(withdrawalH1.Address) == address {
+					withdrawalChanged = false
+					counters.WithdrawalsLockedUnchanged++
+				}
+			} else if _, existsPending := h1Maps.WithdrawalsPending[orderID]; existsPending {
+				withdrawalChanged = true // State transition pending → locked
 			}
 
-			numWithdrawalsLocked++
-			withdrawals = append(withdrawals, withdrawal)
+			if withdrawalChanged {
+				withdrawal := &indexer.DexWithdrawal{
+					OrderID:    orderID,
+					Height:     height,
+					HeightTime: blockTime,
+					Committee:  currentBatch.Committee,
+					Address:    address,
+					Percent:    rpcWithdrawal.Percent,
+					State:      indexer.DexLockedState,
+				}
+				counters.NumWithdrawalsLocked++
+				counters.WithdrawalsLockedChanged++
+				*withdrawals = append(*withdrawals, withdrawal)
+			}
 		}
 	}
+}
 
-	// Process next batch orders (state=future)
+// processPendingItems processes pending items from next batch with change detection
+func (ac *Context) processPendingItems(
+	nextBatches []*lib.DexBatch,
+	h1Maps *h1ComparisonMaps,
+	height uint64, blockTime time.Time,
+	orders *[]*indexer.DexOrder,
+	deposits *[]*indexer.DexDeposit,
+	withdrawals *[]*indexer.DexWithdrawal,
+	counters *dexBatchCounters,
+) {
 	for _, nextBatch := range nextBatches {
+		// Process pending orders
 		for _, rpcOrder := range nextBatch.Orders {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcOrder.OrderId)
 			address := hex.EncodeToString(rpcOrder.Address)
 
-			order := &indexer.DexOrder{
-				OrderID:         orderID,
-				Height:          in.Height,
-				HeightTime:      in.BlockTime,
-				Committee:       nextBatch.Committee, // Use committee from batch
-				Address:         address,
-				AmountForSale:   rpcOrder.AmountForSale,
-				RequestedAmount: rpcOrder.RequestedAmount,
-				State:           indexer.DexPendingState,
-				LockedHeight:    0, // Not locked yet
+			orderChanged := true
+			if orderH1, exists := h1Maps.OrdersPending[orderID]; exists {
+				if orderH1.AmountForSale == rpcOrder.AmountForSale &&
+					orderH1.RequestedAmount == rpcOrder.RequestedAmount &&
+					hex.EncodeToString(orderH1.Address) == address {
+					orderChanged = false
+					counters.OrdersPendingUnchanged++
+				}
 			}
-			numOrdersFuture++
-			orders = append(orders, order)
+
+			if orderChanged {
+				order := &indexer.DexOrder{
+					OrderID:         orderID,
+					Height:          height,
+					HeightTime:      blockTime,
+					Committee:       nextBatch.Committee,
+					Address:         address,
+					AmountForSale:   rpcOrder.AmountForSale,
+					RequestedAmount: rpcOrder.RequestedAmount,
+					State:           indexer.DexPendingState,
+					LockedHeight:    0,
+				}
+				counters.NumOrdersFuture++
+				counters.OrdersPendingChanged++
+				*orders = append(*orders, order)
+			}
 		}
 
+		// Process pending deposits
 		for _, rpcDeposit := range nextBatch.Deposits {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcDeposit.OrderId)
 			address := hex.EncodeToString(rpcDeposit.Address)
 
-			deposit := &indexer.DexDeposit{
-				OrderID:    orderID,
-				Height:     in.Height,
-				HeightTime: in.BlockTime,
-				Committee:  nextBatch.Committee, // Use committee from batch
-				Address:    address,
-				Amount:     rpcDeposit.Amount,
-				State:      indexer.DexPendingState,
+			depositChanged := true
+			if depositH1, exists := h1Maps.DepositsPending[orderID]; exists {
+				if depositH1.Amount == rpcDeposit.Amount &&
+					hex.EncodeToString(depositH1.Address) == address {
+					depositChanged = false
+					counters.DepositsPendingUnchanged++
+				}
 			}
-			numDepositsPending++
-			deposits = append(deposits, deposit)
+
+			if depositChanged {
+				deposit := &indexer.DexDeposit{
+					OrderID:    orderID,
+					Height:     height,
+					HeightTime: blockTime,
+					Committee:  nextBatch.Committee,
+					Address:    address,
+					Amount:     rpcDeposit.Amount,
+					State:      indexer.DexPendingState,
+				}
+				counters.NumDepositsPending++
+				counters.DepositsPendingChanged++
+				*deposits = append(*deposits, deposit)
+			}
 		}
 
+		// Process pending withdrawals
 		for _, rpcWithdrawal := range nextBatch.Withdrawals {
-			// Convert protobuf []byte fields to hex strings for database storage
 			orderID := hex.EncodeToString(rpcWithdrawal.OrderId)
 			address := hex.EncodeToString(rpcWithdrawal.Address)
 
-			withdrawal := &indexer.DexWithdrawal{
-				OrderID:    orderID,
-				Height:     in.Height,
-				HeightTime: in.BlockTime,
-				Committee:  nextBatch.Committee, // Use committee from batch
-				Address:    address,
-				Percent:    rpcWithdrawal.Percent,
-				State:      indexer.DexPendingState,
+			withdrawalChanged := true
+			if withdrawalH1, exists := h1Maps.WithdrawalsPending[orderID]; exists {
+				if withdrawalH1.Percent == rpcWithdrawal.Percent &&
+					hex.EncodeToString(withdrawalH1.Address) == address {
+					withdrawalChanged = false
+					counters.WithdrawalsPendingUnchanged++
+				}
 			}
-			numWithdrawalsPending++
-			withdrawals = append(withdrawals, withdrawal)
+
+			if withdrawalChanged {
+				withdrawal := &indexer.DexWithdrawal{
+					OrderID:    orderID,
+					Height:     height,
+					HeightTime: blockTime,
+					Committee:  nextBatch.Committee,
+					Address:    address,
+					Percent:    rpcWithdrawal.Percent,
+					State:      indexer.DexPendingState,
+				}
+				counters.NumWithdrawalsPending++
+				counters.WithdrawalsPendingChanged++
+				*withdrawals = append(*withdrawals, withdrawal)
+			}
 		}
 	}
 
-	// Insert to staging tables
+	// Log change detection summary
+	ac.Logger.Debug("DEX batch change detection complete",
+		zap.Uint64("height", height),
+		zap.Int("orders_locked_changed", counters.OrdersLockedChanged),
+		zap.Int("orders_locked_unchanged", counters.OrdersLockedUnchanged),
+		zap.Int("orders_pending_changed", counters.OrdersPendingChanged),
+		zap.Int("orders_pending_unchanged", counters.OrdersPendingUnchanged),
+		zap.Int("deposits_locked_changed", counters.DepositsLockedChanged),
+		zap.Int("deposits_locked_unchanged", counters.DepositsLockedUnchanged),
+		zap.Int("deposits_pending_changed", counters.DepositsPendingChanged),
+		zap.Int("deposits_pending_unchanged", counters.DepositsPendingUnchanged),
+		zap.Int("withdrawals_locked_changed", counters.WithdrawalsLockedChanged),
+		zap.Int("withdrawals_locked_unchanged", counters.WithdrawalsLockedUnchanged),
+		zap.Int("withdrawals_pending_changed", counters.WithdrawalsPendingChanged),
+		zap.Int("withdrawals_pending_unchanged", counters.WithdrawalsPendingUnchanged))
+}
+
+// insertDexBatchData inserts all DEX batch data to staging tables
+func (ac *Context) insertDexBatchData(
+	ctx context.Context,
+	chainDb chainstore.Store,
+	orders []*indexer.DexOrder,
+	deposits []*indexer.DexDeposit,
+	withdrawals []*indexer.DexWithdrawal,
+) error {
 	if len(orders) > 0 {
 		if err := chainDb.InsertDexOrdersStaging(ctx, orders); err != nil {
-			return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("insert dex orders staging: %w", err)
+			return fmt.Errorf("insert dex orders staging: %w", err)
 		}
 	}
 
 	if len(deposits) > 0 {
 		if err := chainDb.InsertDexDepositsStaging(ctx, deposits); err != nil {
-			return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("insert dex deposits staging: %w", err)
+			return fmt.Errorf("insert dex deposits staging: %w", err)
 		}
 	}
 
 	if len(withdrawals) > 0 {
 		if err := chainDb.InsertDexWithdrawalsStaging(ctx, withdrawals); err != nil {
-			return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("insert dex withdrawals staging: %w", err)
+			return fmt.Errorf("insert dex withdrawals staging: %w", err)
 		}
 	}
 
-	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-
-	ac.Logger.Info("Indexed DEX batches (all committees)",
-		zap.Uint64("chainId", ac.ChainID),
-		zap.Uint64("height", in.Height),
-		zap.Int("committees", len(currentBatches)+len(nextBatches)),
-		zap.Int("orders", len(orders)),
-		zap.Int("deposits", len(deposits)),
-		zap.Int("withdrawals", len(withdrawals)),
-		zap.Float64("durationMs", durationMs))
-
-	return types.ActivityIndexDexBatchOutput{
-		NumOrders:              uint32(len(orders)),
-		NumOrdersFuture:        numOrdersFuture,
-		NumOrdersLocked:        numOrdersLocked,
-		NumOrdersComplete:      numOrdersComplete,
-		NumOrdersSuccess:       numOrdersSuccess,
-		NumOrdersFailed:        numOrdersFailed,
-		NumDeposits:            uint32(len(deposits)),
-		NumDepositsPending:     numDepositsPending,
-		NumDepositsLocked:      numDepositsLocked,
-		NumDepositsComplete:    numDepositsComplete,
-		NumWithdrawals:         uint32(len(withdrawals)),
-		NumWithdrawalsPending:  numWithdrawalsPending,
-		NumWithdrawalsLocked:   numWithdrawalsLocked,
-		NumWithdrawalsComplete: numWithdrawalsComplete,
-		DurationMs:             durationMs,
-	}, nil
+	return nil
 }

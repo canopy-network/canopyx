@@ -48,14 +48,14 @@ func (db *DB) QueryLatestValidators(ctx context.Context, opts QueryOptions) ([]V
 	return *dest, metadata, nil
 }
 
-// QueryLatestValidatorSigningInfo returns the latest validator signing info across chains.
-func (db *DB) QueryLatestValidatorSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorSigningInfoCrossChain, *QueryMetadata, error) {
+// QueryLatestValidatorNonSigningInfo returns the latest validator non-signing info across chains.
+func (db *DB) QueryLatestValidatorNonSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorNonSigningInfoCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
-		TableName:  indexer.ValidatorSigningInfoProductionTableName,
+		TableName:  indexer.ValidatorNonSigningInfoProductionTableName,
 		PrimaryKey: []string{"chain_id", "address", "height"},
 	}
 
-	dest := make([]ValidatorSigningInfoCrossChain, 0)
+	dest := make([]ValidatorNonSigningInfoCrossChain, 0)
 	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
@@ -407,7 +407,7 @@ func (db *DB) getEntityConfigByName(entityName string) (*TableConfig, error) {
 	entityToTableName := map[string]string{
 		"accounts":                      indexer.AccountsProductionTableName,
 		"validators":                    indexer.ValidatorsProductionTableName,
-		"validator-signing-info":        indexer.ValidatorSigningInfoProductionTableName,
+		"validator-non-signing-info":    indexer.ValidatorNonSigningInfoProductionTableName,
 		"validator-double-signing-info": indexer.ValidatorDoubleSigningInfoProductionTableName,
 		"pools":                         indexer.PoolsProductionTableName,
 		"pool-points":                   indexer.PoolPointsByHolderProductionTableName,
@@ -444,8 +444,8 @@ func createCrossChainEntitySlice(tableName string) interface{} {
 		return &[]AccountCrossChain{}
 	case indexer.ValidatorsProductionTableName:
 		return &[]ValidatorCrossChain{}
-	case indexer.ValidatorSigningInfoProductionTableName:
-		return &[]ValidatorSigningInfoCrossChain{}
+	case indexer.ValidatorNonSigningInfoProductionTableName:
+		return &[]ValidatorNonSigningInfoCrossChain{}
 	case indexer.ValidatorDoubleSigningInfoProductionTableName:
 		return &[]ValidatorDoubleSigningInfoCrossChain{}
 	case indexer.PoolsProductionTableName:

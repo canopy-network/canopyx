@@ -6,6 +6,7 @@ import (
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/db/transform"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -47,11 +48,42 @@ func (ac *Context) IndexProposals(ctx context.Context) (types.ActivityIndexPropo
 	snapshotTime := time.Now()
 	snapshots := make([]*indexer.ProposalSnapshot, 0, len(rpcProposals))
 	for proposalHash, proposalData := range rpcProposals {
+		// Extract proposal fields from JSON for efficient querying
+		proposalFields, err := transform.ExtractProposalFields(proposalData.Proposal)
+		if err != nil {
+			ac.Logger.Warn("failed to extract proposal fields",
+				zap.String("proposalHash", proposalHash),
+				zap.Error(err))
+			// Continue with partial data - store the raw JSON but skip exploded fields
+			snapshot := &indexer.ProposalSnapshot{
+				ProposalHash: proposalHash,
+				Proposal:     string(proposalData.Proposal),
+				Approve:      proposalData.Approve,
+				SnapshotTime: snapshotTime,
+				// Exploded fields will be empty/zero values
+				ProposalType: "",
+				Signer:       "",
+				StartHeight:  0,
+				EndHeight:    0,
+			}
+			snapshots = append(snapshots, snapshot)
+			continue
+		}
+
 		snapshot := &indexer.ProposalSnapshot{
-			ProposalHash: proposalHash,
-			Proposal:     string(proposalData.Proposal), // Convert json.RawMessage to string
-			Approve:      proposalData.Approve,
-			SnapshotTime: snapshotTime,
+			ProposalHash:       proposalHash,
+			Proposal:           string(proposalData.Proposal), // Convert json.RawMessage to string
+			Approve:            proposalData.Approve,
+			SnapshotTime:       snapshotTime,
+			ProposalType:       proposalFields.ProposalType,
+			Signer:             proposalFields.Signer,
+			StartHeight:        proposalFields.StartHeight,
+			EndHeight:          proposalFields.EndHeight,
+			ParameterSpace:     proposalFields.ParameterSpace,
+			ParameterKey:       proposalFields.ParameterKey,
+			ParameterValue:     proposalFields.ParameterValue,
+			DaoTransferAddress: proposalFields.DaoTransferAddress,
+			DaoTransferAmount:  proposalFields.DaoTransferAmount,
 		}
 		snapshots = append(snapshots, snapshot)
 	}

@@ -56,6 +56,6 @@ type PoolPointsByHolder struct {
 	Points uint64 `ch:"points" json:"points"` // Number of pool points owned by this holder
 
 	// Derived values for convenience (calculated from pool state at height H)
-	LiquidityPoolPoints uint64 `ch:"liquidity_pool_points" json:"liquidity_pool_points"` // Holder's share of liquidity pool: pool.Amount * holder.Points / pool.TotalPoints
+	LiquidityPoolPoints uint64 `ch:"liquidity_pool_points" json:"liquidity_pool_points"` // Pool's total points (TotalPoolPoints from the pool)
 	LiquidityPoolID     uint64 `ch:"liquidity_pool_id" json:"liquidity_pool_id"`         // Calculated liquidity pool ID (committee + LiquidityPoolAddend)
 }

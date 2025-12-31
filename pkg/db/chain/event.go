@@ -47,7 +47,7 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 	}
 
 	query := fmt.Sprintf(`INSERT INTO "%s"."events_staging" (
-		height, chain_id, address, reference, event_type, block_height, block_hash,
+		height, chain_id, address, reference, event_type, block_height,
 		amount, sold_amount, bought_amount, local_amount, remote_amount,
 		success, local_origin, order_id, points_received, points_burned,
 		data, seller_receive_address, buyer_send_address, sellers_send_address,
@@ -69,7 +69,6 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 			event.Reference,
 			event.EventType,
 			event.BlockHeight,
-			event.BlockHash,
 			event.Amount,
 			event.SoldAmount,
 			event.BoughtAmount,
@@ -131,7 +130,7 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, stagi
 
 	query := fmt.Sprintf(`
 		SELECT
-			height, chain_id, address, reference, event_type, block_height, block_hash,
+			height, chain_id, address, reference, event_type, block_height,
 			amount, sold_amount, bought_amount, local_amount, remote_amount,
 			success, local_origin, order_id, points_received, points_burned,
 			data, seller_receive_address, buyer_send_address, sellers_send_address,
@@ -164,7 +163,6 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, stagi
 			&event.Reference,
 			&event.EventType,
 			&event.BlockHeight,
-			&event.BlockHash,
 			&event.Amount,
 			&event.SoldAmount,
 			&event.BoughtAmount,

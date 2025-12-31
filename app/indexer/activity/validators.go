@@ -309,20 +309,22 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		}
 	}
 
-	// Build signing info for validators with non-signer data
-	changedSigningInfos := make([]*indexer.ValidatorSigningInfo, 0)
-	var numSigningInfosNew uint32
+	// Build non-signing info for validators with non-signer data
+	// Bidirectional iteration to track resets: current vs prev AND prev vs current
+	changedNonSigningInfos := make([]*indexer.ValidatorNonSigningInfo, 0)
+	var numNonSigningInfosNew uint32
 
+	// Phase 1: Iterate current non-signers (new entries and updates)
 	for _, curr := range currentNonSigners {
 		addrHex := hex.EncodeToString(curr.Address)
 		prev := prevNonSignerMap[addrHex]
 
-		// Check if signing info changed
+		// Check if non-signing info changed
 		changed := false
 		if prev == nil {
 			// New non-signer entry
 			changed = true
-			numSigningInfosNew++
+			numNonSigningInfosNew++
 		} else {
 			// Compare fields - only Counter exists in RpcNonSigner
 			if curr.Counter != prev.Counter {
@@ -330,29 +332,34 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 			}
 		}
 
-		// Only create snapshot if signing info changed
+		// Only create snapshot if non-signing info changed
 		if changed {
-			// Get validator params to calculate the missed blocks window
-			// The window start is computed as: CurrentHeight - NonSignWindow
-			valParams, err := cli.ValParamsByHeight(ctx, input.Height)
-			var missedBlocksWindow uint64
-			if err == nil && valParams != nil {
-				// Calculate window start: current height minus window size
-				if input.Height > valParams.NonSignWindow {
-					missedBlocksWindow = input.Height - valParams.NonSignWindow
-				}
+			nonSigningInfo := &indexer.ValidatorNonSigningInfo{
+				Address:           addrHex,
+				MissedBlocksCount: curr.Counter, // Maps from RpcNonSigner.Counter
+				LastSignedHeight:  input.Height, // Current height as last signed
+				Height:            input.Height,
+				HeightTime:        input.BlockTime,
 			}
+			changedNonSigningInfos = append(changedNonSigningInfos, nonSigningInfo)
+		}
+	}
 
-			signingInfo := &indexer.ValidatorSigningInfo{
-				Address:            addrHex,
-				MissedBlocksCount:  curr.Counter, // Maps from RpcNonSigner.Counter
-				MissedBlocksWindow: missedBlocksWindow,
-				LastSignedHeight:   input.Height, // Current height as last signed
-				StartHeight:        missedBlocksWindow,
-				Height:             input.Height,
-				HeightTime:         input.BlockTime,
+	// Phase 2: Iterate previous non-signers to detect resets/reboots
+	// If a non-signer existed in previous but not in current, create a "reset" record with zeros
+	for _, prev := range previousNonSigners {
+		addrHex := hex.EncodeToString(prev.Address)
+		if _, exists := currentNonSignerMap[addrHex]; !exists {
+			// Validator was a non-signer previously but not anymore (counter was reset)
+			// Create a reset record with all zeros to track this state change
+			resetInfo := &indexer.ValidatorNonSigningInfo{
+				Address:           addrHex,
+				MissedBlocksCount: 0, // Reset to zero
+				LastSignedHeight:  input.Height,
+				Height:            input.Height,
+				HeightTime:        input.BlockTime,
 			}
-			changedSigningInfos = append(changedSigningInfos, signingInfo)
+			changedNonSigningInfos = append(changedNonSigningInfos, resetInfo)
 		}
 	}
 
@@ -363,8 +370,18 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		prevDoubleSignersMap[addrHex] = uint64(len(ds.Heights))
 	}
 
+	// Build current double-signers map for reset detection
+	currentDoubleSignersMap := make(map[string]*lib.DoubleSigner, len(currentDoubleSigners))
+	for _, ds := range currentDoubleSigners {
+		addrHex := hex.EncodeToString(ds.Id)
+		currentDoubleSignersMap[addrHex] = ds
+	}
+
 	// Compare and collect changed double-signing info
+	// Bidirectional iteration to track resets: current vs prev AND prev vs current
 	changedDoubleSigningInfos := make([]*indexer.ValidatorDoubleSigningInfo, 0)
+
+	// Phase 1: Iterate current double-signers (new entries and updates)
 	for _, curr := range currentDoubleSigners {
 		addrHex := hex.EncodeToString(curr.Id)
 		currentCount := uint64(len(curr.Heights))
@@ -387,6 +404,25 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 				HeightTime:          input.BlockTime,
 			}
 			changedDoubleSigningInfos = append(changedDoubleSigningInfos, info)
+		}
+	}
+
+	// Phase 2: Iterate previous double-signers to detect resets/reboots
+	// If a double-signer existed in previous but not in current, create a "reset" record with zeros
+	for _, prev := range previousDoubleSigners {
+		addrHex := hex.EncodeToString(prev.Id)
+		if _, exists := currentDoubleSignersMap[addrHex]; !exists {
+			// Validator had double-signing evidence previously but not anymore (evidence was cleared/reset)
+			// Create a reset record with all zeros to track this state change
+			resetInfo := &indexer.ValidatorDoubleSigningInfo{
+				Address:             addrHex,
+				EvidenceCount:       0, // Reset to zero
+				FirstEvidenceHeight: 0,
+				LastEvidenceHeight:  0,
+				Height:              input.Height,
+				HeightTime:          input.BlockTime,
+			}
+			changedDoubleSigningInfos = append(changedDoubleSigningInfos, resetInfo)
 		}
 	}
 
@@ -416,9 +452,9 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		}
 	}
 
-	if len(changedSigningInfos) > 0 {
-		if err := chainDb.InsertValidatorSigningInfoStaging(ctx, changedSigningInfos); err != nil {
-			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validator signing info staging: %w", err)
+	if len(changedNonSigningInfos) > 0 {
+		if err := chainDb.InsertValidatorNonSigningInfoStaging(ctx, changedNonSigningInfos); err != nil {
+			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validator non-signing info staging: %w", err)
 		}
 	}
 
@@ -443,7 +479,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		zap.Int("changedValidators", len(changedValidators)),
 		zap.Int("committeeValidators", len(committeeValidators)),
 		zap.Int("totalNonSigners", len(currentNonSigners)),
-		zap.Int("changedSigningInfos", len(changedSigningInfos)),
+		zap.Int("changedNonSigningInfos", len(changedNonSigningInfos)),
 		zap.Int("totalDoubleSigners", len(currentDoubleSigners)),
 		zap.Int("changedDoubleSigningInfos", len(changedDoubleSigningInfos)),
 		zap.Int("pauseEvents", len(pauseEvents)),
@@ -459,8 +495,8 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		NumValidatorsActive:    numValidatorsActive,
 		NumValidatorsPaused:    numValidatorsPaused,
 		NumValidatorsUnstaking: numValidatorsUnstaking,
-		NumSigningInfos:        uint32(len(changedSigningInfos)),
-		NumSigningInfosNew:     numSigningInfosNew,
+		NumNonSigningInfos:     uint32(len(changedNonSigningInfos)),
+		NumNonSigningInfosNew:  numNonSigningInfosNew,
 		NumDoubleSigningInfos:  uint32(len(changedDoubleSigningInfos)),
 		NumCommitteeValidators: uint32(len(committeeValidators)),
 		DurationMs:             durationMs,

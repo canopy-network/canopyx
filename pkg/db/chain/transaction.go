@@ -44,8 +44,8 @@ func (db *DB) InsertTransactionsStaging(ctx context.Context, txs []*indexermodel
 
 	query := fmt.Sprintf(`INSERT INTO "%s"."txs_staging" (
 		height, tx_hash, tx_index, time, height_time, created_height, network_id,
-		message_type, signer, counterparty, amount, fee, memo,
-		validator_address, commission, chain_id, sell_amount, buy_amount, liquidity_amount,
+		message_type, signer, amount, fee, memo,
+		validator_address, commission, chain_id, sell_amount, buy_amount, liquidity_amount, liquidity_percent,
 		order_id, price, param_key, param_value, committee_id, recipient, poll_hash,
 		buyer_receive_address, buyer_send_address, buyer_chain_deadline,
 		msg, public_key, signature
@@ -70,7 +70,6 @@ func (db *DB) InsertTransactionsStaging(ctx context.Context, txs []*indexermodel
 			tx.NetworkID,
 			tx.MessageType,
 			tx.Signer,
-			tx.Counterparty,
 			tx.Amount,
 			tx.Fee,
 			tx.Memo,
@@ -80,6 +79,7 @@ func (db *DB) InsertTransactionsStaging(ctx context.Context, txs []*indexermodel
 			tx.SellAmount,
 			tx.BuyAmount,
 			tx.LiquidityAmt,
+			tx.LiquidityPercent,
 			tx.OrderID,
 			tx.Price,
 			tx.ParamKey,

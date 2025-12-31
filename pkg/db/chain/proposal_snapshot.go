@@ -50,7 +50,10 @@ func (db *DB) InsertProposalSnapshots(ctx context.Context, snapshots []*indexerm
 	}
 
 	query := fmt.Sprintf(`INSERT INTO "%s"."proposal_snapshots" (
-		proposal_hash, proposal, approve, snapshot_time
+		proposal_hash, proposal, approve, snapshot_time,
+		proposal_type, signer, start_height, end_height,
+		parameter_space, parameter_key, parameter_value,
+		dao_transfer_address, dao_transfer_amount
 	) VALUES`, db.Name)
 
 	batch, err := db.PrepareBatch(ctx, query)
@@ -67,6 +70,15 @@ func (db *DB) InsertProposalSnapshots(ctx context.Context, snapshots []*indexerm
 			snapshot.Proposal,
 			snapshot.Approve,
 			snapshot.SnapshotTime,
+			snapshot.ProposalType,
+			snapshot.Signer,
+			snapshot.StartHeight,
+			snapshot.EndHeight,
+			snapshot.ParameterSpace,
+			snapshot.ParameterKey,
+			snapshot.ParameterValue,
+			snapshot.DaoTransferAddress,
+			snapshot.DaoTransferAmount,
 		)
 		if err != nil {
 			return err

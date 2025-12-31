@@ -1,17 +1,23 @@
 package crosschain
 
 import (
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"golang.org/x/net/context"
 )
 
 type Store interface {
 	DatabaseName() string
+	GetConnection() driver.Conn
 
 	// --- Init
 
 	InitializeDB(ctx context.Context) error
 	Close() error
+	Exec(ctx context.Context, query string, args ...interface{}) error
+	QueryRow(ctx context.Context, query string, args ...interface{}) driver.Row
+	Query(ctx context.Context, query string, args ...interface{}) (driver.Rows, error)
+	Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error
 
 	// --- Sync
 
@@ -34,7 +40,7 @@ type Store interface {
 
 	QueryLatestAccounts(ctx context.Context, opts QueryOptions) ([]AccountCrossChain, *QueryMetadata, error)
 	QueryLatestValidators(ctx context.Context, opts QueryOptions) ([]ValidatorCrossChain, *QueryMetadata, error)
-	QueryLatestValidatorSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorSigningInfoCrossChain, *QueryMetadata, error)
+	QueryLatestValidatorNonSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorNonSigningInfoCrossChain, *QueryMetadata, error)
 	QueryLatestValidatorDoubleSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorDoubleSigningInfoCrossChain, *QueryMetadata, error)
 	QueryLatestPools(ctx context.Context, opts QueryOptions) ([]PoolCrossChain, *QueryMetadata, error)
 	QueryLatestPoolPointsByHolder(ctx context.Context, opts QueryOptions) ([]PoolPointsByHolderCrossChain, *QueryMetadata, error)

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 	"go.uber.org/zap"
@@ -40,6 +41,10 @@ func NewWithPoolConfig(ctx context.Context, logger *zap.Logger, name string, poo
 // Close terminates the underlying ClickHouse connection.
 func (db *DB) Close() error {
 	return db.Db.Close()
+}
+
+func (db *DB) GetConnection() driver.Conn {
+	return db.Db
 }
 
 // DatabaseName returns the name of the cross-chain database

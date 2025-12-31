@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
@@ -11,6 +12,7 @@ import (
 type Store interface {
 	Close() error
 	DatabaseName() string
+	GetConnection() driver.Conn
 
 	GetChain(ctx context.Context, id uint64) (*admin.Chain, error)
 	RecordIndexed(ctx context.Context, chainID uint64, height uint64, blockTime time.Time, indexingTimeMs float64, indexingDetail string) error

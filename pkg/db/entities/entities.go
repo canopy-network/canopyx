@@ -130,10 +130,10 @@ const (
 	// Staging table: validators_staging
 	Validators Entity = "validators"
 
-	// ValidatorSigningInfo represents the validator signing info entity.
-	// Production table: validator_signing_info
-	// Staging table: validator_signing_info_staging
-	ValidatorSigningInfo Entity = "validator_signing_info"
+	// ValidatorNonSigningInfo represents the validator non-signing info entity.
+	// Production table: validator_non_signing_info
+	// Staging table: validator_non_signing_info_staging
+	ValidatorNonSigningInfo Entity = "validator_non_signing_info"
 
 	// ValidatorDoubleSigningInfo represents the validator double signing info entity.
 	// Production table: validator_double_signing_info
@@ -189,7 +189,7 @@ var allEntities = []Entity{
 	PoolPointsByHolder,
 	Params,
 	Validators,
-	ValidatorSigningInfo,
+	ValidatorNonSigningInfo,
 	ValidatorDoubleSigningInfo,
 	Committees,
 	CommitteeValidators,

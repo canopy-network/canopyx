@@ -70,18 +70,18 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 		if err := groupCtx.Err(); err != nil {
 			return
 		}
-		currentOrders, currentErr = cli.OrdersByHeight(groupCtx, input.Height, ac.ChainID)
+		currentOrders, currentErr = cli.OrdersByHeight(groupCtx, input.Height)
 	})
 
 	// Worker 2: Fetch previous height orders from RPC
-	// Note: Unlike accounts, orders don't have genesis state, so we just fetch from RPC
+	// Note: Unlike accounts, orders don't have a genesis state, so we just fetch from RPC
 	// At height 1 (genesis), there are no previous orders to fetch
 	group.Submit(func() {
 		if err := groupCtx.Err(); err != nil {
 			return
 		}
 		if input.Height > 1 {
-			previousOrders, previousErr = cli.OrdersByHeight(groupCtx, input.Height-1, ac.ChainID)
+			previousOrders, previousErr = cli.OrdersByHeight(groupCtx, input.Height-1)
 		}
 	})
 

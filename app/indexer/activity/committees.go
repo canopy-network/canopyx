@@ -151,18 +151,11 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", in.Height-1, retiredH1Err)
 	}
 
-	// Build lookup maps for subsidized and retired status at H
-	subsidizedMapAtH := make(map[uint64]bool)
-	for _, chainID := range subsidizedAtH {
-		subsidizedMapAtH[chainID] = true
-	}
+	// Calculate aggregate counts for all committees at this height
+	numSubsidizedTotal := uint8(len(subsidizedAtH))
+	numRetiredTotal := uint8(len(retiredAtH))
 
-	retiredMapAtH := make(map[uint64]bool)
-	for _, chainID := range retiredAtH {
-		retiredMapAtH[chainID] = true
-	}
-
-	// Convert RPC committees at H to entity models with status flags
+	// Convert RPC committees at H to entity models with aggregate counts
 	currentCommittees := make(map[uint64]*indexermodels.Committee)
 	for _, rpcCommittee := range committeesAtH {
 		currentCommittees[rpcCommittee.ChainId] = &indexermodels.Committee{
@@ -170,8 +163,8 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 			LastRootHeightUpdated:  rpcCommittee.LastRootHeightUpdated,
 			LastChainHeightUpdated: rpcCommittee.LastChainHeightUpdated,
 			NumberOfSamples:        rpcCommittee.NumberOfSamples,
-			Subsidized:             subsidizedMapAtH[rpcCommittee.ChainId],
-			Retired:                retiredMapAtH[rpcCommittee.ChainId],
+			Subsidized:             numSubsidizedTotal, // Total count across all committees
+			Retired:                numRetiredTotal,    // Total count across all committees
 			Height:                 in.Height,
 			HeightTime:             in.BlockTime,
 		}
@@ -192,16 +185,9 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 			zap.Uint64("height", in.Height),
 			zap.Int("numCommittees", len(changedCommittees)))
 	} else {
-		// Build lookup maps for subsidized and retired status at H-1
-		subsidizedMapAtH1 := make(map[uint64]bool)
-		for _, chainID := range subsidizedAtH1 {
-			subsidizedMapAtH1[chainID] = true
-		}
-
-		retiredMapAtH1 := make(map[uint64]bool)
-		for _, chainID := range retiredAtH1 {
-			retiredMapAtH1[chainID] = true
-		}
+		// Calculate aggregate counts for H-1
+		numSubsidizedTotalH1 := uint8(len(subsidizedAtH1))
+		numRetiredTotalH1 := uint8(len(retiredAtH1))
 
 		// Convert RPC committees at H-1 to entity models
 		prevMap := make(map[uint64]*indexermodels.Committee)
@@ -211,8 +197,8 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 				LastRootHeightUpdated:  rpcCommittee.LastRootHeightUpdated,
 				LastChainHeightUpdated: rpcCommittee.LastChainHeightUpdated,
 				NumberOfSamples:        rpcCommittee.NumberOfSamples,
-				Subsidized:             subsidizedMapAtH1[rpcCommittee.ChainId],
-				Retired:                retiredMapAtH1[rpcCommittee.ChainId],
+				Subsidized:             numSubsidizedTotalH1, // Total count at H-1
+				Retired:                numRetiredTotalH1,    // Total count at H-1
 			}
 		}
 

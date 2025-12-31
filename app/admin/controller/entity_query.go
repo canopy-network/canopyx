@@ -310,8 +310,8 @@ func createEntitySlice(entity entities.Entity) interface{} {
 		return &[]indexermodels.Params{}
 	case entities.Validators:
 		return &[]indexermodels.Validator{}
-	case entities.ValidatorSigningInfo:
-		return &[]indexermodels.ValidatorSigningInfo{}
+	case entities.ValidatorNonSigningInfo:
+		return &[]indexermodels.ValidatorNonSigningInfo{}
 	case entities.ValidatorDoubleSigningInfo:
 		return &[]indexermodels.ValidatorDoubleSigningInfo{}
 	case entities.Committees:
@@ -587,8 +587,8 @@ func (c *Controller) getEntitySchemaProperties(entity entities.Entity) map[strin
 		model = indexermodels.Params{}
 	case entities.Validators:
 		model = indexermodels.Validator{}
-	case entities.ValidatorSigningInfo:
-		model = indexermodels.ValidatorSigningInfo{}
+	case entities.ValidatorNonSigningInfo:
+		model = indexermodels.ValidatorNonSigningInfo{}
 	case entities.ValidatorDoubleSigningInfo:
 		model = indexermodels.ValidatorDoubleSigningInfo{}
 	case entities.Committees:

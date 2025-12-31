@@ -30,11 +30,11 @@ func GetTableConfigs() []TableConfig {
 			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.ValidatorColumns),
 		},
 		{
-			TableName:        indexer.ValidatorSigningInfoProductionTableName,
+			TableName:        indexer.ValidatorNonSigningInfoProductionTableName,
 			PrimaryKey:       []string{"chain_id", "address"},
 			HasAddressColumn: true,
-			SchemaSQL:        indexer.ColumnsToSchemaSQL(indexer.FilterCrossChainColumns(indexer.ValidatorSigningInfoColumns)),
-			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.ValidatorSigningInfoColumns),
+			SchemaSQL:        indexer.ColumnsToSchemaSQL(indexer.FilterCrossChainColumns(indexer.ValidatorNonSigningInfoColumns)),
+			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.ValidatorNonSigningInfoColumns),
 		},
 		{
 			TableName:        indexer.ValidatorDoubleSigningInfoProductionTableName,
@@ -124,8 +124,8 @@ func GetColumnsForTable(tableName string) []indexer.ColumnDef {
 		return indexer.AccountColumns
 	case indexer.ValidatorsProductionTableName:
 		return indexer.ValidatorColumns
-	case indexer.ValidatorSigningInfoProductionTableName:
-		return indexer.ValidatorSigningInfoColumns
+	case indexer.ValidatorNonSigningInfoProductionTableName:
+		return indexer.ValidatorNonSigningInfoColumns
 	case indexer.ValidatorDoubleSigningInfoProductionTableName:
 		return indexer.ValidatorDoubleSigningInfoColumns
 	case indexer.PoolsProductionTableName:

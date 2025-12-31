@@ -91,18 +91,30 @@ func (ac *Context) IndexDexPrices(ctx context.Context, in types.ActivityIndexAtH
 	}
 
 	// Convert RPC types to database models and calculate H-1 deltas
+	// Only insert prices that have changed (snapshot-on-change pattern)
+	var changedCount, unchangedCount int
 	dbPrices := make([]*indexer.DexPrice, 0, len(rpcPricesH))
 	for _, rpcPrice := range rpcPricesH {
 		dbPrice := transform.DexPrice(rpcPrice)
 		dbPrice.Height = in.Height
 		dbPrice.HeightTime = in.BlockTime
 
-		// Calculate deltas by comparing with H-1
+		// Check if price changed by comparing with H-1
 		key := transform.DexPriceKey(dbPrice.LocalChainID, dbPrice.RemoteChainID)
+		priceChanged := true
 		if priceH1, exists := prevPricesMap[key]; exists {
+			// Calculate deltas
 			dbPrice.PriceDelta = int64(dbPrice.PriceE6) - int64(priceH1.PriceE6)
 			dbPrice.LocalPoolDelta = int64(dbPrice.LocalPool) - int64(priceH1.LocalPool)
 			dbPrice.RemotePoolDelta = int64(dbPrice.RemotePool) - int64(priceH1.RemotePool)
+
+			// Compare semantic fields (exclude height and height_time)
+			if dbPrice.PriceE6 == priceH1.PriceE6 &&
+				dbPrice.LocalPool == priceH1.LocalPool &&
+				dbPrice.RemotePool == priceH1.RemotePool {
+				priceChanged = false
+				unchangedCount++
+			}
 		} else {
 			// No H-1 data (new pool or height 1), deltas are zero
 			dbPrice.PriceDelta = 0
@@ -110,17 +122,26 @@ func (ac *Context) IndexDexPrices(ctx context.Context, in types.ActivityIndexAtH
 			dbPrice.RemotePoolDelta = 0
 		}
 
-		dbPrices = append(dbPrices, dbPrice)
+		// Only insert if price changed or is new
+		if priceChanged {
+			changedCount++
+			dbPrices = append(dbPrices, dbPrice)
+		}
 	}
 
 	numPrices := uint32(len(dbPrices))
-	ac.Logger.Debug("IndexDexPrices fetched from RPC",
+	ac.Logger.Debug("IndexDexPrices change detection",
 		zap.Uint64("height", in.Height),
-		zap.Uint32("numPrices", numPrices))
+		zap.Int("changed", changedCount),
+		zap.Int("unchanged", unchangedCount),
+		zap.Uint32("inserted", numPrices))
 
 	// Insert DEX prices to staging table (two-phase commit pattern)
-	if err := chainDb.InsertDexPricesStaging(ctx, dbPrices); err != nil {
-		return types.ActivityIndexDexPricesOutput{}, err
+	// Only insert if there are changes
+	if len(dbPrices) > 0 {
+		if err := chainDb.InsertDexPricesStaging(ctx, dbPrices); err != nil {
+			return types.ActivityIndexDexPricesOutput{}, err
+		}
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0

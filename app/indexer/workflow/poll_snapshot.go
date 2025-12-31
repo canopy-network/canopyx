@@ -31,9 +31,8 @@ func (wc *Context) PollSnapshotWorkflow(ctx workflow.Context) (types.ActivityInd
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,
 			MaximumInterval:    5 * time.Second,
-			MaximumAttempts:    3, // Limited retries - if snapshot fails, wait for next scheduled run
+			MaximumAttempts:    5, // Limited retries - if the snapshot fails, wait for the next scheduled run
 		},
-		TaskQueue: wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID),
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 

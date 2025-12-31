@@ -30,7 +30,7 @@ var stagingEntities = []string{
 	"dex_prices",
 	"params",
 	"validators",
-	"validator_signing_info",
+	"validator_non_signing_info",
 	"validator_double_signing_info",
 	"committees",
 	"committee_validators",
@@ -318,8 +318,8 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		NumValidatorsActive:           validatorsOut.NumValidatorsActive,
 		NumValidatorsPaused:           validatorsOut.NumValidatorsPaused,
 		NumValidatorsUnstaking:        validatorsOut.NumValidatorsUnstaking,
-		NumValidatorSigningInfo:       validatorsOut.NumSigningInfos,
-		NumValidatorSigningInfoNew:    validatorsOut.NumSigningInfosNew,
+		NumValidatorNonSigningInfo:    validatorsOut.NumNonSigningInfos,
+		NumValidatorNonSigningInfoNew: validatorsOut.NumNonSigningInfosNew,
 		NumValidatorDoubleSigningInfo: validatorsOut.NumDoubleSigningInfos,
 
 		// Committee counts (populated from activity output)

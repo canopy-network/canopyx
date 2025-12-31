@@ -38,9 +38,9 @@ type Committee struct {
 	LastChainHeightUpdated uint64 `ch:"last_chain_height_updated" json:"last_chain_height_updated"` // 3rd party chain height of most recent Certificate Results
 	NumberOfSamples        uint64 `ch:"number_of_samples" json:"number_of_samples"`                 // Count of processed Certificate Result Transactions
 
-	// Status flags
-	Subsidized bool `ch:"subsidized" json:"subsidized"` // Whether committee meets stake requirement for subsidies
-	Retired    bool `ch:"retired" json:"retired"`       // Whether committee has shut down and is forever unsubsidized
+	// Status counts (aggregate across all committees at this height)
+	Subsidized uint8 `ch:"subsidized" json:"subsidized"` // Total number of subsidized committees at this height
+	Retired    uint8 `ch:"retired" json:"retired"`       // Total number of retired committees at this height
 
 	// Block context
 	Height     uint64    `ch:"height" json:"height"`           // Block height when this committee state became effective

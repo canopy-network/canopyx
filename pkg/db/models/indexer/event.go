@@ -20,7 +20,6 @@ var EventColumns = []ColumnDef{
 	{Name: "reference", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "event_type", Type: "LowCardinality(String)", Codec: "ZSTD(1)"},
 	{Name: "block_height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
-	{Name: "block_hash", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
 	{Name: "sold_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
 	{Name: "bought_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
@@ -56,7 +55,6 @@ type Event struct {
 	Reference   string `ch:"reference" json:"reference"`       // "begin_block", tx hash, or "end_block"
 	EventType   string `ch:"event_type" json:"event_type"`     // LowCardinality for efficient filtering
 	BlockHeight uint64 `ch:"block_height" json:"block_height"` // Block number where event occurred
-	BlockHash   string `ch:"block_hash" json:"block_hash"`     // Hash of block where event occurred
 
 	// Extracted queryable fields (nullable - NULL when not applicable)
 	Amount         *uint64 `ch:"amount" json:"amount,omitempty"`

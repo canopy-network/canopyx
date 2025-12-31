@@ -89,9 +89,9 @@ var BlockSummaryColumns = []ColumnDef{
 	{Name: "num_validators_active", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_validators_paused", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	{Name: "num_validators_unstaking", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	// Validator signing info counters (2 fields)
-	{Name: "num_validator_signing_info", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
-	{Name: "num_validator_signing_info_new", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	// Validator non-signing info counters (2 fields)
+	{Name: "num_validator_non_signing_info", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
+	{Name: "num_validator_non_signing_info_new", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	// Validator double signing info counters (1 field)
 	{Name: "num_validator_double_signing_info", Type: "UInt32 DEFAULT 0", Codec: "Delta, ZSTD"},
 	// Committee counters (4 fields)
@@ -214,9 +214,9 @@ type BlockSummary struct {
 	NumValidatorsPaused    uint32 `ch:"num_validators_paused" json:"num_validators_paused"`       // Number of paused validators
 	NumValidatorsUnstaking uint32 `ch:"num_validators_unstaking" json:"num_validators_unstaking"` // Number of unstaking validators
 
-	// ========== ValidatorSigningInfo (2 fields) ==========
-	NumValidatorSigningInfo    uint32 `ch:"num_validator_signing_info" json:"num_validator_signing_info"`         // Total number of signing info records
-	NumValidatorSigningInfoNew uint32 `ch:"num_validator_signing_info_new" json:"num_validator_signing_info_new"` // Number of new signing info records
+	// ========== ValidatorNonSigningInfo (2 fields) ==========
+	NumValidatorNonSigningInfo    uint32 `ch:"num_validator_non_signing_info" json:"num_validator_non_signing_info"`         // Total number of non-signing info records
+	NumValidatorNonSigningInfoNew uint32 `ch:"num_validator_non_signing_info_new" json:"num_validator_non_signing_info_new"` // Number of new non-signing info records
 
 	// ========== ValidatorDoubleSigningInfo (1 field) ==========
 	NumValidatorDoubleSigningInfo uint32 `ch:"num_validator_double_signing_info" json:"num_validator_double_signing_info"` // Total number of double signing info records

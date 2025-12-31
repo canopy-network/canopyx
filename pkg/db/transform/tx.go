@@ -1,12 +1,14 @@
 package transform
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/canopy-network/canopy/fsm"
 	"github.com/canopy-network/canopy/lib"
+	"github.com/canopy-network/canopy/lib/crypto"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -18,7 +20,7 @@ func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 	tx := txResult.Transaction
 
 	// Extract type-specific fields by unpacking the Any message
-	fields, err := extractTransactionFields(tx)
+	fields, err := extractTransactionFields(tx, txResult.GetTxHash())
 	if err != nil {
 		return nil, fmt.Errorf("extract transaction fields: %w", err)
 	}
@@ -50,6 +52,16 @@ func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 		memo = &tx.Memo
 	}
 
+	// Determine signer: prefer txResult.Sender, fallback to deriving from public key
+	signer := bytesToHex(txResult.Sender)
+	if signer == "" && tx.Signature != nil && len(tx.Signature.PublicKey) > 0 {
+		// Derive address from public key: SHA256 hash -> first 20 bytes
+		pubHash := crypto.Hash(tx.Signature.PublicKey)
+		if len(pubHash) >= 20 {
+			signer = bytesToHex(pubHash[:20])
+		}
+	}
+
 	return &indexer.Transaction{
 		Height:              txResult.Height,
 		TxHash:              txResult.TxHash,
@@ -58,8 +70,7 @@ func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 		CreatedHeight:       tx.CreatedHeight,
 		NetworkID:           tx.NetworkId,
 		MessageType:         tx.MessageType,
-		Signer:              bytesToHex(txResult.Sender), // Canonical signer from signature verification
-		Counterparty:        fields.Counterparty,
+		Signer:              signer, // Canonical signer from signature verification, with message-specific fallback
 		Amount:              fields.Amount,
 		Fee:                 tx.Fee,
 		Memo:                memo,
@@ -69,6 +80,7 @@ func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 		SellAmount:          fields.SellAmount,
 		BuyAmount:           fields.BuyAmount,
 		LiquidityAmt:        fields.LiquidityAmount,
+		LiquidityPercent:    fields.LiquidityPercent,
 		OrderID:             fields.OrderID,
 		Price:               fields.Price,
 		ParamKey:            fields.ParamKey,
@@ -88,7 +100,6 @@ func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 
 // TransactionFields holds extracted type-specific fields from transaction messages.
 type TransactionFields struct {
-	Counterparty        *string
 	Amount              *uint64
 	ValidatorAddress    *string
 	Commission          *float64
@@ -96,6 +107,7 @@ type TransactionFields struct {
 	SellAmount          *uint64
 	BuyAmount           *uint64
 	LiquidityAmount     *uint64
+	LiquidityPercent    *uint64
 	OrderID             *string
 	Price               *float64
 	ParamKey            *string
@@ -109,7 +121,7 @@ type TransactionFields struct {
 }
 
 // extractTransactionFields unpacks google.protobuf.Any and extracts fields based on message type.
-func extractTransactionFields(tx *lib.Transaction) (*TransactionFields, error) {
+func extractTransactionFields(tx *lib.Transaction, txHash string) (*TransactionFields, error) {
 	fields := &TransactionFields{}
 
 	// Unpack the Any message based on message_type
@@ -119,7 +131,7 @@ func extractTransactionFields(tx *lib.Transaction) (*TransactionFields, error) {
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageSend: %w", err)
 		}
-		fields.Counterparty = ptrHex(msg.ToAddress)
+		fields.Recipient = ptrHex(msg.ToAddress)
 		fields.Amount = &msg.Amount
 
 	case "stake":
@@ -127,7 +139,7 @@ func extractTransactionFields(tx *lib.Transaction) (*TransactionFields, error) {
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageStake: %w", err)
 		}
-		fields.Counterparty = ptrHex(msg.PublicKey)
+		fields.Recipient = ptrHex(msg.OutputAddress) // Validator address (short form of public key)
 		fields.Amount = &msg.Amount
 		// Note: Validators stake to multiple committees, not a single ChainID
 
@@ -136,7 +148,7 @@ func extractTransactionFields(tx *lib.Transaction) (*TransactionFields, error) {
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageEditStake: %w", err)
 		}
-		fields.Counterparty = ptrHex(msg.Address)
+		fields.Recipient = ptrHex(msg.Address)
 		fields.Amount = &msg.Amount
 
 	case "unstake":
@@ -144,21 +156,21 @@ func extractTransactionFields(tx *lib.Transaction) (*TransactionFields, error) {
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageUnstake: %w", err)
 		}
-		fields.Counterparty = ptrHex(msg.Address)
+		fields.Recipient = ptrHex(msg.Address)
 
 	case "pause":
 		var msg fsm.MessagePause
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessagePause: %w", err)
 		}
-		fields.Counterparty = ptrHex(msg.Address)
+		fields.Recipient = ptrHex(msg.Address)
 
 	case "unpause":
 		var msg fsm.MessageUnpause
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageUnpause: %w", err)
 		}
-		fields.Counterparty = ptrHex(msg.Address)
+		fields.Recipient = ptrHex(msg.Address)
 
 	case "changeParameter":
 		var msg fsm.MessageChangeParameter
@@ -166,7 +178,14 @@ func extractTransactionFields(tx *lib.Transaction) (*TransactionFields, error) {
 			return nil, fmt.Errorf("unmarshal MessageChangeParameter: %w", err)
 		}
 		fields.ParamKey = &msg.ParameterKey
-		// Note: ParameterValue is an Any type - store in full msg JSON
+		// Extract ParameterValue from Any type as JSON
+		if msg.ParameterValue != nil {
+			paramValueJSON, err := protojson.Marshal(msg.ParameterValue)
+			if err == nil {
+				paramValueStr := string(paramValueJSON)
+				fields.ParamValue = &paramValueStr
+			}
+		}
 
 	case "daoTransfer":
 		var msg fsm.MessageDAOTransfer
@@ -194,25 +213,34 @@ func extractTransactionFields(tx *lib.Transaction) (*TransactionFields, error) {
 			price := float64(msg.RequestedAmount) / float64(msg.AmountForSale)
 			fields.Price = &price
 		}
-		fields.Counterparty = ptrHex(msg.SellerReceiveAddress)
+		fields.Recipient = ptrHex(msg.SellerReceiveAddress)
+		// Extract order_id from first 20 bytes of tx_hash
+		txHashBytes, err := hex.DecodeString(txHash)
+		if err == nil && len(txHashBytes) >= 20 {
+			orderIDHex := hex.EncodeToString(txHashBytes[:20])
+			fields.OrderID = &orderIDHex
+		}
 
 	case "editOrder":
 		var msg fsm.MessageEditOrder
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageEditOrder: %w", err)
 		}
+		fields.ChainID = &msg.ChainId
 		fields.OrderID = ptrHex(msg.OrderId)
 		fields.SellAmount = &msg.AmountForSale
 		if msg.RequestedAmount > 0 && msg.AmountForSale > 0 {
 			price := float64(msg.RequestedAmount) / float64(msg.AmountForSale)
 			fields.Price = &price
 		}
+		fields.Recipient = ptrHex(msg.SellerReceiveAddress) // Seller's receive address for the counter asset
 
 	case "deleteOrder":
 		var msg fsm.MessageDeleteOrder
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageDeleteOrder: %w", err)
 		}
+		fields.ChainID = &msg.ChainId
 		fields.OrderID = ptrHex(msg.OrderId)
 
 	case "dexLimitOrder":
@@ -238,7 +266,7 @@ func extractTransactionFields(tx *lib.Transaction) (*TransactionFields, error) {
 			return nil, fmt.Errorf("unmarshal MessageDexLiquidityWithdraw: %w", err)
 		}
 		fields.ChainID = &msg.ChainId
-		fields.LiquidityAmount = &msg.Percent // Percent of liquidity to withdraw
+		fields.LiquidityPercent = &msg.Percent // Percent of liquidity to withdraw
 
 	default:
 		// Unknown message type - no fields extracted

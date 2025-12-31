@@ -172,10 +172,13 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 		return types.ActivityIndexPoolsOutput{}, err
 	}
 
-	// Phase 3: Process pool holders (snapshot-on-change)
+	// Phase 3: Process pool holders (snapshot-on-change with TotalPoolPoints tracking)
 	// Build previous holder map for O(1) lookups
-	prevHolderMap := make(map[string]uint64) // key: "poolID:address" -> points
+	prevHolderMap := make(map[string]uint64)       // key: "poolID:address" -> points
+	prevPoolTotalPoints := make(map[uint64]uint64) // key: poolID -> TotalPoolPoints at H-1
+
 	for _, pool := range previousPools {
+		prevPoolTotalPoints[pool.Id] = pool.TotalPoolPoints
 		for _, pointEntry := range pool.Points {
 			// Convert protobuf []byte address to hex string
 			address := hex.EncodeToString(pointEntry.Address)
@@ -184,12 +187,13 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 		}
 	}
 
-	// Compare and create snapshots only for changed holders
+	// Compare and create snapshots for changed holders
+	// Also re-snapshot ALL holders if pool's TotalPoolPoints changed
 	changedHolders := make([]*indexer.PoolPointsByHolder, 0)
 	var numPoolHoldersNew uint32
 
 	for _, rpcPool := range rpcPools {
-		if len(rpcPool.Points) == 0 || rpcPool.TotalPoolPoints == 0 {
+		if len(rpcPool.Points) == 0 {
 			continue
 		}
 
@@ -197,25 +201,27 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 		chainID := indexer.ExtractChainIDFromPoolID(rpcPool.Id)
 		liquidityPoolID := indexer.LiquidityPoolAddend + chainID
 
-		for _, pointEntry := range rpcPool.Points {
-			if pointEntry.Points == 0 {
-				continue
-			}
+		// Check if pool's TotalPoolPoints changed
+		// If it changed, we need to re-snapshot ALL holders of this pool
+		prevTotalPoints, poolExisted := prevPoolTotalPoints[rpcPool.Id]
+		poolTotalPointsChanged := !poolExisted || rpcPool.TotalPoolPoints != prevTotalPoints
 
+		for _, pointEntry := range rpcPool.Points {
 			// Convert protobuf []byte address to hex string for database storage
 			address := hex.EncodeToString(pointEntry.Address)
 			key := fmt.Sprintf("%d:%s", rpcPool.Id, address)
-			prevPoints, existed := prevHolderMap[key]
+			prevPoints, holderExisted := prevHolderMap[key]
 
-			// Snapshot-on-change: only insert if points changed or holder is new
-			if !existed || pointEntry.Points != prevPoints {
+			// Snapshot conditions:
+			// 1. Holder is new (!holderExisted)
+			// 2. Holder's points changed (pointEntry.Points != prevPoints)
+			// 3. Pool's TotalPoolPoints changed (poolTotalPointsChanged)
+			shouldSnapshot := !holderExisted || pointEntry.Points != prevPoints || poolTotalPointsChanged
+
+			if shouldSnapshot {
 				// Track new holders
-				if !existed {
+				if !holderExisted {
 					numPoolHoldersNew++
-				}
-				var liquidityPoolPoints uint64
-				if rpcPool.TotalPoolPoints > 0 {
-					liquidityPoolPoints = (rpcPool.Amount * pointEntry.Points) / rpcPool.TotalPoolPoints
 				}
 
 				holder := &indexer.PoolPointsByHolder{
@@ -225,7 +231,7 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 					HeightTime:          in.BlockTime,
 					Committee:           chainID,
 					Points:              pointEntry.Points,
-					LiquidityPoolPoints: liquidityPoolPoints,
+					LiquidityPoolPoints: rpcPool.TotalPoolPoints, // Store pool's total points
 					LiquidityPoolID:     liquidityPoolID,
 				}
 				changedHolders = append(changedHolders, holder)

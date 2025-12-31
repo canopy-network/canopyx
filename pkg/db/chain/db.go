@@ -3,6 +3,7 @@ package chain
 import (
 	"context"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"sync"
 	"time"
 
@@ -68,6 +69,10 @@ func (db *DB) Close() error {
 	return db.Db.Close()
 }
 
+func (db *DB) GetConnection() driver.Conn {
+	return db.Db
+}
+
 // InitializeDB ensures the required database and tables for indexing are created if they do not already exist.
 // Uses PARALLEL WITH to batch all CREATE statements into 3 DDL operations instead of 40+:
 //  1. CREATE DATABASE
@@ -105,7 +110,7 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 		{"dex_withdrawals", db.initDexWithdrawals},
 		{"pool_points_by_holder", db.initPoolPointsByHolder},
 		{"validators", db.initValidators},
-		{"validator_signing_info", db.initValidatorSigningInfo},
+		{"validator_non_signing_info", db.initValidatorNonSigningInfo},
 		{"validator_double_signing_info", db.initValidatorDoubleSigningInfo},
 		{"params", db.initParams},
 		{"committees", db.initCommittees},

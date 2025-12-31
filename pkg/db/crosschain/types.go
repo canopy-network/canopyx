@@ -25,9 +25,9 @@ type ValidatorCrossChain struct {
 	UpdatedAt time.Time `ch:"updated_at" json:"updated_at"`
 }
 
-type ValidatorSigningInfoCrossChain struct {
+type ValidatorNonSigningInfoCrossChain struct {
 	ChainID uint64 `ch:"chain_id" json:"chain_id"`
-	indexer.ValidatorSigningInfo
+	indexer.ValidatorNonSigningInfo
 	UpdatedAt time.Time `ch:"updated_at" json:"updated_at"`
 }
 

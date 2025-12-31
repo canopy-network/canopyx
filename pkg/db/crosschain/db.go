@@ -2,6 +2,7 @@ package crosschain
 
 import (
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.uber.org/zap"
@@ -272,4 +273,24 @@ func (db *DB) OptimizeTable(ctx context.Context, database, table string, final b
 // Close terminates the underlying ClickHouse connection.
 func (db *DB) Close() error {
 	return db.Db.Close()
+}
+
+func (db *DB) GetConnection() driver.Conn {
+	return db.Db
+}
+
+func (db *DB) Exec(ctx context.Context, query string, args ...interface{}) error {
+	return db.Db.Exec(ctx, query, args...)
+}
+
+func (db *DB) QueryRow(ctx context.Context, query string, args ...interface{}) driver.Row {
+	return db.Db.QueryRow(ctx, query, args...)
+}
+
+func (db *DB) Query(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+	return db.Db.Query(ctx, query, args...)
+}
+
+func (db *DB) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+	return db.Db.Select(ctx, dest, query, args...)
 }

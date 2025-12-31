@@ -25,7 +25,7 @@ var entityRouteMapping = map[string]string{
 	"pool_points_by_holder":         "pool-points",
 	"params":                        "params",
 	"validators":                    "validators",
-	"validator_signing_info":        "validator-signing-info",
+	"validator_non_signing_info":    "validator-non-signing-info",
 	"validator_double_signing_info": "validator-double-signing-info",
 	"committees":                    "committees",
 	"committee_validators":          "committee-validators",

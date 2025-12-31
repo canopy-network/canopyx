@@ -12,14 +12,12 @@ import (
 // Note: JSON unmarshaling is used throughout (RPC only supports JSON, not protobuf wire format).
 type Client interface {
 	ChainHead(ctx context.Context) (uint64, error)
-	// Core indexing types (migrated to Canopy protobuf types)
 	BlockByHeight(ctx context.Context, height uint64) (*lib.BlockResult, error)
 	TxsByHeight(ctx context.Context, height uint64) ([]*lib.TxResult, error)
 	EventsByHeight(ctx context.Context, height uint64) ([]*lib.Event, error)
 	AccountsByHeight(ctx context.Context, height uint64) ([]*fsm.Account, error)
 	ValidatorsByHeight(ctx context.Context, height uint64) ([]*fsm.Validator, error)
-	// DEX and governance types (migrated to lib/fsm types)
-	OrdersByHeight(ctx context.Context, height uint64, chainID uint64) ([]*lib.SellOrder, error)
+	OrdersByHeight(ctx context.Context, height uint64) ([]*lib.SellOrder, error)
 	DexPricesByHeight(ctx context.Context, height uint64) ([]*lib.DexPrice, error)
 	PoolsByHeight(ctx context.Context, height uint64) ([]*fsm.Pool, error)
 	AllDexBatchesByHeight(ctx context.Context, height uint64) ([]*lib.DexBatch, error)
@@ -32,9 +30,7 @@ type Client interface {
 	SubsidizedCommitteesByHeight(ctx context.Context, height uint64) ([]uint64, error)
 	RetiredCommitteesByHeight(ctx context.Context, height uint64) ([]uint64, error)
 	SupplyByHeight(ctx context.Context, height uint64) (*fsm.Supply, error)
-	// Poll does not support historical query (aka by Height)
 	Poll(ctx context.Context) (fsm.Poll, error)
-	// Proposals does not support historical query (aka by Height)
 	Proposals(ctx context.Context) (fsm.GovProposals, error)
 }
 

@@ -126,7 +126,7 @@ func (c *Controller) HandleCrossChainEntitiesList(w http.ResponseWriter, _ *http
 	entityNames := []string{
 		"accounts",
 		"validators",
-		"validator-signing-info",
+		"validator-non-signing-info",
 		"validator-double-signing-info",
 		"pools",
 		"pool-points",
@@ -238,7 +238,7 @@ func (c *Controller) getCrossChainEntityConfig(entityName string) (*crosschain.T
 	entityToTableName := map[string]string{
 		"accounts":                      "accounts",
 		"validators":                    "validators",
-		"validator-signing-info":        "validator_signing_info",
+		"validator-non-signing-info":    "validator_non_signing_info",
 		"validator-double-signing-info": "validator_double_signing_info",
 		"pools":                         "pools",
 		"pool-points":                   "pool_points_by_holder",

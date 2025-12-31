@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/entities"
@@ -12,6 +13,7 @@ import (
 type Store interface {
 	DatabaseName() string
 	ChainKey() string
+	GetConnection() driver.Conn
 
 	// --- Init
 
@@ -33,7 +35,7 @@ type Store interface {
 	InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error
 	InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error
 	InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error
-	InsertValidatorSigningInfoStaging(ctx context.Context, signingInfos []*indexermodels.ValidatorSigningInfo) error
+	InsertValidatorNonSigningInfoStaging(ctx context.Context, nonSigningInfos []*indexermodels.ValidatorNonSigningInfo) error
 	InsertValidatorDoubleSigningInfoStaging(ctx context.Context, doubleSigningInfos []*indexermodels.ValidatorDoubleSigningInfo) error
 	InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error
 	InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error

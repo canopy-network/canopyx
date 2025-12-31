@@ -28,7 +28,6 @@ func Event(e *lib.Event) (*indexer.Event, error) {
 	evt.Reference = e.Reference
 	evt.EventType = e.EventType
 	evt.BlockHeight = e.BlockHeight
-	evt.BlockHash = bytesToHex(e.BlockHash)
 	evt.Msg = string(msgJSON)
 
 	// Extract type-specific fields using oneof type switch and fill evt directly

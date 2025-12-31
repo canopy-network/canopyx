@@ -353,23 +353,6 @@ func Initialize(ctx context.Context) *App {
 		)
 	}
 
-	// Register snapshot workflows on live, historical, and reindex workers
-	// These were moved from ops queue to avoid congestion from cleanup workflows
-	for _, w := range []worker.Worker{liveWorker, historicalWorker, reindexWorker} {
-		w.RegisterWorkflowWithOptions(
-			workflowContext.PollSnapshotWorkflow,
-			temporalworkflow.RegisterOptions{Name: indexer.PollSnapshotWorkflowName},
-		)
-		w.RegisterWorkflowWithOptions(
-			workflowContext.ProposalSnapshotWorkflow,
-			temporalworkflow.RegisterOptions{Name: indexer.ProposalSnapshotWorkflowName},
-		)
-		w.RegisterWorkflowWithOptions(
-			workflowContext.LPSnapshotWorkflow,
-			temporalworkflow.RegisterOptions{Name: indexer.LPSnapshotWorkflowName},
-		)
-	}
-
 	// Register all IndexBlock activities on live, historical, and reindex workers
 	for _, w := range []worker.Worker{liveWorker, historicalWorker, reindexWorker} {
 		w.RegisterActivity(activityContext.PrepareIndexBlock)
@@ -389,10 +372,6 @@ func Initialize(ctx context.Context) *App {
 		w.RegisterActivity(activityContext.SaveBlockSummary)
 		w.RegisterActivity(activityContext.PromoteData)
 		w.RegisterActivity(activityContext.RecordIndexed)
-		// Snapshot activities - moved from ops queue to avoid congestion
-		w.RegisterActivity(activityContext.IndexPoll)
-		w.RegisterActivity(activityContext.IndexProposals)
-		w.RegisterActivity(activityContext.ComputeLPSnapshots)
 	}
 
 	// Ops worker configuration calculated from total indexing capacity
@@ -443,6 +422,18 @@ func Initialize(ctx context.Context) *App {
 		workflowContext.CleanupStagingWorkflow,
 		temporalworkflow.RegisterOptions{Name: indexer.CleanupStagingWorkflowName},
 	)
+	opsWorker.RegisterWorkflowWithOptions(
+		workflowContext.PollSnapshotWorkflow,
+		temporalworkflow.RegisterOptions{Name: indexer.PollSnapshotWorkflowName},
+	)
+	opsWorker.RegisterWorkflowWithOptions(
+		workflowContext.ProposalSnapshotWorkflow,
+		temporalworkflow.RegisterOptions{Name: indexer.ProposalSnapshotWorkflowName},
+	)
+	opsWorker.RegisterWorkflowWithOptions(
+		workflowContext.LPSnapshotWorkflow,
+		temporalworkflow.RegisterOptions{Name: indexer.LPSnapshotWorkflowName},
+	)
 	// NOTE: Poll/Proposal/LP snapshot workflows moved to live/historical/reindex workers
 	// to avoid congestion from cleanup workflows on ops queue
 	opsWorker.RegisterActivity(activityContext.GetLatestHead)
@@ -454,7 +445,9 @@ func Initialize(ctx context.Context) *App {
 	opsWorker.RegisterActivity(activityContext.IsSchedulerWorkflowRunning)
 	opsWorker.RegisterActivity(activityContext.CleanPromotedData)
 	opsWorker.RegisterActivity(activityContext.CleanAllPromotedData)
-	// NOTE: Poll/Proposal/LP snapshot activities moved to live/historical/reindex workers
+	opsWorker.RegisterActivity(activityContext.IndexPoll)
+	opsWorker.RegisterActivity(activityContext.IndexProposals)
+	opsWorker.RegisterActivity(activityContext.ComputeLPSnapshots)
 
 	return &App{
 		LiveWorker:       liveWorker,

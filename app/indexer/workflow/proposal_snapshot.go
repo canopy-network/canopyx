@@ -29,9 +29,8 @@ func (wc *Context) ProposalSnapshotWorkflow(ctx workflow.Context) (types.Activit
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,
 			MaximumInterval:    5 * time.Second,
-			MaximumAttempts:    3, // Limited retries (snapshot can wait for next run)
+			MaximumAttempts:    5, // Limited retries (snapshot can wait for the next run)
 		},
-		TaskQueue: wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID),
 	}
 
 	ctx = workflow.WithActivityOptions(ctx, ao)
