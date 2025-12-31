@@ -15,21 +15,24 @@ import (
 func (db *DB) initCommittees(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.CommitteeColumns)
 
-	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+	// Production table: ORDER BY (chain_id, height) for efficient chain_id lookups
+	productionQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (chain_id, height)
-	`
-
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.CommitteeProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.CommitteeProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteeProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, chain_id) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, chain_id)
+	`, db.Name, indexermodels.CommitteeStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.CommitteeStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteeStagingTableName, err)
 	}
@@ -46,8 +49,8 @@ func (db *DB) initCommittees(ctx context.Context) error {
 // Query usage: SELECT chain_id, created_height FROM committee_created_height WHERE chain_id = ?
 func (db *DB) initCommitteeCreatedHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."committee_created_height"
-		ENGINE = AggregatingMergeTree()
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."committee_created_height" %s
+		ENGINE = %s
 		ORDER BY chain_id
 		AS SELECT
 			chain_id,
@@ -55,7 +58,7 @@ func (db *DB) initCommitteeCreatedHeightView(ctx context.Context) error {
 			max(height_time) as height_time
 		FROM "%s"."committees"
 		GROUP BY chain_id
-	`, db.Name, db.Name)
+	`, db.Name, db.OnCluster(), db.Engine("committee_created_height", "AggregatingMergeTree", ""), db.Name)
 
 	return db.Exec(ctx, query)
 }
@@ -68,7 +71,7 @@ func (db *DB) InsertCommitteesStaging(ctx context.Context, committees []*indexer
 		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s".committees_staging (
+	query := fmt.Sprintf(`INSERT INTO "%s"."committees_staging" (
 		chain_id, last_root_height_updated, last_chain_height_updated,
 		number_of_samples, subsidized, retired, height, height_time
 	) VALUES`, db.Name)

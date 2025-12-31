@@ -14,11 +14,11 @@ func (db *DB) initBlockSummaries(ctx context.Context) error {
 
 	// Create production table with ReplacingMergeTree
 	productionQuery := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (height)
-	`, db.Name, indexermodels.BlockSummariesProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.BlockSummariesProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.BlockSummariesProductionTableName, "ReplacingMergeTree", "height"))
 
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.BlockSummariesProductionTableName, err)
@@ -26,11 +26,11 @@ func (db *DB) initBlockSummaries(ctx context.Context) error {
 
 	// Create staging table with MergeTree
 	stagingQuery := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (height)
-	`, db.Name, indexermodels.BlockSummariesStagingTableName, schemaSQL)
+	`, db.Name, indexermodels.BlockSummariesStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.BlockSummariesStagingTableName, "ReplacingMergeTree", "height"))
 
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.BlockSummariesStagingTableName, err)
@@ -44,7 +44,7 @@ func (db *DB) initBlockSummaries(ctx context.Context) error {
 // All 16 entities are tracked with comprehensive field coverage.
 func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexermodels.BlockSummary) error {
 	query := fmt.Sprintf(`
-		INSERT INTO "%s".block_summaries_staging (
+		INSERT INTO "%s"."block_summaries_staging" (
 			height,
 			height_time,
 			num_txs,
@@ -241,19 +241,23 @@ func (db *DB) GetBlockSummary(ctx context.Context, height uint64, staging bool) 
 // If cursor > 0 and sortDesc is false, only summaries with height > cursor are returned.
 // The limit parameter controls the maximum number of rows returned (+1 for pagination detection).
 func (db *DB) QueryBlockSummaries(ctx context.Context, cursor uint64, limit int, sortDesc bool) ([]*indexermodels.BlockSummary, error) {
-	query := `
+	query := fmt.Sprintf(`
 		SELECT *
-		FROM block_summaries FINAL
+		FROM "%s"."block_summaries" FINAL
 		WHERE 1=1
-	`
+	`, db.Name)
+
+	// Build query with parameterized values for security
+	var args []interface{}
 
 	// Add cursor condition if provided
 	if cursor > 0 {
 		if sortDesc {
-			query += fmt.Sprintf(" AND height < %d", cursor)
+			query += " AND height < ?"
 		} else {
-			query += fmt.Sprintf(" AND height > %d", cursor)
+			query += " AND height > ?"
 		}
+		args = append(args, cursor)
 	}
 
 	// Add ordering
@@ -263,10 +267,11 @@ func (db *DB) QueryBlockSummaries(ctx context.Context, cursor uint64, limit int,
 		query += " ORDER BY height ASC"
 	}
 
-	// Add limit
-	query += fmt.Sprintf(" LIMIT %d", limit)
+	// Add limit (parameterized for best practices)
+	query += " LIMIT ?"
+	args = append(args, limit)
 
-	rows, err := db.Db.Query(ctx, query)
+	rows, err := db.Db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

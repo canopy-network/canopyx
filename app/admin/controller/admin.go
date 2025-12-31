@@ -17,7 +17,6 @@ func (c *Controller) HandleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "bad json"})
 		return
 	}
-	_ = json.NewDecoder(r.Body).Decode(&in)
 	u, ok := c.Users[in.Username]
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)

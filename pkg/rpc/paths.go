@@ -9,7 +9,6 @@ const (
 	headPath          = "/v1/query/height"
 	blockByHeightPath = "/v1/query/block-by-height"
 	certByHeightPath  = "/v1/query/cert-by-height"
-	statePath         = "/v1/query/state" // Used for both current state and genesis (height=0)
 
 	// Transaction and event queries
 	txsByHeightPath    = "/v1/query/txs-by-height"

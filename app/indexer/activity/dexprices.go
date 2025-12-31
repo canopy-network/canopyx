@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/alitto/pond/v2"
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/db/transform"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -34,8 +34,8 @@ func (ac *Context) IndexDexPrices(ctx context.Context, in types.ActivityIndexAtH
 
 	// Parallel RPC fetch using shared worker pool for performance
 	var (
-		rpcPricesH   []*rpc.RpcDexPrice
-		rpcPricesH1  []*rpc.RpcDexPrice
+		rpcPricesH   []*lib.DexPrice
+		rpcPricesH1  []*lib.DexPrice
 		rpcPricesErr error
 		prevErr      error
 	)
@@ -59,7 +59,7 @@ func (ac *Context) IndexDexPrices(ctx context.Context, in types.ActivityIndexAtH
 			return
 		}
 		if in.Height <= 1 {
-			rpcPricesH1 = make([]*rpc.RpcDexPrice, 0)
+			rpcPricesH1 = make([]*lib.DexPrice, 0)
 			return
 		}
 		rpcPricesH1, prevErr = cli.DexPricesByHeight(groupCtx, in.Height-1)

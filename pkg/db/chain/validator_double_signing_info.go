@@ -18,22 +18,27 @@ import (
 // - Delta codec for monotonically increasing counters and heights
 func (db *DB) initValidatorDoubleSigningInfo(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorDoubleSigningInfoColumns)
-	queryTemplate := `
-        CREATE TABLE IF NOT EXISTS "%s"."%s" (
+
+	// Production table: ORDER BY (address, height) for efficient address lookups
+	productionQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (address, height)
 		SETTINGS index_granularity = 8192
-	`
-
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorDoubleSigningInfoProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.ValidatorDoubleSigningInfoProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorDoubleSigningInfoProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorDoubleSigningInfoProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorDoubleSigningInfoStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, address) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, address)
+		SETTINGS index_granularity = 8192
+	`, db.Name, indexermodels.ValidatorDoubleSigningInfoStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorDoubleSigningInfoStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorDoubleSigningInfoStagingTableName, err)
 	}
@@ -50,8 +55,8 @@ func (db *DB) InsertValidatorDoubleSigningInfoStaging(ctx context.Context, doubl
 	}
 
 	query := fmt.Sprintf(
-		`INSERT INTO %s (address, evidence_count, first_evidence_height, last_evidence_height, height, height_time) VALUES`,
-		indexermodels.ValidatorDoubleSigningInfoStagingTableName,
+		`INSERT INTO "%s"."%s" (address, evidence_count, first_evidence_height, last_evidence_height, height, height_time) VALUES`,
+		db.Name, indexermodels.ValidatorDoubleSigningInfoStagingTableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

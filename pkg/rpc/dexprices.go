@@ -4,24 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-)
 
-// RpcDexPrice represents the DEX price information returned from the RPC endpoint.
-// This matches the JSON structure returned by /v1/query/dex-price?id={chain}.
-// JSON tags match Canopy's actual response format (camelCase).
-type RpcDexPrice struct {
-	LocalChainID  uint64 `json:"chainId"`
-	RemoteChainID uint64 `json:"remoteChainId"`
-	LocalPool     uint64 `json:"localPool"`
-	RemotePool    uint64 `json:"remotePool"`
-	E6ScaledPrice uint64 `json:"e6ScaledPrice"`
-}
+	"github.com/canopy-network/canopy/lib"
+)
 
 // DexPricesByHeight fetches all DEX prices for all chain pairs.
 // This endpoint returns the current state of all DEX pools.
-// Returns a slice of RpcDexPrice or an error if the request fails.
+//
+// Returns lib.DexPrice (type from Canopy lib/dex.go).
+// The Canopy RPC endpoint /v1/query/dex-price returns lib.DexPrice structures.
 // Callers should convert to indexer models using transform.DexPrice() if needed.
-func (c *HTTPClient) DexPricesByHeight(ctx context.Context, height uint64) ([]*RpcDexPrice, error) {
+func (c *HTTPClient) DexPricesByHeight(ctx context.Context, height uint64) ([]*lib.DexPrice, error) {
 	// The RPC might return either:
 	// 1. A single object (when there's only one price)
 	// 2. An array of objects (when there are multiple prices)
@@ -35,18 +28,18 @@ func (c *HTTPClient) DexPricesByHeight(ctx context.Context, height uint64) ([]*R
 	}
 
 	// Try to unmarshal as an array first
-	var rpcPrices []RpcDexPrice
+	var rpcPrices []lib.DexPrice
 	if err := json.Unmarshal(raw, &rpcPrices); err != nil {
 		// If that fails, try as a single object
-		var singlePrice RpcDexPrice
+		var singlePrice lib.DexPrice
 		if err := json.Unmarshal(raw, &singlePrice); err != nil {
 			return nil, fmt.Errorf("unmarshal dex prices: %w", err)
 		}
-		rpcPrices = []RpcDexPrice{singlePrice}
+		rpcPrices = []lib.DexPrice{singlePrice}
 	}
 
-	// Return RPC types - callers will transform to DB models
-	result := make([]*RpcDexPrice, 0, len(rpcPrices))
+	// Return lib types - callers will transform to DB models
+	result := make([]*lib.DexPrice, 0, len(rpcPrices))
 	for i := range rpcPrices {
 		result = append(result, &rpcPrices[i])
 	}

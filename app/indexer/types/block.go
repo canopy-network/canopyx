@@ -3,8 +3,8 @@ package types
 import (
 	"time"
 
+	"github.com/canopy-network/canopy/lib"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 )
 
 type WorkflowIndexBlockInput struct {
@@ -28,14 +28,14 @@ type ActivityFetchBlockInput struct {
 // ActivityFetchBlockOutput contains the fetched block data along with execution duration.
 // This is used by the FetchBlockFromRPC local activity.
 type ActivityFetchBlockOutput struct {
-	Block      *rpc.BlockByHeight `json:"block"`      // The fetched block
-	DurationMs float64            `json:"durationMs"` // Execution time in milliseconds
+	Block      *lib.BlockResult `json:"block"`      // The fetched block (Canopy protobuf type)
+	DurationMs float64          `json:"durationMs"` // Execution time in milliseconds
 }
 
 // ActivitySaveBlockInput contains the parameters for saving a block to the database.
 type ActivitySaveBlockInput struct {
-	Height uint64             `json:"height"`
-	Block  *rpc.BlockByHeight `json:"block"` // The block to save
+	Height uint64           `json:"height"`
+	Block  *lib.BlockResult `json:"block"` // The block to save (Canopy protobuf type)
 }
 
 // ActivitySaveBlockOutput contains the indexed block height along with execution duration.

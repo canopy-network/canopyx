@@ -14,6 +14,12 @@ type Provider interface {
 	// GetDeploymentHealth checks the health status of a chain's deployment.
 	// Returns status (healthy/degraded/failed/unknown), a human-readable message, and any error.
 	GetDeploymentHealth(ctx context.Context, chainID string) (status, message string, err error)
+
+	// EnsureReindexWorker makes sure a per-chain reindex worker deployment exists with specified replicas.
+	EnsureReindexWorker(ctx context.Context, c *Chain) error
+	// DeleteReindexWorker removes the reindex worker deployment.
+	DeleteReindexWorker(ctx context.Context, chainID string) error
+
 	// Close releases any Provider resources.
 	Close() error
 }

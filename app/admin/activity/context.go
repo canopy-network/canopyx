@@ -9,6 +9,6 @@ import (
 // Context holds dependencies for admin maintenance activities.
 type Context struct {
 	Logger         *zap.Logger
-	CrossChainDB   *crosschain.Store
+	CrossChainDB   crosschain.Store
 	TemporalClient *temporal.Client
 }

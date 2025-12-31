@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/canopy-network/canopyx/pkg/db/crosschain"
+	"go.temporal.io/sdk/worker"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,13 +26,13 @@ type App struct {
 	// Database Client wrappers
 	AdminDB      *adminstore.DB
 	ChainsDB     *xsync.Map[string, chainstore.Store]
-	CrossChainDB interface{} // Cross-chain database store (optional, set to crosschain.Store)
+	CrossChainDB crosschain.Store
 
 	// Temporal Client wrapper
 	TemporalClient *temporal.Client
 
 	// Temporal Workers
-	MaintenanceWorker interface{} // Maintenance worker for cross-chain compaction (go.temporal.io/sdk/worker.Worker)
+	MaintenanceWorker worker.Worker // Maintenance worker for cross-chain compaction (go.temporal.io/sdk/worker.Worker)
 
 	// Redis Client (for WebSocket real-time events)
 	RedisClient *redis.Client
@@ -47,15 +49,13 @@ type App struct {
 
 // Start starts the application.
 func (a *App) Start(ctx context.Context) {
-	// Start maintenance worker if it exists
+	// Start a maintenance worker if it exists
 	if a.MaintenanceWorker != nil {
 		// Type assert to worker.Worker interface
-		if worker, ok := a.MaintenanceWorker.(interface{ Start() error }); ok {
-			if err := worker.Start(); err != nil {
-				a.Logger.Fatal("Unable to start maintenance worker", zap.Error(err))
-			}
-			a.Logger.Info("Maintenance worker started successfully")
+		if err := a.MaintenanceWorker.Start(); err != nil {
+			a.Logger.Fatal("Unable to start maintenance worker", zap.Error(err))
 		}
+		a.Logger.Info("Maintenance worker started successfully")
 	}
 
 	go func() { _ = a.Server.ListenAndServe() }()
@@ -63,38 +63,18 @@ func (a *App) Start(ctx context.Context) {
 
 	// Stop maintenance worker
 	if a.MaintenanceWorker != nil {
-		if worker, ok := a.MaintenanceWorker.(interface{ Stop() }); ok {
-			a.Logger.Info("Stopping maintenance worker")
-			worker.Stop()
-		}
+		a.Logger.Info("Stopping maintenance worker")
+		a.MaintenanceWorker.Stop()
 	}
 
-	a.Logger.Info("closing admin database connection")
-	err := a.AdminDB.Close()
-	if err != nil {
-		a.Logger.Error("Failed to close database connection", zap.Error(err))
-	}
-
-	// Close cross-chain database connection
-	if a.CrossChainDB != nil {
-		a.Logger.Info("closing cross-chain database connection")
-		// Type assert to the closer interface
-		if closer, ok := a.CrossChainDB.(interface{ Close() error }); ok {
-			if closeErr := closer.Close(); closeErr != nil {
-				a.Logger.Error("Failed to close cross-chain database connection", zap.Error(closeErr))
-			}
-		}
-	}
-
-	// Close all chain database connections
-	a.ChainsDB.Range(func(key string, chainStore chainstore.Store) bool {
-		a.Logger.Info("closing chain database connection", zap.String("chainID", chainStore.ChainKey()))
-		err = chainStore.Close()
+	if a.AdminDB != nil {
+		a.Logger.Info("closing admin database connection")
+		err := a.AdminDB.Close()
+		// This closes the shared client for cross-chain and chains connection
 		if err != nil {
 			a.Logger.Error("Failed to close database connection", zap.Error(err))
 		}
-		return true
-	})
+	}
 
 	a.Logger.Info("shutting down server")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -106,8 +86,11 @@ func (a *App) Start(ctx context.Context) {
 }
 
 // NewChainDb initializes or retrieves an instance of ChainDB for a given blockchain identified by chainID.
-// It ensures the database and required tables are created if not already present.
+// The database and tables must already exist (created by indexer).
 // Returns the ChainDB instance or an error in case of failure.
+//
+// IMPORTANT: Reuses the admin DB's connection pool to avoid creating separate pools for each chain.
+// This is efficient since admin only does occasional reads from the web UI.
 func (a *App) NewChainDb(ctx context.Context, chainID string) (chainstore.Store, error) {
 	if chainDb, ok := a.ChainsDB.Load(chainID); ok {
 		// chainDb is already loaded
@@ -120,9 +103,16 @@ func (a *App) NewChainDb(ctx context.Context, chainID string) (chainstore.Store,
 		return nil, fmt.Errorf("invalid chain ID format: %w", parseErr)
 	}
 
-	chainDB, chainDBErr := chainstore.New(ctx, a.Logger, chainIDUint)
-	if chainDBErr != nil {
-		return nil, chainDBErr
+	// Reuse admin DB's connection pool instead of creating a new one.
+	// Admin only does occasional reads from web UI, no need for separate pools.
+	// All queries use "database"."table" format, so one connection pool can serve multiple databases.
+	chainDB := chainstore.NewWithSharedClient(a.AdminDB.Client, chainIDUint)
+
+	// Initialize the database and tables if they don't exist yet.
+	// This handles the race condition where admin creates the chain before the indexer pod starts.
+	// InitializeDB is idempotent and uses CREATE IF NOT EXISTS, so it's safe to call multiple times.
+	if err := chainDB.InitializeDB(ctx); err != nil {
+		return nil, fmt.Errorf("failed to initialize chain database: %w", err)
 	}
 
 	a.ChainsDB.Store(chainID, chainDB)
@@ -132,7 +122,7 @@ func (a *App) NewChainDb(ctx context.Context, chainID string) (chainstore.Store,
 
 // ReconcileSchedules ensures the required schedules for indexing are created if they do not already exist.
 func (a *App) ReconcileSchedules(ctx context.Context) error {
-	chains, err := a.AdminDB.ListChain(ctx)
+	chains, err := a.AdminDB.ListChain(ctx, false)
 	if err != nil {
 		return err
 	}
@@ -144,7 +134,7 @@ func (a *App) ReconcileSchedules(ctx context.Context) error {
 		}
 	}
 
-	// Ensure cross-chain compaction schedule
+	// Ensure a cross-chain compaction schedule
 	if err := a.EnsureCrossChainCompactionSchedule(ctx); err != nil {
 		return fmt.Errorf("failed to ensure cross-chain compaction schedule: %w", err)
 	}
@@ -174,9 +164,11 @@ func (a *App) EnsureHeadSchedule(ctx context.Context, chainID string) error {
 				ID:   id,
 				Spec: a.TemporalClient.TwoSecondSpec(),
 				Action: &client.ScheduleWorkflowAction{
-					Workflow:  indexer.HeadScanWorkflowName,
-					Args:      []interface{}{indexer.HeadScanInput{ChainID: chainIDUint}},
-					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+					Workflow:                 indexer.HeadScanWorkflowName,
+					Args:                     []interface{}{indexer.HeadScanInput{ChainID: chainIDUint}},
+					TaskQueue:                a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+					WorkflowExecutionTimeout: 10 * time.Minute, // Allow up to 10 minutes for HeadScan (direct scheduling can take time)
+					WorkflowTaskTimeout:      2 * time.Minute,  // 2-minute task timeout for workflow logic
 				},
 			},
 		)
@@ -209,9 +201,11 @@ func (a *App) EnsureGapScanSchedule(ctx context.Context, chainID string) error {
 				ID:   id,
 				Spec: a.TemporalClient.OneHourSpec(),
 				Action: &client.ScheduleWorkflowAction{
-					Workflow:  indexer.GapScanWorkflowName,
-					Args:      []interface{}{indexer.GapScanInput{ChainID: chainIDUint}},
-					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+					Workflow:                 indexer.GapScanWorkflowName,
+					Args:                     []interface{}{indexer.GapScanInput{ChainID: chainIDUint}},
+					TaskQueue:                a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+					WorkflowExecutionTimeout: 10 * time.Minute, // Allow up to 10 minutes for GapScan (direct scheduling can take time)
+					WorkflowTaskTimeout:      2 * time.Minute,  // 2-minute task timeout for workflow logic
 				},
 			},
 		)
@@ -221,7 +215,7 @@ func (a *App) EnsureGapScanSchedule(ctx context.Context, chainID string) error {
 }
 
 // EnsurePollSnapshotSchedule ensures the poll snapshot schedule is created if it does not already exist.
-// This schedule runs every 20 seconds to capture governance poll snapshots.
+// This schedule runs every 5 minutes to capture governance poll snapshots.
 func (a *App) EnsurePollSnapshotSchedule(ctx context.Context, chainID string) error {
 	// Convert string chainID to uint64
 	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
@@ -243,9 +237,45 @@ func (a *App) EnsurePollSnapshotSchedule(ctx context.Context, chainID string) er
 			ctx,
 			client.ScheduleOptions{
 				ID:   id,
-				Spec: a.TemporalClient.TwentySecondSpec(),
+				Spec: a.TemporalClient.FiveMinuteSpec(),
 				Action: &client.ScheduleWorkflowAction{
 					Workflow:  indexer.PollSnapshotWorkflowName,
+					Args:      []interface{}{}, // No input args needed
+					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+				},
+			},
+		)
+		return scheduleErr
+	}
+	return err
+}
+
+// EnsureProposalSnapshotSchedule ensures the proposal snapshot schedule is created if it does not already exist.
+// This schedule runs every 5 minutes to capture governance proposal snapshots.
+func (a *App) EnsureProposalSnapshotSchedule(ctx context.Context, chainID string) error {
+	// Convert string chainID to uint64
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	id := a.TemporalClient.GetProposalSnapshotScheduleID(chainIDUint)
+	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
+	_, err := h.Describe(ctx)
+	if err == nil {
+		a.Logger.Info("Proposal snapshot schedule already exists", zap.String("id", id), zap.String("chainID", chainID))
+		return nil
+	}
+
+	var notFound *serviceerror.NotFound
+	if errors.As(err, &notFound) {
+		a.Logger.Info("Creating proposal snapshot schedule", zap.String("id", id))
+		_, scheduleErr := a.TemporalClient.TSClient.Create(
+			ctx,
+			client.ScheduleOptions{
+				ID:   id,
+				Spec: a.TemporalClient.FiveMinuteSpec(),
+				Action: &client.ScheduleWorkflowAction{
+					Workflow:  indexer.ProposalSnapshotWorkflowName,
 					Args:      []interface{}{}, // No input args needed
 					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
 				},
@@ -267,6 +297,10 @@ func (a *App) EnsureChainSchedules(ctx context.Context, chainID string) error {
 	}
 
 	if err := a.EnsurePollSnapshotSchedule(ctx, chainID); err != nil {
+		return err
+	}
+
+	if err := a.EnsureProposalSnapshotSchedule(ctx, chainID); err != nil {
 		return err
 	}
 
@@ -307,15 +341,22 @@ func (a *App) EnsureCrossChainCompactionSchedule(ctx context.Context) error {
 // Returns the store and a boolean indicating if the chain was loaded successfully.
 func (a *App) LoadChainStore(ctx context.Context, chainID string) (chainstore.Store, bool) {
 	if store, ok := a.ChainsDB.Load(chainID); ok {
+		a.Logger.Debug("Chain store loaded from cache", zap.String("chainID", chainID))
 		return store, true
 	}
+
+	a.Logger.Info("Chain store not in cache, creating new connection", zap.String("chainID", chainID))
 
 	// Try to create the store if it doesn't exist
 	store, err := a.NewChainDb(ctx, chainID)
 	if err != nil {
-		a.Logger.Error("Failed to load chain store", zap.String("chainID", chainID), zap.Error(err))
+		a.Logger.Error("Failed to create new chain store",
+			zap.String("chainID", chainID),
+			zap.Error(err),
+			zap.String("error_detail", fmt.Sprintf("%+v", err)))
 		return nil, false
 	}
 
+	a.Logger.Info("Successfully created new chain store", zap.String("chainID", chainID))
 	return store, true
 }

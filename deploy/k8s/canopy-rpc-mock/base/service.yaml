@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: canopy-rpc-mock
+spec:
+  selector:
+    app: canopy-rpc-mock
+  ports:
+    # Chain 1 (ID 5) on port 60000
+    - name: chain-5
+      port: 60000
+      targetPort: 60000
+    # Chain 2 (ID 6) on port 60001
+    - name: chain-6
+      port: 60001
+      targetPort: 60001

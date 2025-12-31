@@ -43,20 +43,14 @@ func (ac *Context) PrepareIndexBlock(ctx context.Context, in types.ActivityIndex
 		return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("block_lookup_failed", "chain_db_error", err)
 	}
 
+	// Skip if block already exists and this is not a reindex operation
 	if !in.Reindex && exists {
 		durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 		return types.ActivityPrepareIndexBlockOutput{Skip: true, DurationMs: durationMs}, nil
 	}
 
-	if in.Reindex {
-		if err := chainDb.DeleteTransactions(ctx, in.Height); err != nil {
-			return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("delete_transactions_failed", "chain_db_error", err)
-		}
-		if err := chainDb.DeleteBlock(ctx, in.Height); err != nil {
-			return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("delete_block_failed", "chain_db_error", err)
-		}
-	}
-
+	// For reindex, proceed with indexing (no delete step needed)
+	// ReplacingMergeTree automatically deduplicates based on ClickHouse internal metadata
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 	return types.ActivityPrepareIndexBlockOutput{Skip: false, DurationMs: durationMs}, nil
 }
@@ -136,9 +130,10 @@ func (ac *Context) GetLatestHead(ctx context.Context) (uint64, error) {
 		}(ep)
 	}
 
-	// Collect results and update database
+	// Collect all results first, then batch update database
 	var maxHeight uint64
 	var healthyCount int
+	healthUpdates := make([]*adminmodels.RPCEndpoint, 0, len(endpoints))
 
 	for i := 0; i < len(endpoints); i++ {
 		r := <-results
@@ -150,8 +145,8 @@ func (ac *Context) GetLatestHead(ctx context.Context) (uint64, error) {
 			errMsg = r.err.Error()
 		}
 
-		// Update individual endpoint health in DB
-		upsertErr := ac.AdminDB.UpsertEndpointHealth(ctx, &adminmodels.RPCEndpoint{
+		// Collect health update (will batch upsert below)
+		healthUpdates = append(healthUpdates, &adminmodels.RPCEndpoint{
 			ChainID:   ac.ChainID,
 			Endpoint:  r.endpoint,
 			Status:    status,
@@ -160,12 +155,6 @@ func (ac *Context) GetLatestHead(ctx context.Context) (uint64, error) {
 			Error:     errMsg,
 			UpdatedAt: time.Now().UTC(),
 		})
-		if upsertErr != nil {
-			logger.Warn("failed to update endpoint health",
-				zap.String("endpoint", r.endpoint),
-				zap.Error(upsertErr),
-			)
-		}
 
 		if r.err == nil {
 			healthyCount++
@@ -174,6 +163,21 @@ func (ac *Context) GetLatestHead(ctx context.Context) (uint64, error) {
 			}
 		}
 	}
+
+	// Batch upsert all endpoint health records in parallel for fast responses
+	pool := pond.NewPool(len(healthUpdates))
+	for _, update := range healthUpdates {
+		update := update // capture loop variable
+		pool.Submit(func() {
+			if upsertErr := ac.AdminDB.UpsertEndpointHealth(ctx, update); upsertErr != nil {
+				logger.Warn("failed to update endpoint health",
+					zap.String("endpoint", update.Endpoint),
+					zap.Error(upsertErr),
+				)
+			}
+		})
+	}
+	pool.StopAndWait()
 
 	// Update chain-level RPC health (aggregate status)
 	if healthyCount == 0 {

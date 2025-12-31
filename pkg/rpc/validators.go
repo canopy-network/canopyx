@@ -3,6 +3,10 @@ package rpc
 import (
 	"context"
 	"fmt"
+	"net/http"
+
+	"github.com/canopy-network/canopy/fsm"
+	"github.com/canopy-network/canopy/lib"
 )
 
 // Path constants moved to paths.go for centralized management
@@ -19,13 +23,13 @@ import (
 //   - height: The block height to query validators for (0 = latest)
 //
 // Returns:
-//   - []*RpcValidator: All validators at the specified height
+//   - []*fsm.Validator: All validators at the specified height (from canopy/fsm)
 //   - error: If the endpoint is unreachable or returns invalid data
 //
 // This function fetches all pages in parallel for performance.
-func (c *HTTPClient) ValidatorsByHeight(ctx context.Context, height uint64) ([]*RpcValidator, error) {
+func (c *HTTPClient) ValidatorsByHeight(ctx context.Context, height uint64) ([]*fsm.Validator, error) {
 	req := NewQueryByHeightRequest(height)
-	validators, err := ListPaged[*RpcValidator](ctx, c, validatorsPath, req)
+	validators, err := ListPaged[*fsm.Validator](ctx, c, validatorsPath, req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch validators at height %d: %w", height, err)
 	}
@@ -36,90 +40,62 @@ func (c *HTTPClient) ValidatorsByHeight(ctx context.Context, height uint64) ([]*
 // The RPC endpoint returns non-signer information for validators that have missed blocks
 // within the non-sign tracking window.
 //
-// The Canopy RPC endpoint /v1/query/non-signers supports:
+// The Canopy RPC endpoint /v1/query/non-signers:
 //   - height: uint64 - Block height to query (0 = latest)
-//   - pageNumber: int - Page number (1-indexed, default: 1)
-//   - perPage: int - Results per page (default: 1000, max: 1000)
+//   - Returns: Plain array of NonSigner objects (NOT paginated)
 //
 // Parameters:
 //   - height: The block height to query non-signers for (0 = latest)
 //
 // Returns:
-//   - []*RpcNonSigner: All non-signers at the specified height
-//   - error: Empty list if the endpoint doesn't exist or returns an error
+//   - []*fsm.NonSigner: All non-signers at the specified height (from canopy/fsm)
+//   - error: If the endpoint is unreachable or returns invalid data
 //
-// This function fetches all pages in parallel for performance.
-// Note: Returns an empty list (not an error) if the endpoint is not available,
-// for backward compatibility with older Canopy versions.
-func (c *HTTPClient) NonSignersByHeight(ctx context.Context, height uint64) ([]*RpcNonSigner, error) {
+// IMPORTANT: This method fails loudly on any error to prevent silent data loss
+// and expensive reindexing. Ensure RPC endpoints are properly configured.
+func (c *HTTPClient) NonSignersByHeight(ctx context.Context, height uint64) ([]*fsm.NonSigner, error) {
 	req := NewQueryByHeightRequest(height)
-	nonSigners, err := ListPaged[*RpcNonSigner](ctx, c, nonSignersPath, req)
-	if err != nil {
-		// If the endpoint doesn't exist or returns an error, return empty list
-		// This handles cases where the RPC doesn't support this endpoint yet
-		return []*RpcNonSigner{}, nil
+	var nonSigners []*fsm.NonSigner
+	if err := c.doJSON(ctx, http.MethodPost, nonSignersPath, req, &nonSigners); err != nil {
+		return nil, fmt.Errorf("fetch non-signers at height %d: %w", height, err)
 	}
 	return nonSigners, nil
 }
 
-// RpcValidator represents a validator returned from the RPC.
-// This matches the Validator protobuf structure from Canopy (fsm/validator.pb.go:45-76).
-// The structure contains exactly 10 fields that map directly to Canopy's validator state.
-type RpcValidator struct {
-	Address         string   `json:"address"`              // Hex-encoded validator address
-	PublicKey       string   `json:"publicKey"`            // Hex-encoded Ed25519 public key
-	NetAddress      string   `json:"netAddress"`           // P2P network address (host:port)
-	StakedAmount    uint64   `json:"stakedAmount"`         // Amount staked by validator in uCNPY
-	Committees      []uint64 `json:"committees,omitempty"` // Committee IDs validator is assigned to
-	MaxPausedHeight uint64   `json:"maxPausedHeight"`      // Block height when pause expires (0 = not paused)
-	UnstakingHeight uint64   `json:"unstakingHeight"`      // Block height when unstaking completes (0 = not unstaking)
-	Output          string   `json:"output,omitempty"`     // Reward destination address (hex-encoded, empty = self)
-	Delegate        bool     `json:"delegate,omitempty"`   // Whether validator accepts delegations
-	Compound        bool     `json:"compound,omitempty"`   // Whether rewards auto-compound into stake
-}
+// NOTE: RpcValidator has been removed.
+// Use fsm.Validator from github.com/canopy-network/canopy/fsm instead.
+// This type is defined in the Canopy protocol and has proper JSON marshaling support.
 
-// RpcNonSigner represents non-signing info returned from the RPC.
-// This matches the NonSigner protobuf structure from Canopy (fsm/validator.pb.go:236-244).
-// Tracks validators that have failed to sign blocks within the non-sign tracking window.
-type RpcNonSigner struct {
-	Address string `json:"address"` // Hex-encoded validator address
-	Counter uint64 `json:"counter"` // Number of blocks missed within the tracking window
-}
+// NOTE: RpcNonSigner has been removed.
+// Use fsm.NonSigner from github.com/canopy-network/canopy/fsm instead.
+// This type is defined in the Canopy protocol and has proper JSON marshaling support.
 
 // DoubleSignersByHeight returns all double-signers (validators with Byzantine behavior) at a specific block height.
 // The RPC endpoint returns double-signer information for validators that have signed multiple conflicting blocks
 // at the same height (Byzantine fault).
 //
-// The Canopy RPC endpoint /v1/query/double-signers supports:
+// The Canopy RPC endpoint /v1/query/double-signers:
 //   - height: uint64 - Block height to query (0 = latest)
-//   - pageNumber: int - Page number (1-indexed, default: 1)
-//   - perPage: int - Results per page (default: 1000, max: 1000)
+//   - Returns: Plain array of DoubleSigner objects (NOT paginated)
 //
 // Parameters:
 //   - height: The block height to query double-signers for (0 = latest)
 //
 // Returns:
-//   - []*RpcDoubleSigner: All double-signers at the specified height
-//   - error: Empty list if the endpoint doesn't exist or returns an error
+//   - []*lib.DoubleSigner: All double-signers at the specified height (from canopy/lib)
+//   - error: If the endpoint is unreachable or returns invalid data
 //
-// This function fetches all pages in parallel for performance.
-// Note: Returns an empty list (not an error) if the endpoint is not available,
-// for backward compatibility with older Canopy versions.
-func (c *HTTPClient) DoubleSignersByHeight(ctx context.Context, height uint64) ([]*RpcDoubleSigner, error) {
+// IMPORTANT: This method fails loudly on any error to prevent silent data loss
+// and expensive reindexing. Ensure RPC endpoints are properly configured.
+func (c *HTTPClient) DoubleSignersByHeight(ctx context.Context, height uint64) ([]*lib.DoubleSigner, error) {
 	req := NewQueryByHeightRequest(height)
-	doubleSigners, err := ListPaged[*RpcDoubleSigner](ctx, c, doubleSignersPath, req)
-	if err != nil {
-		// If the endpoint doesn't exist or returns an error, return empty list
-		// This handles cases where the RPC doesn't support this endpoint yet
-		return []*RpcDoubleSigner{}, nil
+	var doubleSigners []*lib.DoubleSigner
+	if err := c.doJSON(ctx, http.MethodPost, doubleSignersPath, req, &doubleSigners); err != nil {
+		return nil, fmt.Errorf("fetch double-signers at height %d: %w", height, err)
 	}
 	return doubleSigners, nil
 }
 
-// RpcDoubleSigner represents double-signing evidence returned from the RPC.
-// This matches the DoubleSigner protobuf structure from Canopy (fsm/byzantine.go).
-// Tracks validators that have signed multiple conflicting blocks at the same height (Byzantine fault).
-type RpcDoubleSigner struct {
-	Address           string   `json:"address"` // Hex-encoded validator address
-	InfractionHeights []uint64 `json:"heights"` // Block heights where double-signing occurred
-}
+// NOTE: RpcDoubleSigner has been removed.
+// Use lib.DoubleSigner from github.com/canopy-network/canopy/lib instead.
+// This type is defined in the Canopy protocol and has proper JSON marshaling support.

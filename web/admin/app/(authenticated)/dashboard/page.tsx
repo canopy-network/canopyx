@@ -58,7 +58,7 @@ type ChainStatusMap = Record<string, ChainStatus>
 
 type SortField = 'name' | 'last_indexed' | 'ops_queue' | 'indexer_queue' | 'health'
 type SortDirection = 'asc' | 'desc'
-type FilterMode = 'all' | 'active' | 'paused' | 'issues'
+type FilterMode = 'all' | 'active' | 'paused' | 'deleted' | 'issues'
 
 function formatNumber(n: number | undefined) {
   if (!n) return '0'
@@ -212,7 +212,8 @@ export default function DashboardPage() {
   const chains = useMemo(() => Object.values(status), [status])
   const totalChains = chains.length
   const activeChains = chains.filter((c) => !c.paused && !c.deleted).length
-  const pausedChains = chains.filter((c) => c.paused).length
+  const pausedChains = chains.filter((c) => c.paused && !c.deleted).length
+  const deletedChains = chains.filter((c) => c.deleted).length
 
   const avgProgress = useMemo(() => {
     const activeNonDeleted = chains.filter((c) => !c.deleted && !c.paused)
@@ -240,12 +241,16 @@ export default function DashboardPage() {
         filtered = chains.filter((c) => !c.paused && !c.deleted)
         break
       case 'paused':
-        filtered = chains.filter((c) => c.paused)
+        filtered = chains.filter((c) => c.paused && !c.deleted)
+        break
+      case 'deleted':
+        filtered = chains.filter((c) => c.deleted)
         break
       case 'issues':
-        filtered = chains.filter((c) => !isChainHealthy(c))
+        filtered = chains.filter((c) => !isChainHealthy(c) && !c.deleted)
         break
       default:
+        // 'all' - show everything including deleted
         filtered = chains
     }
     return filtered
@@ -492,6 +497,12 @@ export default function DashboardPage() {
             className={filterMode === 'paused' ? 'btn text-xs' : 'btn-secondary text-xs'}
           >
             Paused ({pausedChains})
+          </button>
+          <button
+            onClick={() => setFilterMode('deleted')}
+            className={filterMode === 'deleted' ? 'btn text-xs bg-rose-600 hover:bg-rose-700 border-rose-600' : deletedChains > 0 ? 'btn-secondary text-xs border-amber-500/50 bg-amber-500/10 hover:border-amber-400' : 'btn-secondary text-xs'}
+          >
+            Deleted ({deletedChains})
           </button>
           <button
             onClick={() => setFilterMode('issues')}

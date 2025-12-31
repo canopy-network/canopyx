@@ -465,6 +465,11 @@ func (c *Controller) readClientMessages(ctx context.Context, conn *websocket.Con
 
 	// Set pong handler to reset read deadline
 	conn.SetPongHandler(func(string) error {
+		// Defensive: check if connection is still valid
+		if conn == nil {
+			c.App.Logger.Warn("Pong handler called with nil connection")
+			return fmt.Errorf("connection is nil")
+		}
 		err := conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		if err != nil {
 			c.App.Logger.Error("Failed to reset read deadline", zap.Error(err))

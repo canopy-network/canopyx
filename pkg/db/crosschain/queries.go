@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 
@@ -18,30 +17,30 @@ const (
 
 // QueryLatestAccounts returns the latest state of accounts across chains.
 // Uses LIMIT BY to ensure only the most recent snapshot for each (chain_id, address) pair.
-func (s *Store) QueryLatestAccounts(ctx context.Context, opts QueryOptions) ([]AccountCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestAccounts(ctx context.Context, opts QueryOptions) ([]AccountCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.AccountsProductionTableName,
 		PrimaryKey: []string{"chain_id", "address", "height"},
 	}
 
-	dest := &[]AccountCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]AccountCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestValidators returns the latest state of validators across chains.
-func (s *Store) QueryLatestValidators(ctx context.Context, opts QueryOptions) ([]ValidatorCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestValidators(ctx context.Context, opts QueryOptions) ([]ValidatorCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.ValidatorsProductionTableName,
 		PrimaryKey: []string{"chain_id", "address", "height"},
 	}
 
 	dest := &[]ValidatorCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, dest)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -50,172 +49,220 @@ func (s *Store) QueryLatestValidators(ctx context.Context, opts QueryOptions) ([
 }
 
 // QueryLatestValidatorSigningInfo returns the latest validator signing info across chains.
-func (s *Store) QueryLatestValidatorSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorSigningInfoCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestValidatorSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorSigningInfoCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.ValidatorSigningInfoProductionTableName,
 		PrimaryKey: []string{"chain_id", "address", "height"},
 	}
 
-	dest := &[]ValidatorSigningInfoCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]ValidatorSigningInfoCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestValidatorDoubleSigningInfo returns the latest validator double signing info across chains.
-func (s *Store) QueryLatestValidatorDoubleSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorDoubleSigningInfoCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestValidatorDoubleSigningInfo(ctx context.Context, opts QueryOptions) ([]ValidatorDoubleSigningInfoCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.ValidatorDoubleSigningInfoProductionTableName,
 		PrimaryKey: []string{"chain_id", "address", "height"},
 	}
 
-	dest := &[]ValidatorDoubleSigningInfoCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]ValidatorDoubleSigningInfoCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestPools returns the latest state of pools across chains.
-func (s *Store) QueryLatestPools(ctx context.Context, opts QueryOptions) ([]PoolCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestPools(ctx context.Context, opts QueryOptions) ([]PoolCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.PoolsProductionTableName,
 		PrimaryKey: []string{"chain_id", "pool_id", "height"},
 	}
 
-	dest := &[]PoolCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]PoolCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestPoolPointsByHolder returns the latest pool points across chains.
-func (s *Store) QueryLatestPoolPointsByHolder(ctx context.Context, opts QueryOptions) ([]PoolPointsByHolderCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestPoolPointsByHolder(ctx context.Context, opts QueryOptions) ([]PoolPointsByHolderCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.PoolPointsByHolderProductionTableName,
 		PrimaryKey: []string{"chain_id", "address", "pool_id", "height"},
 	}
 
-	dest := &[]PoolPointsByHolderCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]PoolPointsByHolderCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestOrders returns the latest state of orders across chains.
-func (s *Store) QueryLatestOrders(ctx context.Context, opts QueryOptions) ([]OrderCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestOrders(ctx context.Context, opts QueryOptions) ([]OrderCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.OrdersProductionTableName,
 		PrimaryKey: []string{"chain_id", "order_id", "height"},
 	}
 
-	dest := &[]OrderCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]OrderCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestDexOrders returns the latest state of DEX orders across chains.
-func (s *Store) QueryLatestDexOrders(ctx context.Context, opts QueryOptions) ([]DexOrderCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestDexOrders(ctx context.Context, opts QueryOptions) ([]DexOrderCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.DexOrdersProductionTableName,
 		PrimaryKey: []string{"chain_id", "order_id", "height"},
 	}
 
-	dest := &[]DexOrderCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]DexOrderCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestDexDeposits returns the latest state of DEX deposits across chains.
-func (s *Store) QueryLatestDexDeposits(ctx context.Context, opts QueryOptions) ([]DexDepositCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestDexDeposits(ctx context.Context, opts QueryOptions) ([]DexDepositCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.DexDepositsProductionTableName,
 		PrimaryKey: []string{"chain_id", "order_id", "height"},
 	}
 
-	dest := &[]DexDepositCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]DexDepositCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestDexWithdrawals returns the latest state of DEX withdrawals across chains.
-func (s *Store) QueryLatestDexWithdrawals(ctx context.Context, opts QueryOptions) ([]DexWithdrawalCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestDexWithdrawals(ctx context.Context, opts QueryOptions) ([]DexWithdrawalCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.DexWithdrawalsProductionTableName,
 		PrimaryKey: []string{"chain_id", "order_id", "height"},
 	}
 
-	dest := &[]DexWithdrawalCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]DexWithdrawalCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
 }
 
 // QueryLatestBlockSummaries returns the latest block summaries across chains.
-func (s *Store) QueryLatestBlockSummaries(ctx context.Context, opts QueryOptions) ([]BlockSummaryCrossChain, *QueryMetadata, error) {
+func (db *DB) QueryLatestBlockSummaries(ctx context.Context, opts QueryOptions) ([]BlockSummaryCrossChain, *QueryMetadata, error) {
 	config := TableConfig{
 		TableName:  indexer.BlockSummariesProductionTableName,
 		PrimaryKey: []string{"chain_id", "height"},
 	}
 
-	dest := &[]BlockSummaryCrossChain{}
-	metadata, err := s.queryLatestEntityTyped(ctx, config, opts, dest)
+	dest := make([]BlockSummaryCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return *dest, metadata, nil
+	return dest, metadata, nil
+}
+
+// QueryLatestCommitteePayments returns the latest committee payments across chains.
+func (db *DB) QueryLatestCommitteePayments(ctx context.Context, opts QueryOptions) ([]CommitteePaymentCrossChain, *QueryMetadata, error) {
+	config := TableConfig{
+		TableName:  indexer.CommitteePaymentsProductionTableName,
+		PrimaryKey: []string{"chain_id", "committee_id", "address", "height"},
+	}
+
+	dest := make([]CommitteePaymentCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return dest, metadata, nil
+}
+
+// QueryLatestEvents returns the latest events across chains.
+func (db *DB) QueryLatestEvents(ctx context.Context, opts QueryOptions) ([]EventCrossChain, *QueryMetadata, error) {
+	config := TableConfig{
+		TableName:  indexer.EventsProductionTableName,
+		PrimaryKey: []string{"chain_id", "event_type", "address", "reference", "height"},
+	}
+
+	dest := make([]EventCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return dest, metadata, nil
+}
+
+// QueryLatestTransactions returns the latest transactions across chains.
+func (db *DB) QueryLatestTransactions(ctx context.Context, opts QueryOptions) ([]TransactionCrossChain, *QueryMetadata, error) {
+	config := TableConfig{
+		TableName:  indexer.TxsProductionTableName,
+		PrimaryKey: []string{"chain_id", "tx_hash", "height"},
+	}
+
+	dest := make([]TransactionCrossChain, 0)
+	metadata, err := db.queryLatestEntityTyped(ctx, &config, opts, &dest)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return dest, metadata, nil
 }
 
 // QueryLatestEntity is a generic method for querying any entity type.
 // Returns results as maps for flexibility. Used by admin-web for debugging.
-// For production use, prefer the strongly-typed methods above.
-func (s *Store) QueryLatestEntity(ctx context.Context, entityName string, opts QueryOptions) ([]map[string]interface{}, *QueryMetadata, error) {
+// For production use, prefer the strongly typed methods above.
+func (db *DB) QueryLatestEntity(ctx context.Context, entityName string, opts QueryOptions) ([]map[string]interface{}, *QueryMetadata, error) {
 	// Get entity configuration
-	config, err := s.getEntityConfigByName(entityName)
+	config, err := db.getEntityConfigByName(entityName)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Create strongly-typed slice for scanning
+	// Create a strongly typed slice for scanning
 	dest := createCrossChainEntitySlice(config.TableName)
 	if dest == nil {
 		return nil, nil, fmt.Errorf("unsupported entity type: %s", entityName)
 	}
 
 	// Execute query
-	metadata, err := s.queryLatestEntityTyped(ctx, *config, opts, dest)
+	metadata, err := db.queryLatestEntityTyped(ctx, config, opts, dest)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Convert strongly-typed results to maps using JSON marshal/unmarshal
+	// Convert a strongly typed result to maps using JSON marshal/unmarshal
 	// This is the same pattern used in single-chain entity queries
 	jsonBytes, err := json.Marshal(dest)
 	if err != nil {
@@ -232,7 +279,7 @@ func (s *Store) QueryLatestEntity(ctx context.Context, entityName string, opts Q
 
 // queryLatestEntityTyped is the core query method used by all entity-specific methods.
 // It executes a query with LIMIT BY to get only the latest state per entity.
-func (s *Store) queryLatestEntityTyped(ctx context.Context, config TableConfig, opts QueryOptions, dest interface{}) (*QueryMetadata, error) {
+func (db *DB) queryLatestEntityTyped(ctx context.Context, config *TableConfig, opts QueryOptions, dest interface{}) (*QueryMetadata, error) {
 	// Apply defaults
 	opts = applyQueryDefaults(opts)
 
@@ -288,13 +335,13 @@ func (s *Store) queryLatestEntityTyped(ctx context.Context, config TableConfig, 
 	}
 	orderClause := fmt.Sprintf("ORDER BY %s %s", opts.OrderBy, orderDirection)
 
-	// Build LIMIT BY clause to get only latest state per entity
+	// Build LIMIT BY clause to get only the latest state per entity
 	// Primary key is always: [chain_id, entity_id..., height]
 	// We want LIMIT BY all columns except height
 	limitByColumns := config.PrimaryKey[:len(config.PrimaryKey)-1]
 	limitByClause := fmt.Sprintf("LIMIT 1 BY %s", strings.Join(limitByColumns, ", "))
 
-	globalTableName := config.TableName + "_global"
+	globalTableName := db.getGlobalTableName(config.TableName)
 
 	// Query for total count of UNIQUE entities (after LIMIT BY)
 	// We need to count only the latest state per entity, not all historical snapshots
@@ -308,17 +355,12 @@ func (s *Store) queryLatestEntityTyped(ctx context.Context, config TableConfig, 
 			%s
 			%s
 		)
-	`, s.Name, globalTableName, whereClause, orderClause, limitByClause)
-
-	log.Printf("[DEBUG] queryLatestEntityTyped: countQuery=%s args=%v", countQuery, args)
+	`, db.Name, globalTableName, whereClause, orderClause, limitByClause)
 
 	var total uint64
-	if err := s.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		log.Printf("[DEBUG] queryLatestEntityTyped: count query error=%v", err)
+	if err := db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, fmt.Errorf("failed to query count: %w", err)
 	}
-
-	log.Printf("[DEBUG] queryLatestEntityTyped: count result total=%d", total)
 
 	// Query for data with pagination
 	// LIMIT BY must come before LIMIT/OFFSET
@@ -329,15 +371,12 @@ func (s *Store) queryLatestEntityTyped(ctx context.Context, config TableConfig, 
 		%s
 		%s
 		LIMIT ? OFFSET ?
-	`, s.Name, globalTableName, whereClause, orderClause, limitByClause)
+	`, db.Name, globalTableName, whereClause, orderClause, limitByClause)
 
 	dataArgs := append(args, opts.Limit+1, opts.Offset) // Request limit+1 to detect if there are more results
 
-	log.Printf("[DEBUG] queryLatestEntityTyped: dataQuery=%s dataArgs=%v", dataQuery, dataArgs)
-
 	// Execute query
-	if err := s.Select(ctx, dest, dataQuery, dataArgs...); err != nil {
-		log.Printf("[DEBUG] queryLatestEntityTyped: data query error=%v", err)
+	if err := db.SelectWithFinal(ctx, dest, dataQuery, dataArgs...); err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
 
@@ -363,7 +402,7 @@ func (s *Store) queryLatestEntityTyped(ctx context.Context, config TableConfig, 
 
 // getEntityConfigByName returns the entity configuration for a given entity name.
 // Entity names are the user-facing names like "accounts", "validators", etc.
-func (s *Store) getEntityConfigByName(entityName string) (*TableConfig, error) {
+func (db *DB) getEntityConfigByName(entityName string) (*TableConfig, error) {
 	// Map entity names to table names
 	entityToTableName := map[string]string{
 		"accounts":                      indexer.AccountsProductionTableName,
@@ -377,6 +416,9 @@ func (s *Store) getEntityConfigByName(entityName string) (*TableConfig, error) {
 		"dex-deposits":                  indexer.DexDepositsProductionTableName,
 		"dex-withdrawals":               indexer.DexWithdrawalsProductionTableName,
 		"block-summaries":               indexer.BlockSummariesProductionTableName,
+		"committee-payments":            indexer.CommitteePaymentsProductionTableName,
+		"events":                        indexer.EventsProductionTableName,
+		"transactions":                  indexer.TxsProductionTableName,
 	}
 
 	tableName, ok := entityToTableName[entityName]
@@ -420,6 +462,12 @@ func createCrossChainEntitySlice(tableName string) interface{} {
 		return &[]DexWithdrawalCrossChain{}
 	case indexer.BlockSummariesProductionTableName:
 		return &[]BlockSummaryCrossChain{}
+	case indexer.CommitteePaymentsProductionTableName:
+		return &[]CommitteePaymentCrossChain{}
+	case indexer.EventsProductionTableName:
+		return &[]EventCrossChain{}
+	case indexer.TxsProductionTableName:
+		return &[]TransactionCrossChain{}
 	default:
 		return nil
 	}

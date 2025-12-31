@@ -1,15 +1,17 @@
 package activity
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/alitto/pond/v2"
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.uber.org/zap"
 )
 
@@ -52,8 +54,8 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 
 	// Parallel RPC fetch using shared worker pool for performance
 	var (
-		currentOrders  []*rpc.RpcOrder
-		previousOrders []*rpc.RpcOrder
+		currentOrders  []*lib.SellOrder
+		previousOrders []*lib.SellOrder
 		currentErr     error
 		previousErr    error
 	)
@@ -101,17 +103,17 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 	}
 
 	// Build previous state map for O(1) lookups
-	// Map key is orderID, value is the full order state
-	prevMap := make(map[string]*rpc.RpcOrder, len(previousOrders))
+	// Map key is orderID (hex string), value is the full order state
+	prevMap := make(map[string]*lib.SellOrder, len(previousOrders))
 	for _, order := range previousOrders {
-		prevMap[order.ID] = order
+		prevMap[hex.EncodeToString(order.Id)] = order
 	}
 
 	// Query order lifecycle events from staging table (event-driven state tracking)
 	// EventOrderBookSwap events indicate when an order transitions to "filled" state
 	orderEvents, err := chainDb.GetEventsByTypeAndHeight(
 		ctx, input.Height, true,
-		rpc.EventTypeAsStr(rpc.EventTypeOrderBookSwap),
+		string(lib.EventTypeOrderBookSwap),
 	)
 	if err != nil {
 		return types.ActivityIndexOrdersOutput{}, fmt.Errorf("query order events at height %d: %w", input.Height, err)
@@ -134,10 +136,11 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 	var numOrdersNew, numOrdersOpen, numOrdersFilled uint32
 
 	for _, curr := range currentOrders {
-		prev, existed := prevMap[curr.ID]
+		currID := hex.EncodeToString(curr.Id)
+		prev, existed := prevMap[currID]
 
 		// Check if the order has a swap event (state transition to "complete")
-		_, hasSwapEvent := swapEvents[curr.ID]
+		_, hasSwapEvent := swapEvents[currID]
 
 		// Count new orders
 		if !existed {
@@ -166,18 +169,18 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 			}
 
 			changedOrders = append(changedOrders, &indexer.Order{
-				OrderID:              curr.ID,
+				OrderID:              currID,
 				Height:               input.Height,
 				HeightTime:           input.BlockTime,
 				Committee:            curr.Committee,
-				Data:                 curr.Data,
+				Data:                 hex.EncodeToString(curr.Data),
 				AmountForSale:        curr.AmountForSale,
 				RequestedAmount:      curr.RequestedAmount,
-				SellerReceiveAddress: curr.SellerReceiveAddress,
-				BuyerSendAddress:     curr.BuyerSendAddress,
-				BuyerReceiveAddress:  curr.BuyerReceiveAddress,
+				SellerReceiveAddress: hex.EncodeToString(curr.SellerReceiveAddress),
+				BuyerSendAddress:     hex.EncodeToString(curr.BuyerSendAddress),
+				BuyerReceiveAddress:  hex.EncodeToString(curr.BuyerReceiveAddress),
 				BuyerChainDeadline:   curr.BuyerChainDeadline,
-				SellersSendAddress:   curr.SellersSendAddress,
+				SellersSendAddress:   hex.EncodeToString(curr.SellersSendAddress),
 				Status:               status,
 			})
 		}
@@ -189,7 +192,7 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 		// Check if order exists at current height
 		_, existsNow := func() (bool, bool) {
 			for _, curr := range currentOrders {
-				if curr.ID == prevID {
+				if hex.EncodeToString(curr.Id) == prevID {
 					return true, true
 				}
 			}
@@ -203,18 +206,18 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 				numOrdersCancelled++
 				// Order was canceled - create a final snapshot with "canceled" status
 				changedOrders = append(changedOrders, &indexer.Order{
-					OrderID:              prevOrder.ID,
+					OrderID:              prevID,
 					Height:               input.Height,
 					HeightTime:           input.BlockTime,
 					Committee:            prevOrder.Committee,
-					Data:                 prevOrder.Data,
+					Data:                 hex.EncodeToString(prevOrder.Data),
 					AmountForSale:        prevOrder.AmountForSale,
 					RequestedAmount:      prevOrder.RequestedAmount,
-					SellerReceiveAddress: prevOrder.SellerReceiveAddress,
-					BuyerSendAddress:     prevOrder.BuyerSendAddress,
-					BuyerReceiveAddress:  prevOrder.BuyerReceiveAddress,
+					SellerReceiveAddress: hex.EncodeToString(prevOrder.SellerReceiveAddress),
+					BuyerSendAddress:     hex.EncodeToString(prevOrder.BuyerSendAddress),
+					BuyerReceiveAddress:  hex.EncodeToString(prevOrder.BuyerReceiveAddress),
 					BuyerChainDeadline:   prevOrder.BuyerChainDeadline,
-					SellersSendAddress:   prevOrder.SellersSendAddress,
+					SellersSendAddress:   hex.EncodeToString(prevOrder.SellersSendAddress),
 					Status:               indexer.OrderStatusCanceled,
 				})
 			}
@@ -250,9 +253,9 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 
 // orderStateChanged compares two order states to detect changes.
 // Returns true if any significant field has changed.
-func orderStateChanged(prev, curr *rpc.RpcOrder) bool {
-	// Check all significant fields
-	if prev.Data != curr.Data {
+func orderStateChanged(prev, curr *lib.SellOrder) bool {
+	// Check all significant fields (use bytes.Equal for []byte fields)
+	if !bytes.Equal(prev.Data, curr.Data) {
 		return true
 	}
 	if prev.AmountForSale != curr.AmountForSale {
@@ -261,19 +264,19 @@ func orderStateChanged(prev, curr *rpc.RpcOrder) bool {
 	if prev.RequestedAmount != curr.RequestedAmount {
 		return true
 	}
-	if prev.SellerReceiveAddress != curr.SellerReceiveAddress {
+	if !bytes.Equal(prev.SellerReceiveAddress, curr.SellerReceiveAddress) {
 		return true
 	}
-	if prev.BuyerSendAddress != curr.BuyerSendAddress {
+	if !bytes.Equal(prev.BuyerSendAddress, curr.BuyerSendAddress) {
 		return true
 	}
-	if prev.BuyerReceiveAddress != curr.BuyerReceiveAddress {
+	if !bytes.Equal(prev.BuyerReceiveAddress, curr.BuyerReceiveAddress) {
 		return true
 	}
 	if prev.BuyerChainDeadline != curr.BuyerChainDeadline {
 		return true
 	}
-	if prev.SellersSendAddress != curr.SellersSendAddress {
+	if !bytes.Equal(prev.SellersSendAddress, curr.SellersSendAddress) {
 		return true
 	}
 

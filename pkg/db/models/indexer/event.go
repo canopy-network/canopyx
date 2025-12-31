@@ -9,24 +9,34 @@ const EventsStagingTableName = "events_staging"
 
 // EventColumns defines the schema for the events table.
 // Nullable fields are used for type-specific event data.
+// Codecs are optimized for 15x compression ratio:
+// - DoubleDelta,LZ4 for sequential/monotonic values (height, timestamps)
+// - ZSTD(1) for strings (addresses, hashes, event_type)
+// - Delta,ZSTD(3) for gradually changing amounts
 var EventColumns = []ColumnDef{
-	{Name: "height", Type: "UInt64"},
-	{Name: "chain_id", Type: "UInt64"},
-	{Name: "address", Type: "String"},
-	{Name: "reference", Type: "String"},
-	{Name: "event_type", Type: "LowCardinality(String)"},
-	{Name: "amount", Type: "Nullable(UInt64)"},
-	{Name: "sold_amount", Type: "Nullable(UInt64)"},
-	{Name: "bought_amount", Type: "Nullable(UInt64)"},
-	{Name: "local_amount", Type: "Nullable(UInt64)"},
-	{Name: "remote_amount", Type: "Nullable(UInt64)"},
-	{Name: "success", Type: "Nullable(Bool)"},
-	{Name: "local_origin", Type: "Nullable(Bool)"},
-	{Name: "order_id", Type: "Nullable(String)"},
-	{Name: "points_received", Type: "Nullable(UInt64)"},
-	{Name: "points_burned", Type: "Nullable(UInt64)"},
+	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "chain_id", Type: "UInt64", Codec: "DoubleDelta, LZ4", CrossChainRename: "event_chain_id"},
+	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "reference", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "event_type", Type: "LowCardinality(String)", Codec: "ZSTD(1)"},
+	{Name: "block_height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "block_hash", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "sold_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "bought_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "local_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "remote_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "success", Type: "Nullable(Bool)", Codec: "ZSTD(1)"},
+	{Name: "local_origin", Type: "Nullable(Bool)", Codec: "ZSTD(1)"},
+	{Name: "order_id", Type: "Nullable(String)", Codec: "ZSTD(1)"},
+	{Name: "points_received", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "points_burned", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"},
+	{Name: "data", Type: "Nullable(String)", Codec: "ZSTD(1)"},
+	{Name: "seller_receive_address", Type: "Nullable(String)", Codec: "ZSTD(1)"},
+	{Name: "buyer_send_address", Type: "Nullable(String)", Codec: "ZSTD(1)"},
+	{Name: "sellers_send_address", Type: "Nullable(String)", Codec: "ZSTD(1)"},
 	{Name: "msg", Type: "String", Codec: "ZSTD(3)"},
-	{Name: "height_time", Type: "DateTime64(6)"},
+	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
 }
 
 // Event stores ALL event data emitted during block processing.
@@ -40,11 +50,13 @@ var EventColumns = []ColumnDef{
 // ClickHouse's columnar storage ensures queries only read the columns they need.
 type Event struct {
 	// Primary key (composite)
-	Height    uint64 `ch:"height" json:"height"`
-	ChainID   uint64 `ch:"chain_id" json:"chain_id"` // Which nested chain (committee) this event is for
-	Address   string `ch:"address" json:"address"`
-	Reference string `ch:"reference" json:"reference"`   // "begin_block", tx hash, or "end_block"
-	EventType string `ch:"event_type" json:"event_type"` // LowCardinality for efficient filtering
+	Height      uint64 `ch:"height" json:"height"`
+	ChainID     uint64 `ch:"chain_id" json:"chain_id"` // Which nested chain (committee) this event is for
+	Address     string `ch:"address" json:"address"`
+	Reference   string `ch:"reference" json:"reference"`       // "begin_block", tx hash, or "end_block"
+	EventType   string `ch:"event_type" json:"event_type"`     // LowCardinality for efficient filtering
+	BlockHeight uint64 `ch:"block_height" json:"block_height"` // Block number where event occurred
+	BlockHash   string `ch:"block_hash" json:"block_hash"`     // Hash of block where event occurred
 
 	// Extracted queryable fields (nullable - NULL when not applicable)
 	Amount         *uint64 `ch:"amount" json:"amount,omitempty"`
@@ -57,6 +69,12 @@ type Event struct {
 	OrderID        *string `ch:"order_id" json:"order_id,omitempty"`
 	PointsReceived *uint64 `ch:"points_received" json:"points_received,omitempty"`
 	PointsBurned   *uint64 `ch:"points_burned" json:"points_burned,omitempty"`
+
+	// OrderBookSwap-specific fields
+	Data                 *string `ch:"data" json:"data,omitempty"`
+	SellerReceiveAddress *string `ch:"seller_receive_address" json:"seller_receive_address,omitempty"`
+	BuyerSendAddress     *string `ch:"buyer_send_address" json:"buyer_send_address,omitempty"`
+	SellersSendAddress   *string `ch:"sellers_send_address" json:"sellers_send_address,omitempty"`
 
 	// Full message (compressed)
 	Msg string `ch:"msg" json:"msg"`

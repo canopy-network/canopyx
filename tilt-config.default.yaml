@@ -59,18 +59,18 @@ components:
                           # Enable this for: performance testing, debugging, demos
                           # Disable for: normal development, laptop environments
 
-  # --- Optional Blockchain Nodes ---
-  canopy: "off"           # Canopy blockchain node deployment mode
-                          # Options: "off" | "single" | "dual"
+  # --- Optional Mock Blockchain ---
+  canopy: true            # Canopy RPC Mock (lightweight mock blockchain for development)
+                          # true  - Deploy canopy-rpc-mock with configurable chains
+                          # false - No mock nodes (use external RPC endpoints from chains config)
                           #
-                          # "off"    - No Canopy nodes (use remote RPC endpoints)
-                          # "single" - Single legacy node (adds ~2GB RAM, +1 CPU)
-                          #            Use for: basic blockchain testing, single chain development
-                          # "dual"   - Dual nodes for DEX testing (adds ~4GB RAM, +2 CPU)
-                          #            Use for: DEX/liquidity pools, cross-chain operations
-                          #            Deploys: Node 1 (Chain ID 1) + Node 2 (Chain ID 2)
+                          # Benefits of mock:
+                          #   - Deterministic blocks (no timing issues)
+                          #   - Fast startup (~5 seconds vs minutes for real node)
+                          #   - Multiple chains in single pod (~100MB RAM total)
+                          #   - Perfect for rapid development and testing
                           #
-                          # Requires: paths.canopy_source must exist
+                          # Configure mock chains in paths section below
 
   # --- Optional Services (you can disable these if not needed) ---
   admin: true             # Admin API server
@@ -87,18 +87,24 @@ components:
 # ==============================================================================
 # PATHS
 # ==============================================================================
-# Configure paths to external repositories
+# Configure paths to external repositories and mock configuration
 paths:
-  # Path to Canopy blockchain source code (if using local node)
-  # The Canopy node will only be deployed if:
-  #   1. components.canopy is set to "single" or "dual"
-  #   2. This path exists and contains a valid Canopy repository
+  # Path to canopy-rpc-mock source code (if using mock blockchain)
+  # The mock will only be deployed if:
+  #   1. components.canopy is set to true
+  #   2. This path exists and contains the canopy-rpc-mock repository
   #
   # Examples:
-  #   canopy_source: "../canopy"              # Sibling directory (default)
-  #   canopy_source: "/home/user/go/src/canopy"  # Absolute path
-  #   canopy_source: "~/projects/canopy"      # Home directory
-  canopy_source: "../canopy"
+  #   canopy_rpc_mock_source: "../canopy-rpc-mock"     # Sibling directory (default)
+  #   canopy_rpc_mock_source: "/path/to/canopy-rpc-mock"  # Absolute path
+  canopy_rpc_mock_source: "../canopy-rpc-mock"
+
+  # Mock RPC configuration (only used when components.canopy = true)
+  # These settings control how many chains and blocks the mock creates
+  mock_chains: 2                # Number of separate blockchain chains to mock
+  mock_blocks: 100              # Number of blocks each chain will have
+  mock_start_port: 60000        # Starting port for RPC servers (chain 1 on 60000, chain 2 on 60001, etc.)
+  mock_start_chain_id: 5        # Starting chain ID (first chain will be ID 5, second ID 6, etc.)
 
 # ==============================================================================
 # RESOURCE LIMITS BY PROFILE
@@ -132,7 +138,7 @@ resources:
 
     indexer:
       min_replicas: 1
-      max_replicas: 2
+      max_replicas: 1
 
     monitoring:
       enabled: false  # Force disable monitoring in minimal mode
@@ -167,7 +173,7 @@ resources:
 
     indexer:
       min_replicas: 1
-      max_replicas: 3
+      max_replicas: 1
 
     monitoring:
       prometheus:
@@ -225,7 +231,7 @@ resources:
 
     indexer:
       min_replicas: 1
-      max_replicas: 3
+      max_replicas: 1
 
     monitoring:
       prometheus:
@@ -266,14 +272,14 @@ ports:
   admin: 3000                # Admin API
   admin_web: 3003            # Admin web UI
 
-  # Canopy Nodes (only if components.canopy = "single" or "dual")
-  canopy_wallet: 50000       # Wallet RPC
-  canopy_explorer: 50001     # Explorer API
-  canopy_rpc: 50002          # JSON-RPC
-  canopy_admin_rpc: 50003    # Admin RPC
-  canopy_p2p: 9001           # P2P port
-  canopy_debug: 6060         # pprof debug
-  canopy_metrics: 9090       # Prometheus metrics
+  # Canopy RPC Mock (only if components.canopy = true)
+  # Ports are auto-generated based on mock_chains and mock_start_port in paths config
+  # Default with 2 chains starting at port 60000:
+  #   canopy_mock_chain_1: 60000  # Chain ID 5
+  #   canopy_mock_chain_2: 60001  # Chain ID 6
+  # Customize these if you have port conflicts:
+  canopy_mock_chain_1: 60000    # First mock chain RPC
+  canopy_mock_chain_2: 60001    # Second mock chain RPC
 
 # ==============================================================================
 # MONITORING CONFIGURATION
@@ -299,40 +305,190 @@ monitoring:
 # ==============================================================================
 # CHAIN REGISTRATION
 # ==============================================================================
-# Auto-register external Canopy chains on startup
-# The local node (if enabled) is registered separately via dev.auto_register_chain
+# Register external blockchain networks to index.
+# Only rpc_endpoints is required - all other fields have sensible defaults.
 chains: []
-  # Uncomment and modify to connect to external Canopy networks:
-  #
-  # - chain_name: "Canopy Mainnet"
-  #   rpc_endpoints: ["https://node1.canopy.us.nodefleet.net/rpc"]
-  #   min_replicas: 1
-  #   max_replicas: 2
-  #   image: "localhost:5001/canopyx-indexer:dev"  # Optional, defaults to dev.indexer_tag
-  #
-  # - chain_name: "Canopy Canary"
-  #   rpc_endpoints: ["https://node2.canopy.us.nodefleet.net/rpc"]
-  #   min_replicas: 1
-  #   max_replicas: 2
-  #   image: "localhost:5001/canopyx-indexer:dev"  # Optional, defaults to dev.indexer_tag
+  # Minimal example (only required field):
+  # - rpc_endpoints: ["https://node1.example.com/rpc"]
+
+  # Full example with all optional fields:
+  # - rpc_endpoints: ["https://node1.example.com/rpc", "https://node2.example.com/rpc"]
+  #   chain_id: 1000                    # OPTIONAL: Auto-detected from RPC if not provided
+  #   chain_name: "My Custom Chain"     # OPTIONAL: Defaults to "Chain {id}"
+  #   image: "canopynetwork/canopyx-indexer:latest"  # OPTIONAL: Default shown
+  #   min_replicas: 1                   # OPTIONAL: Minimum Kubernetes replicas (default: 1)
+  #   max_replicas: 1                   # OPTIONAL: Maximum Kubernetes replicas (default: 1)
+  #   reindex_min_replicas: 1           # OPTIONAL: Minimum replicas during reindex (default: 1)
+  #   reindex_max_replicas: 1           # OPTIONAL: Maximum replicas during reindex (default: 1)
+  #   notes: "Production mainnet"       # OPTIONAL: Human-readable notes (default: "")
+  #   paused: false                     # OPTIONAL: Start paused instead of indexing (default: false)
+
+  # Real-world example:
+  # - rpc_endpoints: ["https://node1.canopy.us.nodefleet.net/rpc"]
+  #   chain_name: "Canopy Mainnet"
+  #   min_replicas: 2
+  #   max_replicas: 3
 
 # ==============================================================================
 # ENVIRONMENT VARIABLE OVERRIDES
 # ==============================================================================
-# Override default environment variables for admin and controller
-# Useful for debugging and development tuning
-env:
-  admin:
-    # LOG_LEVEL: "debug"           # Logging level: debug, info, warn, error
-    # ADMIN_TOKEN: "devtoken"      # Admin API authentication token
+# Override default environment variables for admin, controller, and indexer
+# All variables are commented out and show their default values from code
+# Uncomment and modify to override defaults for local development
 
+env:
+  # =============================================================================
+  # ADMIN SERVER
+  # =============================================================================
+  admin:
+    # ----- Server Configuration -----
+    # ADDR: ":3000"                          # Server listen address (default: ":3000")
+
+    # ----- Authentication & Security -----
+    # ADMIN_TOKEN: "devtoken"                # Admin API authentication token (default: "devtoken")
+    # ADMIN_USER: "admin"                    # Default admin username (default: "admin")
+    # ADMIN_PASSWORD: "admin"                # Default admin password (default: "admin")
+    # ADMIN_USERS: ""                        # JSON array of additional users (default: "")
+    # SESSION_SECRET: "change-me-please"     # JWT session secret (default: "change-me-please")
+    # ENVIRONMENT: ""                        # Environment: "production" or "" (default: "")
+
+    # ----- Database Configuration -----
+    # INDEXER_DB: "canopyx_indexer"          # Indexer database name (default: "canopyx_indexer")
+    # CROSSCHAIN_DB: "canopyx_cross_chain"   # Cross-chain database name (default: "canopyx_cross_chain")
+
+    # ----- ClickHouse Connection -----
+    # Admin calculates pool sizes deterministically: (10 activities × 2 connections) + 10 buffer = 30 connections
+    # CLICKHOUSE_ADDR: "clickhouse://localhost:9000?sslmode=disable"  # Required - ClickHouse DSN
+    # CLICKHOUSE_CONN_STRATEGY: "in_order"   # Connection strategy: in_order, round_robin, random (default: "in_order")
+    # CLICKHOUSE_CONN_MAX_LIFETIME: "1h"     # Connection recycling interval (default: "1h")
+
+    # ----- Temporal Configuration -----
+    # TEMPORAL_HOSTPORT: "localhost:7233"    # Required - Temporal server address
+    # TEMPORAL_NAMESPACE: "canopyx"          # Required - Temporal namespace
+
+    # ----- Redis Configuration -----
+    # REDIS_ENABLED: "false"                 # Enable Redis for real-time WebSocket events (default: "false")
+    # REDIS_HOST: "localhost"                # Redis server host (default: "localhost")
+    # REDIS_PORT: "6379"                     # Redis server port (default: "6379")
+    # REDIS_PASSWORD: ""                     # Redis password (default: "")
+    # REDIS_DB: "0"                          # Redis database number (default: 0)
+
+    # ----- Logging Configuration -----
+    # LOG_LEVEL: "debug"                     # Logging level: debug, info, warn, error (default: "debug")
+    # LOG_ENCODING: "json"                   # Log encoding: json, console (default: "json")
+
+  # =============================================================================
+  # CONTROLLER
+  # =============================================================================
   controller:
-    # LOG_LEVEL: "debug"           # Logging level: debug, info, warn, error
-    # INDEXER_CPU: "2000m"         # CPU limit for spawned indexer pods
-    # INDEXER_MEM: "2Gi"           # Memory limit for spawned indexer pods
-    # INDEXER_HPA_MIN: "1"         # Minimum indexer replicas (HPA)
-    # INDEXER_HPA_MAX: "3"         # Maximum indexer replicas (HPA)
-    # INDEXER_HPA_CPU_TARGET: "80" # CPU target percentage for HPA scaling
+    # ----- Server Configuration -----
+    # ADDR: ":3002"                          # Server listen address (default: ":3002")
+
+    # ----- Kubernetes Configuration -----
+    # K8S_NAMESPACE: "default"               # Required - Kubernetes namespace for indexer deployments
+    # KUBECONFIG: ""                         # Path to kubeconfig file (default: "", uses in-cluster config)
+    # PROVIDER: "k8s"                        # Provider type: k8s or fake (default: "fake" in code, "k8s" in deployment)
+
+    # ----- Indexer Deployment Configuration -----
+    # INDEXER_IMAGE: "localhost:5001/canopyx-indexer"  # Required - Indexer container image
+    # INDEXER_TAG: ""                        # Image tag override (default: "", uses image tag)
+    # INDEXER_REPLICAS: "1"                  # Initial replica count (default: 1)
+    # INDEXER_CPU: ""                        # CPU limit per indexer pod (default: "", no override)
+    # INDEXER_MEM: ""                        # Memory limit per indexer pod (default: "", no override)
+    # INDEXER_PULL_POLICY: "Always"          # Image pull policy: Always, IfNotPresent, Never (default: "Always")
+    # INDEXER_PULL_SECRET: ""                # Image pull secret name (default: "")
+
+    # ----- HPA (Horizontal Pod Autoscaling) -----
+    # INDEXER_ENABLE_HPA: "false"            # Enable HPA for indexer (default: false)
+    # INDEXER_HPA_MIN: "1"                   # Minimum replicas for HPA (default: 1)
+    # INDEXER_HPA_MAX: "5"                   # Maximum replicas for HPA (default: 5)
+    # INDEXER_HPA_CPU_TARGET: "80"           # CPU target percentage for HPA (default: 80)
+
+    # ----- Database Configuration -----
+    # INDEXER_DB: "canopyx_indexer"          # Indexer database name (default: "canopyx_indexer")
+
+    # ----- ClickHouse Connection -----
+    # Controller calculates pool sizes deterministically: (5 queries × 2 connections) + 5 buffer = 15 connections
+    # CLICKHOUSE_ADDR: "clickhouse://localhost:9000?sslmode=disable"  # Required - ClickHouse DSN
+    # CLICKHOUSE_CONN_STRATEGY: "in_order"   # Connection strategy (default: "in_order")
+    # CLICKHOUSE_CONN_MAX_LIFETIME: "1h"     # Connection recycling interval (default: "1h")
+
+    # ----- Temporal Configuration -----
+    # TEMPORAL_HOSTPORT: "localhost:7233"    # Required - Temporal server address
+    # TEMPORAL_NAMESPACE: "canopyx"          # Required - Temporal namespace
+    # TEMPORAL_TASK_QUEUE_PREFIX: "index:"   # Task queue prefix (default: "index:")
+
+    # ----- Redis Configuration -----
+    # REDIS_HOST: "localhost"                # Required - Redis server host
+    # REDIS_PORT: "6379"                     # Required - Redis server port
+    # REDIS_PASSWORD: ""                     # Redis password (default: "")
+    # REDIS_DB: ""                           # Redis database number (default: "", passed to indexer)
+
+    # ----- Parallelism Configuration (Passed to Indexer Pods) -----
+    # Indexer calculates connection pool sizes and Temporal limits from these values
+    # Formula: (parallel_blocks × 10 peak_concurrent_activities × 1 conn) + 20 buffer
+    # Example: (5+10+10) × 10 × 1 + 20 = 270 connections per indexer replica
+    # At 100 chains: 100 × 270 = 27,000 total connections to ClickHouse
+    # LIVE_PARALLEL_BLOCKS: "5"              # Live indexing parallelism (default: 5)
+    # HISTORICAL_PARALLEL_BLOCKS: "10"       # Historical indexing parallelism (default: 10)
+    # REINDEX_PARALLEL_BLOCKS: "10"          # Reindex parallelism (default: 10)
+
+    # ----- Scheduler Configuration (Passed to Indexer Pods) -----
+    # SCHEDULER_CATCHUP_THRESHOLD: "200"     # Block lag threshold for direct scheduling (default: 200)
+    # DIRECT_SCHEDULE_BATCH_SIZE: "50"       # Batch size for direct scheduling (default: 50)
+    # SCHEDULER_BATCH_SIZE: "500"            # Workflows per batch (default: 500, scaled for 100+ chains)
+    #                                        # With 100 chains: 100×500=50k concurrent workflows per cycle
+    #                                        # Lower values reduce Temporal/Cassandra pressure
+    # BLOCK_TIME_SECONDS: "20"               # Expected block time in seconds (default: 20)
+    # SCHEDULER_BATCH_MAX_PARALLELISM: "0"   # Max parallel batches, 0=unlimited (default: 0)
+
+    # ----- Logging Configuration -----
+    # LOG_LEVEL: ""                          # Logging level (default: "", passed to indexer)
+
+  # =============================================================================
+  # INDEXER (Environment variables passed from controller)
+  # =============================================================================
+  # Note: Indexer pods receive their configuration from the controller
+  # The following variables are set by controller and documented here for reference
+  #
+  # ----- Chain Configuration -----
+  # CHAIN_ID: ""                             # Required - Chain ID to index (set by controller)
+  #
+  # ----- Database Configuration -----
+  # INDEXER_DB: "canopyx_indexer"            # Indexer database name (default: "canopyx_indexer")
+  # CROSSCHAIN_DB: "canopyx_cross_chain"     # Cross-chain database name (default: "canopyx_cross_chain")
+  #
+  # ----- ClickHouse Connection -----
+  # Indexer calculates pool sizes deterministically based on parallelism configuration
+  # Formula: (total_parallel_blocks × 10 peak_concurrent_activities × 1 conn) + 20 buffer
+  # CLICKHOUSE_ADDR: ""                      # Required - ClickHouse DSN (from controller)
+  # CLICKHOUSE_CONN_STRATEGY: "in_order"     # Connection strategy (default: "in_order")
+  # CLICKHOUSE_CONN_MAX_LIFETIME: "1h"       # Connection recycling interval (default: "1h")
+  #
+  # ----- Temporal Configuration -----
+  # TEMPORAL_HOSTPORT: ""                    # Required - Temporal server (from controller)
+  # TEMPORAL_NAMESPACE: ""                   # Required - Temporal namespace (from controller)
+  #
+  # ----- Redis Configuration -----
+  # REDIS_HOST: ""                           # Required - Redis server (from controller)
+  # REDIS_PORT: ""                           # Required - Redis port (from controller)
+  # REDIS_DB: "0"                            # Redis database number (default: 0)
+  #
+  # ----- Parallelism Configuration -----
+  # LIVE_PARALLEL_BLOCKS: "5"                # Live indexing parallelism (default: 5)
+  # HISTORICAL_PARALLEL_BLOCKS: "10"         # Historical indexing parallelism (default: 10)
+  # REINDEX_PARALLEL_BLOCKS: "10"            # Reindex parallelism (default: 10)
+  #
+  # ----- Scheduler Configuration -----
+  # SCHEDULER_CATCHUP_THRESHOLD: "200"       # Block lag threshold for direct scheduling (default: 200)
+  # DIRECT_SCHEDULE_BATCH_SIZE: "50"         # Batch size for direct scheduling (default: 50)
+  # SCHEDULER_BATCH_SIZE: "500"              # Workflows per batch (default: 500, scaled for 100+ chains)
+  # BLOCK_TIME_SECONDS: "20"                 # Expected block time in seconds (default: 20)
+  # SCHEDULER_BATCH_MAX_PARALLELISM: "0"     # Max parallel batches, 0=unlimited (default: 0)
+  #
+  # ----- Logging Configuration -----
+  # LOG_LEVEL: "debug"                       # Logging level: debug, info, warn, error (default: "debug")
+  # LOG_ENCODING: "json"                     # Log encoding: json, console (default: "json")
 
 # ==============================================================================
 # DEVELOPMENT SETTINGS
@@ -341,7 +497,7 @@ dev:
   # Auto-rebuild on code changes
   auto_rebuild: true
 
-  # Automatically register local Canopy chain(s) (if canopy is "single" or "dual")
+  # Automatically register local mock chain(s) (if canopy is true)
   auto_register_chain: true
 
   # Indexer image tag
@@ -360,28 +516,36 @@ dev:
 #   profile: minimal
 #   components:
 #     monitoring: false
-#     canopy: "off"
+#     canopy: false       # Use external RPC endpoints
 #
 # Full-Stack Developer (normal development):
 #   profile: development
 #   components:
-#     monitoring: false  # Enable only when debugging
-#     canopy: "single"   # If testing against local node
+#     monitoring: false   # Enable only when debugging
+#     canopy: true        # Use mock for fast iteration
+#   paths:
+#     mock_chains: 2      # Test with 2 chains
 #
 # DEX/Pools Developer:
 #   profile: development
 #   components:
 #     monitoring: false
-#     canopy: "dual"     # For cross-chain DEX testing
+#     canopy: true        # Mock supports multi-chain DEX testing
+#   paths:
+#     mock_chains: 2      # Chain 5 and Chain 6 for cross-chain operations
 #
 # Performance Testing / Benchmarking:
 #   profile: production
 #   components:
-#     monitoring: true   # MUST be enabled for benchmarking
-#     canopy: "single"   # If testing local node performance
+#     monitoring: true    # MUST be enabled for benchmarking
+#     canopy: false       # Use real network for accurate perf testing
+#   chains:
+#     - rpc_endpoints: ["https://mainnet-rpc.example.com"]
 #
 # Demo / Presentation:
 #   profile: production
 #   components:
-#     monitoring: true   # Show off the dashboards!
-#     canopy: "dual"     # Show dual-chain DEX features
+#     monitoring: true    # Show off the dashboards!
+#     canopy: true        # Quick demo with mock data
+#   paths:
+#     mock_chains: 3      # Show multi-chain capabilities

@@ -1,0 +1,247 @@
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: "canopyx"
+  namespace: default
+spec:
+  configuration:
+    # User profiles (performance settings)
+    profiles:
+      default/do_not_merge_across_partitions_select_final: "1"
+      default/optimize_aggregation_in_order: "1"
+      default/max_threads: "16"
+      default/max_insert_threads: "8"
+      default/max_memory_usage: "10000000000"  # 10GB
+      # Distributed DDL timeout - ON CLUSTER operations
+      # Default 180s is too long; 30s is reasonable for small clusters
+      default/distributed_ddl_task_timeout: "30000"  # 30s for ON CLUSTER DDL operations
+      # Enable lightweight DELETE for fast, non-blocking deletes (ClickHouse 23.3+)
+      # Replaces slow ALTER TABLE DELETE mutations with instant deletes
+      default/allow_experimental_lightweight_delete: "1"
+
+    # Users configuration
+    users:
+      canopyx/password: "canopyx"
+      canopyx/networks/ip: "::/0"
+      canopyx/profile: "default"
+
+    # ZooKeeper/Keeper configuration for replication
+    # Optimized for 20s block time - indexing must complete in 5-10s
+    zookeeper:
+      nodes:
+        - host: keeper-canopyx-keeper
+          port: 2181
+      session_timeout_ms: 30000     # 30s - Allow time for distributed DDL operations
+      operation_timeout_ms: 10000   # 10s - DDL operations need more time than data operations
+
+    # Global settings (server-level configuration)
+    settings:
+      compression/case/method: "zstd"
+      compression/case/level: "3"
+      compression/case/min_part_size: "10485760"  # 10MB
+      compression/case/min_part_size_ratio: "0.01"
+
+      # Connection pool optimization - Scaled for 100+ chains
+      # Calculation: 100 chains × 270 conns/chain = 27k connections
+      # Formula per chain: (25 parallel blocks × 10 activities × 1 conn) + 20 buffer = 270
+      # Plus admin (30) + controller (15) = minimal overhead
+      max_connections: "50000"  # 27k needed + buffer (was 20000)
+      # Concurrent queries: Each INSERT/SELECT counts as 1 query
+      # 100 chains × 25 parallel blocks × 10 concurrent activities = 25k peak writes
+      max_concurrent_queries: "30000"  # 25k peak + buffer for reads (was 5000)
+
+      background_pool_size: "32"
+      background_merges_mutations_concurrency_ratio: "4"
+      max_parts_merged_at_once: "150"
+
+      # Background merge optimization (reduces FINAL query overhead)
+      merge_tree/max_bytes_to_merge_at_min_space_in_pool: "1073741824"  # 1GB
+      merge_tree/max_replicated_merges_in_queue: "16"
+      merge_tree/number_of_free_entries_in_pool_to_lower_max_size_of_merge: "8"
+
+    # Custom configuration files
+    files:
+      config.d/distributed-ddl.xml: |
+        <clickhouse>
+            <!-- Distributed DDL Configuration -->
+            <!-- Controls how many ON CLUSTER queries can run simultaneously -->
+            <!-- Default is typically 1, increasing to 64 allows parallel DDL execution -->
+            <!-- With 8+ chains initializing simultaneously, we need high parallelism -->
+            <distributed_ddl>
+                <pool_size>64</pool_size>
+                <!-- Path in Keeper where DDL tasks are stored -->
+                <path>/clickhouse/task_queue/ddl</path>
+            </distributed_ddl>
+        </clickhouse>
+
+      config.d/replication-defaults.xml: |
+        <clickhouse>
+            <!-- Default Replication Configuration -->
+            <!-- Simplifies CREATE TABLE syntax by providing defaults for all Replicated* engines -->
+            <!-- Using {uuid} macro creates unique paths and avoids Keeper GC delays -->
+            <default_replica_path>/clickhouse/tables/{uuid}/{shard}</default_replica_path>
+            <default_replica_name>{replica}</default_replica_name>
+        </clickhouse>
+
+      config.d/storage-policy.xml: |
+        <clickhouse>
+            <!-- Storage Configuration for Tiered Storage (Hot/Warm/Cold) -->
+            <storage_configuration>
+                <!-- Define storage disks -->
+                <disks>
+                    <!-- Hot storage: NVMe for recent data (0-30 days) - 1.9TB -->
+                    <hot>
+                        <path>/var/lib/clickhouse/hot/</path>
+                        <keep_free_space_bytes>10737418240</keep_free_space_bytes>
+                    </hot>
+
+                    <!-- Warm storage: SSD for medium-term data (30-180 days) - 4TB -->
+                    <warm>
+                        <path>/var/lib/clickhouse/warm/</path>
+                        <keep_free_space_bytes>10737418240</keep_free_space_bytes>
+                    </warm>
+
+                    <!-- Cold storage: HDD for long-term data (180+ days) - 20TB -->
+                    <cold>
+                        <path>/var/lib/clickhouse/cold/</path>
+                        <keep_free_space_bytes>10737418240</keep_free_space_bytes>
+                    </cold>
+                </disks>
+
+                <!-- Define storage policies -->
+                <policies>
+                    <!-- Tiered storage policy: automatically moves data based on TTL -->
+                    <tiered_storage>
+                        <volumes>
+                            <!-- Hot volume: Recent data on fast storage -->
+                            <hot>
+                                <disk>hot</disk>
+                                <max_data_part_size_bytes>53687091200</max_data_part_size_bytes>
+                            </hot>
+
+                            <!-- Warm volume: Medium-term data -->
+                            <warm>
+                                <disk>warm</disk>
+                                <max_data_part_size_bytes>107374182400</max_data_part_size_bytes>
+                            </warm>
+
+                            <!-- Cold volume: Long-term data -->
+                            <cold>
+                                <disk>cold</disk>
+                            </cold>
+                        </volumes>
+
+                        <!-- Move data when volume is 80% full -->
+                        <move_factor>0.2</move_factor>
+                    </tiered_storage>
+
+                    <!-- Default policy: everything on hot storage (for non-tiered tables) -->
+                    <default>
+                        <volumes>
+                            <main>
+                                <disk>hot</disk>
+                            </main>
+                        </volumes>
+                    </default>
+                </policies>
+            </storage_configuration>
+        </clickhouse>
+
+
+    # Cluster configuration
+    clusters:
+      - name: "canopyx"
+        layout:
+          # RF=2 (Replication Factor 2) - Optimized for performance
+          # Both nodes store 100% of data (not 1/2)
+          # Provides redundancy with lower replication overhead
+          # Note: ClickHouse Keeper still runs 3 instances for Raft consensus
+          shardsCount: 1
+          replicasCount: 2
+
+  # Pod and volume templates
+  defaults:
+    templates:
+      podTemplate: clickhouse-pod
+      # NOTE: We're manually mounting all storage tiers (hot/warm/cold) in the pod template
+      # to ensure they use separate physical disks, so we only need the log volume here
+      logVolumeClaimTemplate: log-volume
+
+  templates:
+    # Pod template
+    podTemplates:
+      - name: clickhouse-pod
+        spec:
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:24.8
+              volumeMounts:
+                # All 3 storage tiers must be mounted as SEPARATE paths (not subdirectories)
+                # to ensure they use different physical disks (NVMe/SSD/HDD)
+
+                # Hot: /var/lib/clickhouse/hot/ (1.9TB NVMe - fast storage)
+                - name: hot-volume
+                  mountPath: /var/lib/clickhouse/hot
+
+                # Warm: /var/lib/clickhouse/warm/ (4TB SSD - medium storage)
+                - name: warm-volume
+                  mountPath: /var/lib/clickhouse/warm
+
+                # Cold: /var/lib/clickhouse/cold/ (20TB HDD - cheap storage)
+                - name: cold-volume
+                  mountPath: /var/lib/clickhouse/cold
+              resources:
+                # NOTE: Local/dev resources (for testing)
+                # Production spec (infrastructure-plan.md): 24 physical cores (48 vCPUs), 128GB RAM
+                # Adjust these values based on your environment:
+                #   - Local/dev: 2Gi/8Gi memory, 1-4 CPU cores
+                #   - Production: 64Gi/128Gi memory, 16-24 CPU cores
+                requests:
+                  memory: "2Gi"
+                  cpu: "1000m"
+                limits:
+                  memory: "8Gi"
+                  cpu: "4000m"
+
+    # Volume claim templates for tiered storage
+    # Based on infrastructure-plan.md: 25.9TB total per node (1.9TB hot + 4TB warm + 20TB cold)
+    # Production sizing for 3-year capacity with RF=3 replication
+    volumeClaimTemplates:
+      # Hot storage: NVMe for recent data (0-30 days)
+      # Infrastructure plan: 2×1.9TB NVMe RAID 1 = 1.9TB usable
+      - name: hot-volume
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1900Gi  # 1.9TB NVMe (fast SSD)
+
+      # Warm storage: SATA SSD for medium-term data (30-180 days)
+      # Infrastructure plan: 2×4TB SATA SSD RAID 1 = 4TB usable
+      - name: warm-volume
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 4000Gi  # 4TB SSD
+
+      # Cold storage: HDD for long-term data (180+ days)
+      # Infrastructure plan: 2×20TB HDD RAID 1 = 20TB usable
+      - name: cold-volume
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 20000Gi  # 20TB HDD
+
+      # Log volume
+      - name: log-volume
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 10Gi  # 10GB for logs

@@ -3,16 +3,16 @@ package transform
 import (
 	"fmt"
 
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 )
 
-// DexPrice converts an RPC dex price response to the database model.
+// DexPrice converts a lib.DexPrice (from Canopy lib/dex.go) to the database model.
 // The height and height_time fields must be populated by the caller (activity layer).
-func DexPrice(r *rpc.RpcDexPrice) *indexer.DexPrice {
+func DexPrice(r *lib.DexPrice) *indexer.DexPrice {
 	return &indexer.DexPrice{
-		LocalChainID:  r.LocalChainID,
-		RemoteChainID: r.RemoteChainID,
+		LocalChainID:  r.LocalChainId,
+		RemoteChainID: r.RemoteChainId,
 		LocalPool:     r.LocalPool,
 		RemotePool:    r.RemotePool,
 		PriceE6:       r.E6ScaledPrice,

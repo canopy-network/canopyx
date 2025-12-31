@@ -3,9 +3,11 @@ package chain
 import (
 	"context"
 	"fmt"
+	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"go.uber.org/zap"
 )
 
 // initAccounts initializes the account table and its staging table.
@@ -16,22 +18,24 @@ func (db *DB) initAccounts(ctx context.Context) error {
 
 	// Create a production table
 	productionQuery := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS "%s"."%s" (
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (address, height)
-	`, db.Name, indexermodels.AccountsProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.AccountsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.AccountsProductionTableName, clickhouse.ReplacingMergeTree, "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.AccountsProductionTableName, err)
 	}
 
-	// Create the staging table - uses same engine as production for consistency
+	// Create the staging table
+	// IMPORTANT: ORDER BY (height, address) - height FIRST for efficient cleanup/promotion
+	// Staging tables are always queried by height: DELETE/INSERT SELECT WHERE height = ?
 	stagingQuery := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS "%s"."%s" (
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (address, height)
-	`, db.Name, indexermodels.AccountsStagingTableName, schemaSQL)
+		) ENGINE = %s
+		ORDER BY (height, address)
+	`, db.Name, indexermodels.AccountsStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.AccountsStagingTableName, clickhouse.ReplacingMergeTree, "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.AccountsStagingTableName, err)
 	}
@@ -48,8 +52,8 @@ func (db *DB) InsertAccountsStaging(ctx context.Context, accounts []*indexermode
 	}
 
 	query := fmt.Sprintf(
-		`INSERT INTO %s (address, amount, height, height_time) VALUES`,
-		indexermodels.AccountsStagingTableName,
+		`INSERT INTO "%s"."%s" (address, amount, rewards, slashes, height, height_time) VALUES`,
+		db.Name, indexermodels.AccountsStagingTableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
@@ -63,6 +67,8 @@ func (db *DB) InsertAccountsStaging(ctx context.Context, accounts []*indexermode
 		err = batch.Append(
 			account.Address,
 			account.Amount,
+			account.Rewards,
+			account.Slashes,
 			account.Height,
 			account.HeightTime,
 		)
@@ -84,15 +90,16 @@ func (db *DB) InsertAccountsStaging(ctx context.Context, accounts []*indexermode
 // Query usage: SELECT address, created_height FROM account_created_height WHERE address = ?
 func (db *DB) initAccountCreatedHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."account_created_height"
-		ENGINE = AggregatingMergeTree()
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."account_created_height" %s
+		ENGINE = %s
 		ORDER BY address
 		AS SELECT
 			address,
 			min(height) as created_height
 		FROM "%s"."accounts"
 		GROUP BY address
-	`, db.Name, db.Name)
+	`, db.Name, db.OnCluster(), db.Engine("account_created_height", "AggregatingMergeTree", ""), db.Name)
 
+	db.Logger.Debug("Creating materialized view", zap.String("view", "account_created_height"), zap.String("query", query))
 	return db.Exec(ctx, query)
 }

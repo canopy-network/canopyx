@@ -46,10 +46,17 @@ func (c *Controller) HandleSchema(w http.ResponseWriter, r *http.Request) {
 	// Use the actual table name (with _staging suffix if it was provided)
 	actualTable := tableName
 
+	// Check if this is a deleted chain query
+	isDeleted := r.URL.Query().Get("deleted") == "true"
+
 	ctx := context.Background()
 
 	store, ok := c.App.LoadChainStore(ctx, chainID)
 	if !ok {
+		c.App.Logger.Error("Failed to load chain store for schema request",
+			zap.String("chain_id", chainID),
+			zap.String("table", tableName),
+			zap.Bool("is_deleted", isDeleted))
 		http.Error(w, "chain not indexed", http.StatusNotFound)
 		return
 	}

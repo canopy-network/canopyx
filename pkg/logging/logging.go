@@ -8,11 +8,12 @@ import (
 
 func New() (*zap.Logger, error) {
 	level := utils.Env("LOG_LEVEL", "debug")
+	encoding := utils.Env("LOG_ENCODING", "json")
 	cfg := zap.NewProductionConfig()
+	cfg.Encoding = encoding
 	switch level {
 	case "debug":
 		cfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
-		cfg.Encoding = "console"
 		cfg.Development = true
 		cfg.OutputPaths = []string{"stdout"}
 	case "info":
@@ -23,6 +24,7 @@ func New() (*zap.Logger, error) {
 		cfg.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
 
+	cfg.OutputPaths = []string{"stdout"}
 	cfg.ErrorOutputPaths = []string{"stderr"}
 	cfg.EncoderConfig.TimeKey = "ts"
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder

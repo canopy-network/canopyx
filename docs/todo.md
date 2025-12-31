@@ -27,12 +27,15 @@
 [x] - Parse `lockOrder` from send transactions via memo detection (buyer_receive_address, buyer_send_address, buyer_chain_deadline extracted)
 [x] - Parse `closeOrder` from send transactions via memo detection (order_id extracted)
 [x] - Add BlockSummary counters for memo-based tx types (num_txs_start_poll, num_txs_vote_poll, num_txs_lock_order, num_txs_close_order)
+[x] - Rework/Review reindex feature
+[x] - Replace current RPC client types with Canopy RPC client
+[x] - Update nextjs dependencies to avoid the vulnerability.
 
 --- PENDING ---
 
-[] - Rework/Review reindex feature - current implementation does not properly handle snapshot-on-change entities
-(initial state not captured when indexer starts at height > 1, need to ensure first-seen records are inserted)
-[] - Replace current RPC client types with Canopy RPC client
+[] - Update hard delete rework: follow docs/hard_delete_workflow_architecture.md
+[] - Implement docs/lp_rules.md
+[] - Add missing proposals from Canopy - review ../canopy-rpc-mock provides it. This should be like polls.
 
 --- DO NOT HANDLE RIGHT NOW UNTIL ALL ABOVE PENDING ARE DONE ---
 

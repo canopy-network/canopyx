@@ -43,7 +43,7 @@ func (ac *Context) IndexEvents(ctx context.Context, in types.ActivityIndexAtHeig
 			// Fail fast - conversion errors mean corrupted/incomplete data
 			return types.ActivityIndexEventsOutput{}, fmt.Errorf("convert event at height %d, type %s: %w", in.Height, rpcEvent.EventType, err)
 		}
-		// Populate HeightTime field using the block timestamp
+		// Populate the HeightTime field using the block timestamp
 		event.HeightTime = in.BlockTime
 		events = append(events, event)
 	}

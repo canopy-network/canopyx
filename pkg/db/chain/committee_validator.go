@@ -14,22 +14,26 @@ import (
 func (db *DB) initCommitteeValidators(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.CommitteeValidatorColumns)
 
-	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+	// Production table: ORDER BY (committee_id, validator_address, height) for efficient committee_id+validator queries
+	productionQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (committee_id, validator_address, height)
 		SETTINGS index_granularity = 8192
-	`
-
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeValidatorProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.CommitteeValidatorProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.CommitteeValidatorProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteeValidatorProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.CommitteeValidatorStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, committee_id, validator_address) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, committee_id, validator_address)
+		SETTINGS index_granularity = 8192
+	`, db.Name, indexermodels.CommitteeValidatorStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.CommitteeValidatorStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteeValidatorStagingTableName, err)
 	}
@@ -45,7 +49,7 @@ func (db *DB) InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*index
 		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s".committee_validators_staging (
+	query := fmt.Sprintf(`INSERT INTO "%s"."committee_validators_staging" (
 		committee_id, validator_address, staked_amount, status, delegate, compound, height, height_time
 	) VALUES`, db.Name)
 

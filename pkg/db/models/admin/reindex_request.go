@@ -6,6 +6,10 @@ import (
 
 const ReindexRequestsTableName = "reindex_requests"
 
+const (
+	ReindexRequestStatusQueued = "queued"
+)
+
 // ReindexRequestColumns defines the schema for the reindex_requests table.
 var ReindexRequestColumns = []ColumnDef{
 	{Name: "chain_id", Type: "UInt64"},

@@ -13,13 +13,21 @@ spec:
         app: canopyx-controller
     spec:
       serviceAccountName: canopyx-controller
+
+      # DNS optimization: reduce DNS lookup latency in Kubernetes
+      # ndots=1 prevents unnecessary search domain lookups for fully-qualified domain names
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+
       # InitContainer in the future maybe run migrations once needed.
       containers:
         - name: controller
           image: localhost:5001/canopyx-controller
           env:
             # Logging
-            - { name: LOG_LEVEL, value: "debug" }
+            - { name: LOG_LEVEL, value: "info" }
             # ADMIN server
             - { name: ADDR, value: ":3002" }
             - { name: K8S_NAMESPACE, value: "default" }
@@ -28,17 +36,42 @@ spec:
             - { name: INDEXER_REPLICAS, value: "1" }
             - { name: INDEXER_ENABLE_HPA, value: "true" }
             - { name: INDEXER_HPA_MIN, value: "1" }
-            - { name: INDEXER_HPA_MAX, value: "3" }
+            - { name: INDEXER_HPA_MAX, value: "1" }
             - { name: INDEXER_HPA_CPU_TARGET, value: "80" }
             - { name: INDEXER_CPU, value: "2000m" }
             - { name: INDEXER_MEM, value: "2Gi" }
             - { name: TEMPORAL_TASK_QUEUE_PREFIX, value: "index:" }
             - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.default.svc.cluster.local:7233" }
             - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
-            - { name: CLICKHOUSE_ADDR, value: "clickhouse://clickhouse-hdx-oss-v2-clickhouse.default.svc.cluster.local:9000?sslmode=disable" }
+            # ClickHouse connection - Multiple replicas for failover with ConnOpenInOrder strategy
+            # Connects to replica-0 by default, falls back to replica-1 on failure
+            # Provides read-after-write consistency without Keeper overhead
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://canopyx:canopyx@chi-canopyx-canopyx-0-0.default.svc.cluster.local:9000,chi-canopyx-canopyx-0-1.default.svc.cluster.local:9000?sslmode=disable" }
+            # ClickHouse connection strategy: in_order (default), round_robin, or random
+            # in_order provides read-after-write consistency for indexer
+            - { name: CLICKHOUSE_CONN_STRATEGY, value: "in_order" }
+            # ClickHouse connection pool configuration
+            # Controller calculates pool sizes deterministically based on reconciliation needs (5 concurrent queries)
+            # Formula: (5 queries × 2 connections) + 5 buffer = 15 total connections
+            - { name: CLICKHOUSE_CONN_MAX_LIFETIME, value: "1h" }
+            # Parallelism configuration - Indexer component (passed to indexer pods)
+            # Indexer calculates connection pool sizes and Temporal worker limits from these values
+            # Formula: (parallel_blocks × 35 activities × 2 connections) + 100 buffer
+            # Example: (5+10+10) × 35 × 2 + 100 = 1,850 total connections per indexer replica
+            - { name: LIVE_PARALLEL_BLOCKS, value: "5" }
+            - { name: HISTORICAL_PARALLEL_BLOCKS, value: "10" }
+            - { name: REINDEX_PARALLEL_BLOCKS, value: "10" }
+            # Indexer image pull configuration (passed to indexer pods)
+            # - { name: INDEXER_PULL_POLICY, value: "Always" }  # Always, IfNotPresent, Never
+            # - { name: INDEXER_PULL_SECRET, value: "" }  # Name of imagePullSecret if needed
+            # Scheduler configuration (passed to indexer pods) - Customizable for different chain block times
+            # - { name: SCHEDULER_CATCHUP_THRESHOLD, value: "" }
+            # - { name: DIRECT_SCHEDULE_BATCH_SIZE, value: "" }
+            # - { name: SCHEDULER_BATCH_SIZE, value: "" }
+            # - { name: BLOCK_TIME_SECONDS, value: "" }
+            # - { name: SCHEDULER_BATCH_MAX_PARALLELISM, value: "" }
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
-            - { name: REPORTS_DB, value: "canopyx_reports" }
             # Redis (real-time event notifications)
             - { name: REDIS_HOST, value: "redis-master.default.svc.cluster.local" }
             - { name: REDIS_PORT, value: "6379" }

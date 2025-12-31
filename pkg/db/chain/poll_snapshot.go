@@ -24,11 +24,11 @@ func (db *DB) initPollSnapshots(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PollSnapshotColumns)
 
 	query := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(snapshot_time)
+		) ENGINE = %s
 		ORDER BY (proposal_hash, snapshot_time)
-	`, db.Name, indexermodels.PollSnapshotsProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.PollSnapshotsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.PollSnapshotsProductionTableName, "ReplacingMergeTree", "snapshot_time"))
 
 	if err := db.Exec(ctx, query); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PollSnapshotsProductionTableName, err)
@@ -49,15 +49,14 @@ func (db *DB) InsertPollSnapshots(ctx context.Context, snapshots []*indexermodel
 		return nil
 	}
 
-	productionTable := fmt.Sprintf("%s.poll_snapshots", db.Name)
-	query := fmt.Sprintf(`INSERT INTO %s (
+	query := fmt.Sprintf(`INSERT INTO "%s"."poll_snapshots" (
 		proposal_hash, proposal_url,
 		accounts_approve_tokens, accounts_reject_tokens, accounts_total_voted_tokens, accounts_total_tokens,
 		accounts_approve_percentage, accounts_reject_percentage, accounts_voted_percentage,
 		validators_approve_tokens, validators_reject_tokens, validators_total_voted_tokens, validators_total_tokens,
 		validators_approve_percentage, validators_reject_percentage, validators_voted_percentage,
 		snapshot_time
-	) VALUES`, productionTable)
+	) VALUES`, db.Name)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

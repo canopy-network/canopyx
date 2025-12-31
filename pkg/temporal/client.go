@@ -2,6 +2,7 @@ package temporal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/canopy-network/canopyx/pkg/utils"
 	"go.uber.org/zap"
 
+	"go.temporal.io/api/serviceerror"
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -25,12 +27,15 @@ type Client struct {
 	IndexerLiveQueue       string // chain:<chainID>:index:live - per chain queue for live blocks (within threshold of head)
 	IndexerHistoricalQueue string // chain:<chainID>:index:historical - per chain queue for historical blocks (beyond threshold)
 	IndexerOpsQueue        string // chain:<chainID>:ops - per chain operations queue (headscan, gapscan, maintenance).
+	IndexerReindexQueue    string // chain:<chainID>:reindex - per chain dedicated queue for reindex operations
 	AdminMaintenanceQueue  string // admin:maintenance - global admin maintenance queue (compaction, cleanup, monitoring)
 
 	// Schedule IDs
 	HeadScheduleID                 string
 	GapScanScheduleID              string
 	PollSnapshotScheduleID         string
+	ProposalSnapshotScheduleID     string
+	LPSnapshotScheduleID           string
 	CrossChainCompactionScheduleID string
 
 	// Workflow IDs
@@ -85,11 +90,14 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		IndexerLiveQueue:       "chain:%d:index:live",
 		IndexerHistoricalQueue: "chain:%d:index:historical",
 		IndexerOpsQueue:        "chain:%d:ops",
+		IndexerReindexQueue:    "chain:%d:reindex",
 		AdminMaintenanceQueue:  "admin:maintenance",
 		// schedule IDs
 		HeadScheduleID:                 "chain:%d:headscan",
 		GapScanScheduleID:              "chain:%d:gapscan",
 		PollSnapshotScheduleID:         "chain:%d:pollsnapshot",
+		ProposalSnapshotScheduleID:     "chain:%d:proposalsnapshot",
+		LPSnapshotScheduleID:           "chain:%d:lpsnapshot",
 		CrossChainCompactionScheduleID: "crosschain:compaction",
 		// workflow IDs
 		IndexBlockWorkflowId:     "chain:%d:index:%d",
@@ -127,6 +135,11 @@ func (c *Client) GetIndexerOpsQueue(chainID uint64) string {
 	return fmt.Sprintf(c.IndexerOpsQueue, chainID)
 }
 
+// GetIndexerReindexQueue returns the formatted reindex queue name for the given chain ID
+func (c *Client) GetIndexerReindexQueue(chainID uint64) string {
+	return fmt.Sprintf(c.IndexerReindexQueue, chainID)
+}
+
 // GetHeadScheduleID returns the schedule ID for the head scan for the given chain.
 func (c *Client) GetHeadScheduleID(chainID uint64) string {
 	return fmt.Sprintf(c.HeadScheduleID, chainID)
@@ -142,14 +155,26 @@ func (c *Client) GetPollSnapshotScheduleID(chainID uint64) string {
 	return fmt.Sprintf(c.PollSnapshotScheduleID, chainID)
 }
 
+// GetProposalSnapshotScheduleID returns the schedule ID for the proposal snapshot for the given chain.
+func (c *Client) GetProposalSnapshotScheduleID(chainID uint64) string {
+	return fmt.Sprintf(c.ProposalSnapshotScheduleID, chainID)
+}
+
+// GetLPSnapshotScheduleID returns the schedule ID for the LP position snapshot for the given chain.
+func (c *Client) GetLPSnapshotScheduleID(chainID uint64) string {
+	return fmt.Sprintf(c.LPSnapshotScheduleID, chainID)
+}
+
 // GetIndexBlockWorkflowId returns the workflow ID for the indexing block for the given chain and height.
 func (c *Client) GetIndexBlockWorkflowId(chainID uint64, height uint64) string {
 	return fmt.Sprintf(c.IndexBlockWorkflowId, chainID, height)
 }
 
-// GetIndexBlockWorkflowIdWithTime returns the workflow ID for the indexing block for the given chain and height with a timestamp.
-func (c *Client) GetIndexBlockWorkflowIdWithTime(chainID uint64, height uint64) string {
-	return fmt.Sprintf(c.IndexBlockWorkflowId+":%d", chainID, height, time.Now().UnixNano())
+// GetReindexBlockWorkflowId returns a deterministic workflow ID for reindex operations.
+// Format: "reindex-{requestId}-{chainId}-{height}"
+// This ensures that multiple reindex triggers for the same height don't create duplicate workflows.
+func (c *Client) GetReindexBlockWorkflowId(chainID uint64, height uint64, requestID string) string {
+	return fmt.Sprintf("reindex-%s-%d-%d", requestID, chainID, height)
 }
 
 // GetSchedulerWorkflowID returns the deterministic workflow ID for the SchedulerWorkflow for a given chain.
@@ -178,6 +203,12 @@ func (c *Client) TwentySecondSpec() client.ScheduleSpec {
 // ThreeMinuteSpec returns a schedule spec for three minutes.
 func (c *Client) ThreeMinuteSpec() client.ScheduleSpec {
 	return c.GetScheduleSpec(3 * time.Minute)
+}
+
+// FiveMinuteSpec returns a schedule spec for five minutes.
+// Captures governance snapshots (polls and proposals) at 5-minute intervals.
+func (c *Client) FiveMinuteSpec() client.ScheduleSpec {
+	return c.GetScheduleSpec(5 * time.Minute)
 }
 
 // OneHourSpec returns a schedule spec for one hour.
@@ -212,9 +243,11 @@ func (c *Client) EnsureNamespace(ctx context.Context, retention time.Duration) e
 		return nil
 	}
 
-	// If error is not "namespace not found", return it
-	// serviceerror.NamespaceNotFound is the expected error
-	if err.Error() != fmt.Sprintf("Namespace %s is not found.", c.Namespace) {
+	// Check if error is "namespace not found" using type checking instead of string comparison
+	// This is more reliable across Temporal versions and error message format changes
+	var notFound *serviceerror.NamespaceNotFound
+	if !errors.As(err, &notFound) {
+		// Error is NOT "namespace not found" - something else went wrong
 		return fmt.Errorf("failed to describe namespace: %w", err)
 	}
 

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"time"
 )
 
@@ -14,7 +15,7 @@ func (db *DB) UpdateRPCHealth(ctx context.Context, chainID uint64, status, messa
 		return fmt.Errorf("chain_id is required")
 	}
 	if status == "" {
-		status = "unknown"
+		status = adminmodels.ChainStatusUnknown
 	}
 
 	// Fetch the current chain record to preserve other fields
@@ -29,7 +30,7 @@ func (db *DB) UpdateRPCHealth(ctx context.Context, chainID uint64, status, messa
 	current.RPCHealthUpdatedAt = time.Now()
 	current.UpdatedAt = time.Now()
 
-	// Insert new row (ReplacingMergeTree will handle deduplication)
+	// Insert a new row (ReplacingMergeTree will handle deduplication)
 	if err := db.InsertChain(ctx, current); err != nil {
 		return fmt.Errorf("insert rpc health update for chain %d: %w", chainID, err)
 	}
@@ -46,7 +47,7 @@ func (db *DB) UpdateQueueHealth(ctx context.Context, chainID uint64, status, mes
 		return fmt.Errorf("chain_id is required")
 	}
 	if status == "" {
-		status = "unknown"
+		status = adminmodels.ChainStatusUnknown
 	}
 
 	// Fetch the current chain record to preserve other fields
@@ -61,7 +62,7 @@ func (db *DB) UpdateQueueHealth(ctx context.Context, chainID uint64, status, mes
 	current.QueueHealthUpdatedAt = time.Now()
 	current.UpdatedAt = time.Now()
 
-	// Insert new row (ReplacingMergeTree will handle deduplication)
+	// Insert a new row (ReplacingMergeTree will handle deduplication)
 	if err := db.InsertChain(ctx, current); err != nil {
 		return fmt.Errorf("insert queue health update for chain %d: %w", chainID, err)
 	}
@@ -78,7 +79,7 @@ func (db *DB) UpdateDeploymentHealth(ctx context.Context, chainID uint64, status
 		return fmt.Errorf("chain_id is required")
 	}
 	if status == "" {
-		status = "unknown"
+		status = adminmodels.ChainStatusUnknown
 	}
 
 	// Fetch the current chain record to preserve other fields
@@ -93,7 +94,7 @@ func (db *DB) UpdateDeploymentHealth(ctx context.Context, chainID uint64, status
 	current.DeploymentHealthUpdatedAt = time.Now()
 	current.UpdatedAt = time.Now()
 
-	// Insert new row (ReplacingMergeTree will handle deduplication)
+	// Insert a new row (ReplacingMergeTree will handle deduplication)
 	if err := db.InsertChain(ctx, current); err != nil {
 		return fmt.Errorf("insert deployment health update for chain %d: %w", chainID, err)
 	}
@@ -133,7 +134,7 @@ func (db *DB) updateOverallHealth(ctx context.Context, chainID uint64) error {
 	current.OverallHealthUpdatedAt = time.Now()
 	current.UpdatedAt = time.Now()
 
-	// Insert new row (ReplacingMergeTree will handle deduplication)
+	// Insert a new row (ReplacingMergeTree will handle deduplication)
 	if err := db.InsertChain(ctx, current); err != nil {
 		return fmt.Errorf("insert overall health update for chain %d: %w", chainID, err)
 	}
@@ -146,26 +147,25 @@ func (db *DB) updateOverallHealth(ctx context.Context, chainID uint64) error {
 func (db *DB) computeOverallHealthStatus(statuses ...string) string {
 	// Priority map (higher number = worse health)
 	priority := map[string]int{
-		"failed":      5,
-		"critical":    5,
-		"unreachable": 5,
-		"warning":     3,
-		"degraded":    3,
-		"healthy":     2,
-		"unknown":     1,
+		adminmodels.ChainStatusFailed:      5,
+		adminmodels.ChainStatusCritical:    5,
+		adminmodels.ChainStatusUnreachable: 5,
+		adminmodels.ChainStatusWarning:     3,
+		adminmodels.ChainStatusDegraded:    3,
+		adminmodels.ChainStatusHealthy:     2,
+		adminmodels.ChainStatusUnknown:     1,
 	}
 
-	worstStatus := "unknown"
-	worstPriority := priority["unknown"]
+	worstStatus := adminmodels.ChainStatusUnknown
+	worstPriority := priority[adminmodels.ChainStatusUnknown]
 
 	for _, status := range statuses {
 		if status == "" {
-			status = "unknown"
+			status = adminmodels.ChainStatusUnknown
 		}
 		p, exists := priority[status]
 		if !exists {
-			// Unknown status types default to "unknown"
-			p = priority["unknown"]
+			p = priority[adminmodels.ChainStatusUnknown]
 		}
 		if p > worstPriority {
 			worstPriority = p

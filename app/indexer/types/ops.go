@@ -13,11 +13,28 @@ type WorkflowHeadScanInput struct {
 
 // WorkflowSchedulerInput is the input for the SchedulerWorkflow
 type WorkflowSchedulerInput struct {
-	StartHeight    uint64   `json:"startHeight"`
-	EndHeight      uint64   `json:"endHeight"`
-	LatestHeight   uint64   `json:"latestHeight"`
-	ProcessedSoFar uint64   `json:"processedSoFar"` // For ContinueAsNew tracking
-	PriorityRanges []uint64 `json:"priorityRanges"` // Priority bucket boundaries for continuation
+	StartHeight    uint64 `json:"startHeight"`
+	EndHeight      uint64 `json:"endHeight"`
+	LatestHeight   uint64 `json:"latestHeight"`
+	ProcessedSoFar uint64 `json:"processedSoFar"` // For ContinueAsNew tracking
+}
+
+// WorkflowReindexSchedulerInput is the input for the ReindexSchedulerWorkflow
+type WorkflowReindexSchedulerInput struct {
+	ChainID        uint64 `json:"chainID"`
+	StartHeight    uint64 `json:"startHeight"`
+	EndHeight      uint64 `json:"endHeight"`
+	RequestedBy    string `json:"requestedBy"`
+	RequestID      string `json:"requestID"`      // Unique ID for this reindex request (used for deterministic workflow IDs)
+	ProcessedSoFar uint64 `json:"processedSoFar"` // For ContinueAsNew tracking
+}
+
+// WorkflowReindexSchedulerOutput is the output for the ReindexSchedulerWorkflow
+type WorkflowReindexSchedulerOutput struct {
+	TotalBlocks    uint64  `json:"totalBlocks"`
+	TotalScheduled uint64  `json:"totalScheduled"`
+	TotalFailed    uint64  `json:"totalFailed"`
+	DurationMs     float64 `json:"durationMs"`
 }
 
 // --- Activity types
@@ -53,4 +70,19 @@ type ActivityBatchScheduleOutput struct {
 	Scheduled  int     `json:"scheduled"`  // Number of workflows successfully scheduled
 	Failed     int     `json:"failed"`     // Number of workflows that failed to schedule
 	DurationMs float64 `json:"durationMs"` // Total execution time in milliseconds
+}
+
+// ActivityReindexBatchInput contains the parameters for reindex batch scheduling.
+type ActivityReindexBatchInput struct {
+	ChainID     uint64 `json:"chainID"`
+	StartHeight uint64 `json:"startHeight"`
+	EndHeight   uint64 `json:"endHeight"`
+	Reindex     bool   `json:"reindex"`   // Mark as reindex operation
+	RequestID   string `json:"requestID"` // Unique ID for this reindex request (for deterministic workflow IDs)
+}
+
+// ActivityReindexBatchOutput contains the result of reindex batch scheduling.
+type ActivityReindexBatchOutput struct {
+	Scheduled int `json:"scheduled"` // Number of workflows successfully scheduled
+	Failed    int `json:"failed"`    // Number of workflows that failed to schedule
 }

@@ -13,20 +13,20 @@ func (db *DB) initTransactions(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.TransactionColumns)
 
 	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (height, tx_hash)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.TxsProductionTableName, schemaSQL)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.TxsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.TxsProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.TxsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.TxsStagingTableName, schemaSQL)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.TxsStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.TxsStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.TxsStagingTableName, err)
 	}
@@ -42,7 +42,7 @@ func (db *DB) InsertTransactionsStaging(ctx context.Context, txs []*indexermodel
 		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s".txs_staging (
+	query := fmt.Sprintf(`INSERT INTO "%s"."txs_staging" (
 		height, tx_hash, tx_index, time, height_time, created_height, network_id,
 		message_type, signer, counterparty, amount, fee, memo,
 		validator_address, commission, chain_id, sell_amount, buy_amount, liquidity_amount,
@@ -103,6 +103,6 @@ func (db *DB) InsertTransactionsStaging(ctx context.Context, txs []*indexermodel
 }
 
 func (db *DB) DeleteTransactions(ctx context.Context, height uint64) error {
-	stmt := fmt.Sprintf(`ALTER TABLE "%s"."txs" DELETE WHERE height = ?`, db.Name)
+	stmt := fmt.Sprintf(`ALTER TABLE "%s"."txs" ON CLUSTER canopyx DELETE WHERE height = ?`, db.Name)
 	return db.Db.Exec(ctx, stmt, height)
 }

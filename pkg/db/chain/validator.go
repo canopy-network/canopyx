@@ -19,22 +19,27 @@ import (
 // - Committee membership is tracked in committee_validators junction table instead
 func (db *DB) initValidators(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorColumns)
-	queryTemplate := `
-        CREATE TABLE IF NOT EXISTS "%s"."%s" (
+
+	// Production table: ORDER BY (address, height) for efficient address lookups
+	productionQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (address, height)
 		SETTINGS index_granularity = 8192
-	`
-
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorsProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.ValidatorsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorsProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorsProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorsStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, address) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, address)
+		SETTINGS index_granularity = 8192
+	`, db.Name, indexermodels.ValidatorsStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorsStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorsStagingTableName, err)
 	}
@@ -51,8 +56,8 @@ func (db *DB) InsertValidatorsStaging(ctx context.Context, validators []*indexer
 	}
 
 	query := fmt.Sprintf(
-		`INSERT INTO %s (address, public_key, net_address, staked_amount, max_paused_height, unstaking_height, output, delegate, compound, status, height, height_time) VALUES`,
-		indexermodels.ValidatorsStagingTableName,
+		`INSERT INTO "%s"."%s" (address, public_key, net_address, staked_amount, max_paused_height, unstaking_height, output, delegate, compound, status, height, height_time) VALUES`,
+		db.Name, indexermodels.ValidatorsStagingTableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
@@ -95,15 +100,15 @@ func (db *DB) InsertValidatorsStaging(ctx context.Context, validators []*indexer
 // Query usage: SELECT address, created_height FROM validator_created_height WHERE address = ?
 func (db *DB) initValidatorCreatedHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."validator_created_height"
-		ENGINE = AggregatingMergeTree()
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."validator_created_height" %s
+		ENGINE = %s
 		ORDER BY address
 		AS SELECT
 			address,
 			min(height) as created_height
 		FROM "%s"."validators"
 		GROUP BY address
-	`, db.Name, db.Name)
+	`, db.Name, db.OnCluster(), db.Engine("validator_created_height", "AggregatingMergeTree", ""), db.Name)
 
 	return db.Exec(ctx, query)
 }

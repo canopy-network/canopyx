@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/alitto/pond/v2"
+	"github.com/canopy-network/canopy/fsm"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -36,8 +36,8 @@ func (ac *Context) IndexParams(ctx context.Context, in types.ActivityIndexAtHeig
 
 	// Parallel RPC fetch using shared worker pool for performance
 	var (
-		paramsAtH   *rpc.RpcAllParams
-		paramsAtH1  *rpc.RpcAllParams
+		paramsAtH   *fsm.Params
+		paramsAtH1  *fsm.Params
 		paramsErr   error
 		paramsH1Err error
 	)
@@ -123,67 +123,67 @@ func (ac *Context) IndexParams(ctx context.Context, in types.ActivityIndexAtHeig
 	}, nil
 }
 
-// convertRpcParamsToEntity converts RPC params to the entity model.
-func convertRpcParamsToEntity(rpcParams *rpc.RpcAllParams, height uint64, blockTime time.Time) *indexermodels.Params {
+// convertRpcParamsToEntity converts fsm.Params (protobuf type from Canopy) to the entity model.
+func convertRpcParamsToEntity(rpcParams *fsm.Params, height uint64, blockTime time.Time) *indexermodels.Params {
 	params := &indexermodels.Params{
 		Height:     height,
 		HeightTime: blockTime,
 	}
 
 	// Consensus params (handle nil)
-	if rpcParams.ConsensusParams != nil {
-		params.BlockSize = rpcParams.ConsensusParams.BlockSize
-		params.ProtocolVersion = rpcParams.ConsensusParams.ProtocolVersion
-		params.RootChainID = rpcParams.ConsensusParams.RootChainID
-		params.Retired = rpcParams.ConsensusParams.Retired
+	if rpcParams.Consensus != nil {
+		params.BlockSize = rpcParams.Consensus.BlockSize
+		params.ProtocolVersion = rpcParams.Consensus.ProtocolVersion
+		params.RootChainID = rpcParams.Consensus.RootChainId
+		params.Retired = rpcParams.Consensus.Retired
 	}
 
 	// Validator params (handle nil)
-	if rpcParams.ValidatorParams != nil {
-		params.UnstakingBlocks = rpcParams.ValidatorParams.UnstakingBlocks
-		params.MaxPauseBlocks = rpcParams.ValidatorParams.MaxPauseBlocks
-		params.DoubleSignSlashPercentage = rpcParams.ValidatorParams.DoubleSignSlashPercentage
-		params.NonSignSlashPercentage = rpcParams.ValidatorParams.NonSignSlashPercentage
-		params.MaxNonSign = rpcParams.ValidatorParams.MaxNonSign
-		params.NonSignWindow = rpcParams.ValidatorParams.NonSignWindow
-		params.MaxCommittees = rpcParams.ValidatorParams.MaxCommittees
-		params.MaxCommitteeSize = rpcParams.ValidatorParams.MaxCommitteeSize
-		params.EarlyWithdrawalPenalty = rpcParams.ValidatorParams.EarlyWithdrawalPenalty
-		params.DelegateUnstakingBlocks = rpcParams.ValidatorParams.DelegateUnstakingBlocks
-		params.MinimumOrderSize = rpcParams.ValidatorParams.MinimumOrderSize
-		params.StakePercentForSubsidized = rpcParams.ValidatorParams.StakePercentForSubsidized
-		params.MaxSlashPerCommittee = rpcParams.ValidatorParams.MaxSlashPerCommittee
-		params.DelegateRewardPercentage = rpcParams.ValidatorParams.DelegateRewardPercentage
-		params.BuyDeadlineBlocks = rpcParams.ValidatorParams.BuyDeadlineBlocks
-		params.LockOrderFeeMultiplier = rpcParams.ValidatorParams.LockOrderFeeMultiplier
-		params.MinimumStakeForValidators = rpcParams.ValidatorParams.MinimumStakeForValidators
-		params.MinimumStakeForDelegates = rpcParams.ValidatorParams.MinimumStakeForDelegates
-		params.MaximumDelegatesPerCommittee = rpcParams.ValidatorParams.MaximumDelegatesPerCommittee
+	if rpcParams.Validator != nil {
+		params.UnstakingBlocks = rpcParams.Validator.UnstakingBlocks
+		params.MaxPauseBlocks = rpcParams.Validator.MaxPauseBlocks
+		params.DoubleSignSlashPercentage = rpcParams.Validator.DoubleSignSlashPercentage
+		params.NonSignSlashPercentage = rpcParams.Validator.NonSignSlashPercentage
+		params.MaxNonSign = rpcParams.Validator.MaxNonSign
+		params.NonSignWindow = rpcParams.Validator.NonSignWindow
+		params.MaxCommittees = rpcParams.Validator.MaxCommittees
+		params.MaxCommitteeSize = rpcParams.Validator.MaxCommitteeSize
+		params.EarlyWithdrawalPenalty = rpcParams.Validator.EarlyWithdrawalPenalty
+		params.DelegateUnstakingBlocks = rpcParams.Validator.DelegateUnstakingBlocks
+		params.MinimumOrderSize = rpcParams.Validator.MinimumOrderSize
+		params.StakePercentForSubsidized = rpcParams.Validator.StakePercentForSubsidizedCommittee
+		params.MaxSlashPerCommittee = rpcParams.Validator.MaxSlashPerCommittee
+		params.DelegateRewardPercentage = rpcParams.Validator.DelegateRewardPercentage
+		params.BuyDeadlineBlocks = rpcParams.Validator.BuyDeadlineBlocks
+		params.LockOrderFeeMultiplier = rpcParams.Validator.LockOrderFeeMultiplier
+		params.MinimumStakeForValidators = rpcParams.Validator.MinimumStakeForValidators
+		params.MinimumStakeForDelegates = rpcParams.Validator.MinimumStakeForDelegates
+		params.MaximumDelegatesPerCommittee = rpcParams.Validator.MaximumDelegatesPerCommittee
 	}
 
 	// Fee params (handle nil)
-	if rpcParams.FeeParams != nil {
-		params.SendFee = rpcParams.FeeParams.SendFee
-		params.StakeFee = rpcParams.FeeParams.StakeFee
-		params.EditStakeFee = rpcParams.FeeParams.EditStakeFee
-		params.UnstakeFee = rpcParams.FeeParams.UnstakeFee
-		params.PauseFee = rpcParams.FeeParams.PauseFee
-		params.UnpauseFee = rpcParams.FeeParams.UnpauseFee
-		params.ChangeParameterFee = rpcParams.FeeParams.ChangeParameterFee
-		params.DaoTransferFee = rpcParams.FeeParams.DaoTransferFee
-		params.CertificateResultsFee = rpcParams.FeeParams.CertificateResultsFee
-		params.SubsidyFee = rpcParams.FeeParams.SubsidyFee
-		params.CreateOrderFee = rpcParams.FeeParams.CreateOrderFee
-		params.EditOrderFee = rpcParams.FeeParams.EditOrderFee
-		params.DeleteOrderFee = rpcParams.FeeParams.DeleteOrderFee
-		params.DexLimitOrderFee = rpcParams.FeeParams.DexLimitOrderFee
-		params.DexLiquidityDepositFee = rpcParams.FeeParams.DexLiquidityDepositFee
-		params.DexLiquidityWithdrawFee = rpcParams.FeeParams.DexLiquidityWithdrawFee
+	if rpcParams.Fee != nil {
+		params.SendFee = rpcParams.Fee.SendFee
+		params.StakeFee = rpcParams.Fee.StakeFee
+		params.EditStakeFee = rpcParams.Fee.EditStakeFee
+		params.UnstakeFee = rpcParams.Fee.UnstakeFee
+		params.PauseFee = rpcParams.Fee.PauseFee
+		params.UnpauseFee = rpcParams.Fee.UnpauseFee
+		params.ChangeParameterFee = rpcParams.Fee.ChangeParameterFee
+		params.DaoTransferFee = rpcParams.Fee.DaoTransferFee
+		params.CertificateResultsFee = rpcParams.Fee.CertificateResultsFee
+		params.SubsidyFee = rpcParams.Fee.SubsidyFee
+		params.CreateOrderFee = rpcParams.Fee.CreateOrderFee
+		params.EditOrderFee = rpcParams.Fee.EditOrderFee
+		params.DeleteOrderFee = rpcParams.Fee.DeleteOrderFee
+		params.DexLimitOrderFee = rpcParams.Fee.DexLimitOrderFee
+		params.DexLiquidityDepositFee = rpcParams.Fee.DexLiquidityDepositFee
+		params.DexLiquidityWithdrawFee = rpcParams.Fee.DexLiquidityWithdrawFee
 	}
 
 	// Governance params (handle nil)
-	if rpcParams.GovParams != nil {
-		params.DaoRewardPercentage = rpcParams.GovParams.DaoRewardPercentage
+	if rpcParams.Governance != nil {
+		params.DaoRewardPercentage = rpcParams.Governance.DaoRewardPercentage
 	}
 
 	return params

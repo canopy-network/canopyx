@@ -7,50 +7,61 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db/models/admin"
+	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
+	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
 )
 
 // initIndexProgress initializes the index_progress table with its aggregation infrastructure.
 // Creates:
-// 1. Base table (MergeTree) - stores raw indexing progress
-// 2. Aggregate table (AggregatingMergeTree) - stores aggregate state for max height per chain
+// 1. Base table (ReplicatedMergeTree) - stores raw indexing progress
+// 2. Aggregate table (ReplicatedAggregatingMergeTree) - stores aggregate state for max height per chain
 // 3. Materialized view - automatically updates aggregate on inserts
+// index_progress (MergeTree) -- All raw events
+//
+//	↓ (Materialized View)
+//	index_progress_agg (AggregatingMergeTree) -- Max height per chain
 func (db *DB) initIndexProgress(ctx context.Context) error {
-	schemaSQL := admin.ColumnsToSchemaSQL(admin.IndexProgressColumns)
+	schemaSQL := adminmodels.ColumnsToSchemaSQL(adminmodels.IndexProgressColumns)
+	baseEngine := clickhouse.ReplicatedEngine(clickhouse.MergeTree, "")
+	aggEngine := clickhouse.ReplicatedEngine(clickhouse.AggregatingMergeTree, "")
 
-	// 1) Base table: index_progress
+	// Base table: index_progress
 	ddlBase := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."index_progress" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = MergeTree()
+		) ENGINE = %s
 		ORDER BY (chain_id, height)
-	`, db.Name, schemaSQL)
+	`, db.Name, adminmodels.IndexProgressTableName, db.OnCluster(), schemaSQL, baseEngine)
 	if err := db.Db.Exec(ctx, ddlBase); err != nil {
 		return fmt.Errorf("create index_progress table: %w", err)
 	}
 
-	// 2) Aggregate table (stores aggregate STATE), requires ORDER BY
+	// Aggregate table (stores aggregate STATE), requires ORDER BY
 	ddlAgg := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."index_progress_agg" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			chain_id UInt64,
 			max_height AggregateFunction(max, UInt64)
-		) ENGINE = AggregatingMergeTree()
+		) ENGINE = %s
 		ORDER BY (chain_id)
-	`, db.Name)
+	`, db.Name, adminmodels.IndexProgressAggTableName, db.OnCluster(), aggEngine)
 	if err := db.Db.Exec(ctx, ddlAgg); err != nil {
 		return fmt.Errorf("create index_progress_agg table: %w", err)
 	}
 
-	// 3) Materialized view that updates the aggregate on every insert into base
+	// Materialized view that updates the aggregate on every insert into base
 	ddlMV := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."index_progress_mv"
-		TO "%s"."index_progress_agg" AS
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."%s" %s
+		TO "%s"."%s" AS
 		SELECT
 			chain_id,
 			maxState(height) AS max_height
-		FROM "%s"."index_progress"
+		FROM "%s"."%s"
 		GROUP BY chain_id
-	`, db.Name, db.Name, db.Name)
+	`,
+		db.Name, adminmodels.IndexProgressMvTableName, db.OnCluster(),
+		db.Name, adminmodels.IndexProgressAggTableName,
+		db.Name, adminmodels.IndexProgressTableName,
+	)
 	if err := db.Db.Exec(ctx, ddlMV); err != nil {
 		return fmt.Errorf("create index_progress_mv: %w", err)
 	}
@@ -69,13 +80,13 @@ func (db *DB) RecordIndexed(ctx context.Context, chainID uint64, height uint64, 
 	var indexingTime float64
 	if !blockTime.IsZero() {
 		indexingTime = now.Sub(blockTime).Seconds()
-		// Handle edge case: if system clock is behind or block time is in future, set to 0
+		// Handle edge case: if a system clock is behind or block time is in the future, set to 0
 		if indexingTime < 0 {
 			indexingTime = 0
 		}
 	}
 
-	ip := &admin.IndexProgress{
+	ip := &adminmodels.IndexProgress{
 		ChainID:        chainID,
 		Height:         height,
 		IndexedAt:      now,
@@ -88,11 +99,12 @@ func (db *DB) RecordIndexed(ctx context.Context, chainID uint64, height uint64, 
 }
 
 // insertIndexProgress inserts a new index progress record.
-func (db *DB) insertIndexProgress(ctx context.Context, ip *admin.IndexProgress) error {
-	query := `
-		INSERT INTO index_progress (chain_id, height, indexed_at, indexing_time, indexing_time_ms, indexing_detail)
+func (db *DB) insertIndexProgress(ctx context.Context, ip *adminmodels.IndexProgress) error {
+	query := fmt.Sprintf(`
+		INSERT INTO "%s"."%s" (chain_id, height, indexed_at, indexing_time, indexing_time_ms, indexing_detail)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`
+	`, db.Name, adminmodels.IndexProgressTableName)
+
 	return db.Db.Exec(ctx, query,
 		ip.ChainID,
 		ip.Height,
@@ -109,7 +121,11 @@ func (db *DB) insertIndexProgress(ctx context.Context, ip *admin.IndexProgress) 
 func (db *DB) LastIndexed(ctx context.Context, chainID uint64) (uint64, error) {
 	// Try the aggregate first:
 	var h uint64
-	query := fmt.Sprintf(`SELECT maxMerge(max_height) FROM "%s"."index_progress_agg" WHERE chain_id = ?`, db.Name)
+	query := fmt.Sprintf(
+		`SELECT maxMerge(max_height) FROM "%s"."%s" WHERE chain_id = ?`,
+		db.Name,
+		adminmodels.IndexProgressAggTableName,
+	)
 	err := db.Db.QueryRow(ctx, query, chainID).Scan(&h)
 
 	if err == nil && h != 0 {
@@ -118,7 +134,11 @@ func (db *DB) LastIndexed(ctx context.Context, chainID uint64) (uint64, error) {
 
 	// Fallback to the base table if agg is empty (e.g., very first rows)
 	var fallback uint64
-	fallbackQuery := fmt.Sprintf(`SELECT max(height) FROM "%s"."index_progress" WHERE chain_id = ?`, db.Name)
+	fallbackQuery := fmt.Sprintf(
+		`SELECT max(height) FROM "%s"."%s" WHERE chain_id = ?`,
+		db.Name,
+		adminmodels.IndexProgressTableName,
+	)
 	if err := db.Db.QueryRow(ctx, fallbackQuery, chainID).Scan(&fallback); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
@@ -127,7 +147,7 @@ func (db *DB) LastIndexed(ctx context.Context, chainID uint64) (uint64, error) {
 
 // FindGaps returns missing [From, To] heights strictly inside observed heights,
 // and does NOT include the trailing gap to 'up to'. The caller should add a tail gap separately.
-func (db *DB) FindGaps(ctx context.Context, chainID uint64) ([]admin.Gap, error) {
+func (db *DB) FindGaps(ctx context.Context, chainID uint64) ([]adminmodels.Gap, error) {
 	query := fmt.Sprintf(`
 		SELECT CAST(assumeNotNull(prev_h) + 1 AS UInt64) AS from_h, CAST(h - 1 AS UInt64) AS to_h
 		FROM (
@@ -138,15 +158,15 @@ func (db *DB) FindGaps(ctx context.Context, chainID uint64) ([]admin.Gap, error)
 		      ORDER BY height
 		      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 		    ) AS prev_h
-		  FROM "%s"."index_progress"
+		  FROM "%s"."%s"
 		  WHERE chain_id = ?
 		  ORDER BY height
 		)
 		WHERE prev_h IS NOT NULL AND h > prev_h + 1
 		ORDER BY from_h
-	`, db.Name)
+	`, db.Name, adminmodels.IndexProgressTableName)
 
-	var rows []admin.Gap
+	var rows []adminmodels.Gap
 	if err := db.Select(ctx, &rows, query, chainID); err != nil {
 		return nil, err
 	}
@@ -162,9 +182,9 @@ func (db *DB) GetAllChainIndexProgress(ctx context.Context) (map[string]uint64, 
 	// Try the aggregate table first
 	query := fmt.Sprintf(`
 		SELECT chain_id, maxMerge(max_height) AS last_idx
-		FROM "%s"."index_progress_agg"
+		FROM "%s"."%s"
 		GROUP BY chain_id
-	`, db.Name)
+	`, db.Name, adminmodels.IndexProgressAggTableName)
 
 	rows, err := db.Db.Query(ctx, query)
 	if err == nil {
@@ -185,9 +205,9 @@ func (db *DB) GetAllChainIndexProgress(ctx context.Context) (map[string]uint64, 
 	// Fallback to base table
 	fallbackQuery := fmt.Sprintf(`
 		SELECT chain_id, max(height) AS last_idx
-		FROM "%s"."index_progress"
+		FROM "%s"."%s"
 		GROUP BY chain_id
-	`, db.Name)
+	`, db.Name, adminmodels.IndexProgressTableName)
 
 	rows, err = db.Db.Query(ctx, fallbackQuery)
 	if err != nil {
@@ -205,4 +225,29 @@ func (db *DB) GetAllChainIndexProgress(ctx context.Context) (map[string]uint64, 
 	}
 
 	return progressMap, nil
+}
+
+// DeleteIndexProgressForChain removes all index progress records for a chain.
+func (db *DB) DeleteIndexProgressForChain(ctx context.Context, chainID uint64) error {
+	baseQuery := fmt.Sprintf(
+		`DELETE FROM "%s"."%s" %s WHERE chain_id = ?`,
+		db.Name,
+		adminmodels.IndexProgressTableName,
+		db.OnCluster(),
+	)
+	if err := db.Db.Exec(ctx, baseQuery, chainID); err != nil {
+		return fmt.Errorf("delete index_progress for chain %d: %w", chainID, err)
+	}
+
+	aggQuery := fmt.Sprintf(
+		`DELETE FROM "%s"."%s" %s WHERE chain_id = ?`,
+		db.Name,
+		adminmodels.IndexProgressAggTableName,
+		db.OnCluster(),
+	)
+	if err := db.Db.Exec(ctx, aggQuery, chainID); err != nil {
+		return fmt.Errorf("delete index_progress_agg for chain %d: %w", chainID, err)
+	}
+
+	return nil
 }

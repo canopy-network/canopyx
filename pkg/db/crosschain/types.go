@@ -8,7 +8,7 @@ import (
 
 // Cross-chain wrapper types that include chain_id and updated_at fields.
 // These are used for scanning query results from global tables.
-// Global tables add: chain_id (for multi-chain tracking) and updated_at (sync timestamp).
+// Global tables add: chain_id (for multichain tracking) and updated_at (sync timestamp).
 //
 // The embedded indexer types provide all the entity-specific fields,
 // and Go's struct embedding promotes those fields for direct access.
@@ -91,6 +91,36 @@ type DexWithdrawalCrossChain struct {
 type BlockSummaryCrossChain struct {
 	ChainID uint64 `ch:"chain_id" json:"chain_id"`
 	indexer.BlockSummary
+	UpdatedAt time.Time `ch:"updated_at" json:"updated_at"`
+}
+
+type CommitteePaymentCrossChain struct {
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+	indexer.CommitteePayment
+	UpdatedAt time.Time `ch:"updated_at" json:"updated_at"`
+}
+
+type EventCrossChain struct {
+	// Cross-chain tracking column
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
+	// Event fields - note that Event.ChainID becomes event_chain_id in cross-chain tables
+	// This is not using the embedded struct to avoid that collision with chain_id
+	Height       uint64    `ch:"height" json:"height"`
+	EventChainID uint64    `ch:"event_chain_id" json:"event_chain_id"` // Renamed from Event.ChainID
+	EventType    string    `ch:"event_type" json:"event_type"`
+	Address      string    `ch:"address" json:"address"`
+	Reference    string    `ch:"reference" json:"reference"`
+	Memo         string    `ch:"memo" json:"memo"`
+	Amount       int64     `ch:"amount" json:"amount"`
+	HeightTime   time.Time `ch:"height_time" json:"height_time"`
+
+	UpdatedAt time.Time `ch:"updated_at" json:"updated_at"`
+}
+
+type TransactionCrossChain struct {
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+	indexer.Transaction
 	UpdatedAt time.Time `ch:"updated_at" json:"updated_at"`
 }
 

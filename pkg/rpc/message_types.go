@@ -62,7 +62,8 @@ const (
 	MsgTypeDexLiquidityDeposit  MessageType = "dexLiquidityDeposit"  // -
 	MsgTypeDexLiquidityWithdraw MessageType = "dexLiquidityWithdraw" // -
 
-	// Memo-based transaction types (detected from send tx memo field)
+	// --- Memo-based transaction types (detected from send tx memo field)
+
 	MsgTypeStartPoll  MessageType = "startPoll"  // send tx with startPoll memo - creates governance poll
 	MsgTypeVotePoll   MessageType = "votePoll"   // send tx with votePoll memo - votes on poll
 	MsgTypeLockOrder  MessageType = "lockOrder"  // send tx with lockOrder memo - reserves order

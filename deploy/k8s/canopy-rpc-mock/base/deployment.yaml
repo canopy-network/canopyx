@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canopy-rpc-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: canopy-rpc-mock
+  template:
+    metadata:
+      labels:
+        app: canopy-rpc-mock
+    spec:
+      containers:
+        - name: canopy-rpc-mock
+          image: localhost:5001/canopy-rpc-mock
+          args:
+            - "-chains"
+            - "2"
+            - "-blocks"
+            - "100"
+            - "-start-port"
+            - "60000"
+            - "-start-chain-id"
+            - "5"
+          ports:
+            # Port for chain 1 (ID 5)
+            - name: chain-5
+              containerPort: 60000
+            # Port for chain 2 (ID 6)
+            - name: chain-6
+              containerPort: 60001
+          readinessProbe:
+            httpGet:
+              path: /v1/query/height
+              port: 60000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /v1/query/height
+              port: 60000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: "500m"
+            requests:
+              memory: 128Mi
+              cpu: "100m"

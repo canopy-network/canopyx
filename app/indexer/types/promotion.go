@@ -34,3 +34,16 @@ type ActivityCleanPromotedDataOutput struct {
 	Height     uint64  `json:"height"`
 	DurationMs float64 `json:"durationMs"`
 }
+
+// ActivityCleanAllPromotedDataInput contains parameters for cleaning all staging data in parallel
+type ActivityCleanAllPromotedDataInput struct {
+	Entities []string `json:"entities"` // List of entity names: ["blocks", "txs", "accounts", ...]
+	Height   uint64   `json:"height"`
+}
+
+// ActivityCleanAllPromotedDataOutput contains the result of batch staging cleanup
+type ActivityCleanAllPromotedDataOutput struct {
+	EntityCount int     `json:"entity_count"`
+	Height      uint64  `json:"height"`
+	DurationMs  float64 `json:"durationMs"`
+}

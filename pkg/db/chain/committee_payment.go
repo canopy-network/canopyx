@@ -19,26 +19,26 @@ import (
 func (db *DB) initCommitteePayments(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.CommitteePaymentColumns)
 
-	// Create production table
+	// Production table: ORDER BY (committee_id, address, height) for efficient committee_id+address lookups
 	productionQuery := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (committee_id, address, height)
-	`, db.Name, indexermodels.CommitteePaymentsProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.CommitteePaymentsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.CommitteePaymentsProductionTableName, "ReplacingMergeTree", "height"))
 
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.CommitteePaymentsProductionTableName, err)
 	}
 
-	// Create staging table (same structure, for two-phase commit pattern)
+	// Staging table: ORDER BY (height, committee_id, address) for efficient cleanup/promotion WHERE height = ?
 	stagingTableName := indexermodels.CommitteePaymentsProductionTableName + "_staging"
 	stagingQuery := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (committee_id, address, height)
-	`, db.Name, stagingTableName, schemaSQL)
+		) ENGINE = %s
+		ORDER BY (height, committee_id, address)
+	`, db.Name, stagingTableName, db.OnCluster(), schemaSQL, db.Engine(stagingTableName, "ReplacingMergeTree", "height"))
 
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", stagingTableName, err)
@@ -54,10 +54,9 @@ func (db *DB) InsertCommitteePaymentsStaging(ctx context.Context, payments []*in
 		return nil
 	}
 
-	stagingTable := fmt.Sprintf("%s.committee_payments_staging", db.Name)
-	query := fmt.Sprintf(`INSERT INTO %s (
+	query := fmt.Sprintf(`INSERT INTO "%s"."committee_payments_staging" (
 		committee_id, address, percent, height, height_time
-	) VALUES`, stagingTable)
+	) VALUES`, db.Name)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

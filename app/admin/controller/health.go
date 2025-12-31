@@ -27,7 +27,7 @@ func (c *Controller) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	overallHealthy := true
 
 	// 1. Check AdminDB connectivity by trying a simple query
-	if _, err := c.App.AdminDB.ListChain(ctx); err != nil {
+	if _, err := c.App.AdminDB.ListChain(ctx, false); err != nil {
 		c.App.Logger.Warn("Health check: AdminDB query failed", zap.Error(err))
 		checks["admin_db"] = "unhealthy: " + err.Error()
 		overallHealthy = false

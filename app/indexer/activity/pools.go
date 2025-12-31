@@ -2,13 +2,14 @@ package activity
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/alitto/pond/v2"
-	"github.com/canopy-network/canopyx/pkg/rpc"
-
+	"github.com/canopy-network/canopy/fsm"
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/db/transform"
@@ -36,8 +37,8 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 
 	// Phase 1: Parallel RPC workers - fetch all data concurrently
 	var (
-		rpcPools      []*rpc.RpcPool
-		previousPools []*rpc.RpcPool
+		rpcPools      []*fsm.Pool
+		previousPools []*fsm.Pool
 		poolEvents    []*indexer.Event
 		rpcPoolsErr   error
 		prevPoolsErr  error
@@ -63,7 +64,7 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 			return
 		}
 		if in.Height == 1 {
-			previousPools = make([]*rpc.RpcPool, 0)
+			previousPools = make([]*fsm.Pool, 0)
 			return
 		}
 		previousPools, prevPoolsErr = cli.PoolsByHeight(groupCtx, in.Height-1)
@@ -80,9 +81,9 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 		}
 		poolEvents, eventsErr = chainDb.GetEventsByTypeAndHeight(
 			groupCtx, in.Height, true,
-			rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit),
-			rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw),
-			rpc.EventTypeAsStr(rpc.EventTypeDexSwap),
+			string(lib.EventTypeDexLiquidityDeposit),
+			string(lib.EventTypeDexLiquidityWithdraw),
+			string(lib.EventTypeDexSwap),
 		)
 	})
 
@@ -149,11 +150,11 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 	// Count event types for metrics
 	for _, event := range poolEvents {
 		switch event.EventType {
-		case rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit):
+		case string(lib.EventTypeDexLiquidityDeposit):
 			numDeposits++
-		case rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw):
+		case string(lib.EventTypeDexLiquidityWithdraw):
 			numWithdrawals++
-		case rpc.EventTypeAsStr(rpc.EventTypeDexSwap):
+		case string(lib.EventTypeDexSwap):
 			numSwaps++
 		}
 	}
@@ -176,7 +177,9 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 	prevHolderMap := make(map[string]uint64) // key: "poolID:address" -> points
 	for _, pool := range previousPools {
 		for _, pointEntry := range pool.Points {
-			key := fmt.Sprintf("%d:%s", pool.ID, pointEntry.Address)
+			// Convert protobuf []byte address to hex string
+			address := hex.EncodeToString(pointEntry.Address)
+			key := fmt.Sprintf("%d:%s", pool.Id, address)
 			prevHolderMap[key] = pointEntry.Points
 		}
 	}
@@ -190,14 +193,18 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 			continue
 		}
 
-		liquidityPoolID := indexer.LiquidityPoolAddend + rpcPool.ChainID
+		// Extract ChainID from PoolID (fsm.Pool doesn't have separate ChainID field)
+		chainID := indexer.ExtractChainIDFromPoolID(rpcPool.Id)
+		liquidityPoolID := indexer.LiquidityPoolAddend + chainID
 
 		for _, pointEntry := range rpcPool.Points {
 			if pointEntry.Points == 0 {
 				continue
 			}
 
-			key := fmt.Sprintf("%d:%s", rpcPool.ID, pointEntry.Address)
+			// Convert protobuf []byte address to hex string for database storage
+			address := hex.EncodeToString(pointEntry.Address)
+			key := fmt.Sprintf("%d:%s", rpcPool.Id, address)
 			prevPoints, existed := prevHolderMap[key]
 
 			// Snapshot-on-change: only insert if points changed or holder is new
@@ -212,11 +219,11 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 				}
 
 				holder := &indexer.PoolPointsByHolder{
-					Address:             pointEntry.Address,
-					PoolID:              rpcPool.ID,
+					Address:             address,
+					PoolID:              rpcPool.Id,
 					Height:              in.Height,
 					HeightTime:          in.BlockTime,
-					Committee:           rpcPool.ChainID,
+					Committee:           chainID,
 					Points:              pointEntry.Points,
 					LiquidityPoolPoints: liquidityPoolPoints,
 					LiquidityPoolID:     liquidityPoolID,

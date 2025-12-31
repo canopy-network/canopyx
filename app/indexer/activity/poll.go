@@ -14,7 +14,7 @@ import (
 // Fetches current poll state from RPC, converts to database models, and inserts directly to production table.
 // Returns output containing the number of indexed proposals and execution duration in milliseconds.
 //
-// ARCHITECTURAL NOTE: This activity is executed via a scheduled workflow (every 20 seconds).
+// ARCHITECTURAL NOTE: This activity is executed via a scheduled workflow (every 5 minutes).
 // Unlike other indexing activities, it does NOT use height-based indexing because the /v1/gov/poll
 // endpoint does not support height parameters - it always returns the current poll state.
 //

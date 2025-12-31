@@ -14,21 +14,25 @@ import (
 // Includes calculated pool ID fields for different pool types (liquidity, holding, escrow, reward).
 func (db *DB) initPools(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PoolColumns)
-	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (pool_id, height)
-	`
 
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolsProductionTableName, schemaSQL)
+	// Production table: ORDER BY (pool_id, height) for efficient pool_id lookups
+	productionQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (pool_id, height)
+	`, db.Name, indexermodels.PoolsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.PoolsProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PoolsProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolsStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, pool_id) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, pool_id)
+	`, db.Name, indexermodels.PoolsStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.PoolsStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PoolsStagingTableName, err)
 	}
@@ -44,8 +48,7 @@ func (db *DB) InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Poo
 		return nil
 	}
 
-	stagingTable := fmt.Sprintf("%s.pools_staging", db.Name)
-	query := fmt.Sprintf(`INSERT INTO %s (pool_id, height, chain_id, amount, total_points, lp_count, height_time, liquidity_pool_id, holding_pool_id, escrow_pool_id, reward_pool_id) VALUES`, stagingTable)
+	query := fmt.Sprintf(`INSERT INTO "%s"."pools_staging" (pool_id, height, chain_id, amount, total_points, lp_count, height_time, liquidity_pool_id, holding_pool_id, escrow_pool_id, reward_pool_id, amount_delta, total_points_delta, lp_count_delta) VALUES`, db.Name)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err
@@ -67,6 +70,9 @@ func (db *DB) InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Poo
 			pool.HoldingPoolID,
 			pool.EscrowPoolID,
 			pool.RewardPoolID,
+			pool.AmountDelta,
+			pool.TotalPointsDelta,
+			pool.LPCountDelta,
 		)
 		if err != nil {
 			return err

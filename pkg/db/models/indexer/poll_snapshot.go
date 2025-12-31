@@ -9,24 +9,28 @@ const PollSnapshotsProductionTableName = "poll_snapshots"
 // PollSnapshotColumns defines the schema for the poll_snapshots table.
 // NOTE: Poll snapshots are NOT height-based since /v1/gov/poll endpoint doesn't support height queries.
 // Snapshots are time-based and inserted via scheduled workflow every 20 seconds.
+// Codecs are optimized for 15x compression ratio:
+// - DoubleDelta,LZ4 for monotonic timestamps
+// - ZSTD(1) for strings
+// - Delta,ZSTD(3) for gradually changing token amounts and percentages
 var PollSnapshotColumns = []ColumnDef{
 	{Name: "proposal_hash", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "proposal_url", Type: "String", Codec: "ZSTD(1)"},
-	{Name: "accounts_approve_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "accounts_reject_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "accounts_total_voted_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "accounts_total_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "accounts_approve_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "accounts_reject_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "accounts_voted_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "validators_approve_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "validators_reject_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "validators_total_voted_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "validators_total_tokens", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "validators_approve_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "validators_reject_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "validators_voted_percentage", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
-	{Name: "snapshot_time", Type: "DateTime64(6)", Codec: "Delta, ZSTD(1)"},
+	{Name: "accounts_approve_tokens", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "accounts_reject_tokens", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "accounts_total_voted_tokens", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "accounts_total_tokens", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "accounts_approve_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "accounts_reject_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "accounts_voted_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "validators_approve_tokens", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "validators_reject_tokens", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "validators_total_voted_tokens", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "validators_total_tokens", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "validators_approve_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "validators_reject_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "validators_voted_percentage", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "snapshot_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
 }
 
 // PollSnapshot stores time-series snapshots of governance poll results.

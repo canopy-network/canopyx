@@ -15,21 +15,21 @@ func (db *DB) initSupply(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.SupplyColumns)
 
 	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY height
 		SETTINGS index_granularity = 8192
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.SupplyProductionTableName, schemaSQL)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.SupplyProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.SupplyProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.SupplyProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.SupplyStagingTableName, schemaSQL)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.SupplyStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.SupplyStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.SupplyStagingTableName, err)
 	}
@@ -46,7 +46,7 @@ func (db *DB) InsertSupplyStaging(ctx context.Context, supplies []*indexermodels
 	}
 
 	query := fmt.Sprintf(
-		`INSERT INTO "%s".supply_staging (total, staked, delegated_only, height, height_time) VALUES`,
+		`INSERT INTO "%s"."supply_staging" (total, staked, delegated_only, height, height_time) VALUES`,
 		db.Name,
 	)
 

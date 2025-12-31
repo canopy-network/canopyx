@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/pkg/utils"
+	"google.golang.org/protobuf/proto"
 )
 
 // Path constants moved to paths.go for centralized management
@@ -280,4 +283,139 @@ func ListPaged[T any](ctx context.Context, c *HTTPClient, path string, args any)
 		all = append(all, r.items...)
 	}
 	return all, nil
+}
+
+// listPagedProtobuf is a specialized version of ListPaged for protobuf messages.
+// It uses protojson.Unmarshal to properly handle protobuf oneof fields.
+// This is necessary because standard json.Unmarshal doesn't correctly populate
+// oneof wrapper fields in protobuf messages like lib.Event.
+func listPagedProtobuf[T proto.Message](ctx context.Context, c *HTTPClient, path string, args any) ([]T, error) {
+	// First, get the response as raw JSON
+	var rawResp json.RawMessage
+	if err := c.doJSON(ctx, http.MethodPost, path, args, &rawResp); err != nil {
+		return nil, err
+	}
+
+	// Parse the page metadata manually
+	var pageMeta struct {
+		PageNumber int             `json:"pageNumber"`
+		PerPage    int             `json:"perPage"`
+		Results    json.RawMessage `json:"results"`
+		Count      int             `json:"count"`
+		TotalPages int             `json:"totalPages"`
+		TotalCount int             `json:"totalCount"`
+	}
+	if err := json.Unmarshal(rawResp, &pageMeta); err != nil {
+		return nil, fmt.Errorf("unmarshal page metadata: %w", err)
+	}
+
+	// Unmarshal results array to get individual JSON objects
+	var rawResults []json.RawMessage
+	if err := json.Unmarshal(pageMeta.Results, &rawResults); err != nil {
+		return nil, fmt.Errorf("unmarshal results array: %w", err)
+	}
+
+	// Unmarshal each item using lib.Event's custom UnmarshalJSON
+	all := make([]T, 0, pageMeta.TotalCount)
+	for _, raw := range rawResults {
+		// For pointer types like *lib.Event, we need to create a new instance
+		// Using reflection to instantiate the underlying type
+		var item T
+		itemValue := reflect.ValueOf(&item).Elem()
+		// Create new instance of the underlying type (e.g., lib.Event for *lib.Event)
+		newInstance := reflect.New(itemValue.Type().Elem())
+		itemValue.Set(newInstance)
+
+		// Use standard json.Unmarshal which calls lib.Event's custom UnmarshalJSON
+		if err := json.Unmarshal(raw, item); err != nil {
+			return nil, fmt.Errorf("json unmarshal: %w", err)
+		}
+		all = append(all, item)
+	}
+
+	// Handle pagination for remaining pages
+	if pageMeta.TotalPages <= 1 {
+		return all, nil
+	}
+
+	type res struct {
+		items []T
+		err   error
+	}
+	ch := make(chan res, pageMeta.TotalPages-1)
+	for p := 2; p <= pageMeta.TotalPages; p++ {
+		go func(page int) {
+			var rawResp json.RawMessage
+			payload := map[string]any{}
+			// Convert args to map for pagination
+			if args != nil {
+				switch v := args.(type) {
+				case map[string]any:
+					for k, val := range v {
+						payload[k] = val
+					}
+				case QueryByHeightRequest:
+					payload["height"] = v.Height
+				}
+			}
+			payload["pageNumber"] = page
+			if err := c.doJSON(ctx, http.MethodPost, path, payload, &rawResp); err != nil {
+				ch <- res{nil, err}
+				return
+			}
+
+			// Parse and unmarshal this page
+			var pageMeta struct {
+				Results json.RawMessage `json:"results"`
+			}
+			if err := json.Unmarshal(rawResp, &pageMeta); err != nil {
+				ch <- res{nil, fmt.Errorf("unmarshal page metadata: %w", err)}
+				return
+			}
+
+			var rawResults []json.RawMessage
+			if err := json.Unmarshal(pageMeta.Results, &rawResults); err != nil {
+				ch <- res{nil, fmt.Errorf("unmarshal results array: %w", err)}
+				return
+			}
+
+			pageItems := make([]T, 0, len(rawResults))
+			for _, raw := range rawResults {
+				// For pointer types, create new instance using reflection
+				var item T
+				itemValue := reflect.ValueOf(&item).Elem()
+				newInstance := reflect.New(itemValue.Type().Elem())
+				itemValue.Set(newInstance)
+
+				// Use standard json.Unmarshal which calls lib.Event's custom UnmarshalJSON
+				if err := json.Unmarshal(raw, item); err != nil {
+					ch <- res{nil, fmt.Errorf("json unmarshal: %w", err)}
+					return
+				}
+				pageItems = append(pageItems, item)
+			}
+			ch <- res{pageItems, nil}
+		}(p)
+	}
+
+	for i := 0; i < pageMeta.TotalPages-1; i++ {
+		r := <-ch
+		if r.err != nil {
+			return nil, r.err
+		}
+		all = append(all, r.items...)
+	}
+	return all, nil
+}
+
+// EventsByHeight returns all Canopy Event for a given height.
+// JSON from RPC is unmarshaled using protojson to properly handle protobuf oneof fields.
+// Callers should convert to indexer models using transform.Event() if needed.
+func (c *HTTPClient) EventsByHeight(ctx context.Context, h uint64) ([]*lib.Event, error) {
+	events, err := listPagedProtobuf[*lib.Event](ctx, c, eventsByHeightPath, QueryByHeightRequest{Height: h})
+	if err != nil {
+		return nil, err
+	}
+
+	return events, nil
 }

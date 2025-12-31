@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
@@ -90,12 +91,12 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 
 	// 2. FetchBlock - fetch block from RPC (local activity for fast retries)
 	// This uses a local activity to retry quickly when waiting for block propagation
-	// Timeout: 5 minutes to allow ~150 retry attempts (2s interval) for blocks not ready yet
-	// With 20s block time, worst case is waiting ~60s for a block to become available
+	// NO TIMEOUT: We want unlimited retries since blocks MUST eventually be indexed
+	// The retry policy handles backoff, we just need to be patient
 	var fetchOut types.ActivityFetchBlockOutput
 	localActivityOpts := workflow.LocalActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute, // Allow enough time for blocks to become available
-		RetryPolicy:         retry,           // Use the same fast retry policy
+		StartToCloseTimeout: 10 * time.Minute,
+		RetryPolicy:         retry,
 	}
 	localCtx := workflow.WithLocalActivityOptions(ctx, localActivityOpts)
 	if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.FetchBlockFromRPC, types.ActivityFetchBlockInput{
@@ -105,7 +106,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	}
 	timings["fetch_block_ms"] = fetchOut.DurationMs
 
-	heightTime := time.UnixMicro(fetchOut.Block.BlockHeader.Time)
+	heightTime := time.UnixMicro(int64(fetchOut.Block.BlockHeader.Time))
 
 	var eventsOut types.ActivityIndexEventsOutput
 	indexAtHeight := types.ActivityIndexAtHeight{
@@ -141,6 +142,9 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		Height: in.Height,
 		Block:  fetchOut.Block,
 	}
+
+	// Capture start time for parallel data indexing (wall-clock measurement)
+	dataIndexingStart := workflow.Now(ctx)
 
 	saveBlockFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.SaveBlock, saveBlockInput)
 	txFuture := workflow.ExecuteActivity(ctx, wc.ActivityContext.IndexTransactions, indexAtHeight)
@@ -214,6 +218,11 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		return err
 	}
 	timings["index_supply_ms"] = supplyOut.DurationMs
+
+	// Capture end time for parallel data indexing and calculate wall-clock duration
+	dataIndexingEnd := workflow.Now(ctx)
+	dataIndexingElapsed := dataIndexingEnd.Sub(dataIndexingStart)
+	timings["data_indexing"] = float64(dataIndexingElapsed.Milliseconds())
 
 	// Collect all summaries for aggregation from all indexed entities
 	// Note: Some detailed breakdowns (e.g., NumOrdersNew, NumOrdersOpen) are not yet
@@ -343,7 +352,12 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	// Phase 3: Promote all entities in parallel from staging to production
 	// This follows the two-phase commit pattern for data consistency
 	// Uses stagingEntities which is the list of entities that use staging tables
+
+	// Capture start time for parallel data release (wall-clock measurement)
+	dataReleaseStart := workflow.Now(ctx)
+
 	promoteFutures := make([]workflow.Future, 0, len(stagingEntities))
+	promoteEntities := make([]string, 0, len(stagingEntities))
 
 	for _, entity := range stagingEntities {
 		f := workflow.ExecuteActivity(ctx, wc.ActivityContext.PromoteData, types.ActivityPromoteDataInput{
@@ -351,18 +365,23 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 			Height: in.Height,
 		})
 		promoteFutures = append(promoteFutures, f)
+		promoteEntities = append(promoteEntities, entity)
 	}
 
-	// Wait for all promotions to complete
-	var promoteTimingsTotal float64
-	for _, f := range promoteFutures {
+	// Wait for all promotions to complete and collect individual timings for debugging
+	for i, f := range promoteFutures {
 		var out types.ActivityPromoteDataOutput
 		if err := f.Get(ctx, &out); err != nil {
 			return err
 		}
-		promoteTimingsTotal += out.DurationMs
+		// Store individual promotion times for debugging (not added to total)
+		timings[fmt.Sprintf("promote_%s", promoteEntities[i])] = out.DurationMs
 	}
-	timings["promote_all_ms"] = promoteTimingsTotal
+
+	// Capture end time for parallel data release and calculate wall-clock duration
+	dataReleaseEnd := workflow.Now(ctx)
+	dataReleaseElapsed := dataReleaseEnd.Sub(dataReleaseStart)
+	timings["data_release"] = float64(dataReleaseElapsed.Milliseconds())
 
 	// Phase 4: Trigger async cleanup workflow (fire-and-forget)
 	// Cleanup runs on ops queue to avoid blocking indexing queue
@@ -372,7 +391,7 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
 		WorkflowID:        cleanupWorkflowID,
 		TaskQueue:         opsQueue,
-		ParentClosePolicy: enums.PARENT_CLOSE_POLICY_ABANDON, // Let cleanup continue after parent completes
+		ParentClosePolicy: enums.PARENT_CLOSE_POLICY_ABANDON, // Let cleanup continue after the parent completes
 	})
 
 	// Start cleanup workflow and wait only for it to start, not complete
@@ -386,11 +405,14 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 		workflow.GetLogger(ctx).Warn("Failed to start cleanup workflow", "error", err)
 	}
 
-	// Calculate total indexing time (sum of all activity durations)
-	var totalMs float64
-	for _, duration := range timings {
-		totalMs += duration
-	}
+	// Calculate total indexing time (sum of critical path activities only)
+	// Only sum wall-clock measurements, not individual parallel activity times
+	totalMs := timings["prepare_index_ms"] +
+		timings["fetch_block_ms"] +
+		timings["index_events_ms"] +
+		timings["data_indexing"] + // Wall-clock time for parallel indexing
+		timings["data_release"] + // Wall-clock time for parallel promotions
+		timings["save_block_summary_ms"]
 
 	// Marshal timing details to JSON
 	detailBytes, err := json.Marshal(timings)
@@ -419,61 +441,51 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 // - Idempotent: Safe to retry or run multiple times
 // - Async: Runs on ops queue to avoid blocking high-throughput indexing queue
 func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input types.WorkflowCleanupStagingInput) error {
-	// Configure activity options for cleanup operations
-	// Cleanup is non-critical, so we use shorter timeouts and limited retries
-	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
+	// Use LOCAL ACTIVITY for batch cleanup with PARALLEL WITH
+	// This executes all DELETE statements in a single batch for maximum performance
+	localActivityOpts := workflow.LocalActivityOptions{
+		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    1 * time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumInterval:    30 * time.Second,
+			InitialInterval:    500 * time.Millisecond,
+			BackoffCoefficient: 1.5,
+			MaximumInterval:    10 * time.Second,
 			MaximumAttempts:    3, // Limited retries for cleanup
 		},
-	})
+	}
+	ctx = workflow.WithLocalActivityOptions(ctx, localActivityOpts)
 
-	// Use stagingEntities - the list of entities that use staging tables
-	// This excludes entities like poll_snapshots which use direct production inserts
-	workflow.GetLogger(ctx).Info("Starting staging cleanup",
+	workflow.GetLogger(ctx).Info("Starting staging cleanup with PARALLEL WITH",
 		"chainId", wc.ChainID,
 		"height", input.Height,
 		"numEntities", len(stagingEntities))
 
-	// Clean each entity's staging table
-	// We don't fail on individual entity cleanup failures - just log and continue
-	var successCount, failureCount int
+	// Execute batch cleanup using PARALLEL WITH
+	// This executes all DELETE statements in a single ClickHouse query:
+	//   DELETE FROM "chain_5"."accounts_staging" WHERE height = 100
+	//   PARALLEL WITH
+	//   DELETE FROM "chain_5"."events_staging" WHERE height = 100
+	//   PARALLEL WITH
+	//   ...
+	var output types.ActivityCleanAllPromotedDataOutput
+	err := workflow.ExecuteLocalActivity(ctx, wc.ActivityContext.CleanAllPromotedData, types.ActivityCleanAllPromotedDataInput{
+		Entities: stagingEntities,
+		Height:   input.Height,
+	}).Get(ctx, &output)
 
-	for _, entity := range stagingEntities {
-		var output types.ActivityCleanPromotedDataOutput
-		err := workflow.ExecuteActivity(ctx, wc.ActivityContext.CleanPromotedData, types.ActivityCleanPromotedDataInput{
-			Entity: entity,
-			Height: input.Height,
-		}).Get(ctx, &output)
-
-		if err != nil {
-			workflow.GetLogger(ctx).Warn("Failed to clean staging data for entity",
-				"entity", entity,
-				"chainId", wc.ChainID,
-				"height", input.Height,
-				"error", err)
-			failureCount++
-			// Continue cleaning other entities despite failure
-		} else {
-			workflow.GetLogger(ctx).Debug("Successfully cleaned staging data",
-				"entity", entity,
-				"chainId", wc.ChainID,
-				"height", input.Height,
-				"durationMs", output.DurationMs)
-			successCount++
-		}
+	if err != nil {
+		workflow.GetLogger(ctx).Warn("Failed to clean staging data (batch)",
+			"chainId", wc.ChainID,
+			"height", input.Height,
+			"error", err)
+		// Always return nil - cleanup failures are non-critical
+		return nil
 	}
 
-	workflow.GetLogger(ctx).Info("Completed staging cleanup",
+	workflow.GetLogger(ctx).Info("Completed staging cleanup with PARALLEL WITH",
 		"chainId", wc.ChainID,
 		"height", input.Height,
-		"success", successCount,
-		"failures", failureCount)
+		"entity_count", output.EntityCount,
+		"durationMs", output.DurationMs)
 
-	// Always return nil - cleanup failures are non-critical
-	// They're logged above and can be investigated if needed
 	return nil
 }

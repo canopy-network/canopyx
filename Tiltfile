@@ -3,6 +3,13 @@ load('ext://k8s_attach', 'k8s_attach')
 load('ext://restart_process', 'docker_build_with_restart')
 
 # ------------------------------------------
+# TILT SETTINGS
+# ------------------------------------------
+
+# Increase timeout for slow operations (like Helm installs on first run)
+update_settings(k8s_upsert_timeout_secs=300)  # 5 minutes for apply operations
+
+# ------------------------------------------
 # CONFIGURATION SYSTEM
 # ------------------------------------------
 
@@ -44,10 +51,10 @@ def get_port(service, default):
 # ------------------------------------------
 
 helm_repo(
-  name='hyperdx',
-  url='https://hyperdxio.github.io/helm-charts',
+  name='altinity',
+  url='https://docs.altinity.com/clickhouse-operator/',
   labels=['helm_repo'],
-  resource_name='helm-repo-hyperdx'
+  resource_name='helm-repo-altinity'
 )
 
 helm_repo(
@@ -64,92 +71,201 @@ helm_repo(
   resource_name='helm-repo-bitnami'
 )
 
+helm_repo(
+  name='clickhouse-operator',
+  url='https://helm.altinity.com',
+  labels=['helm_repo'],
+  resource_name='helm-repo-clickhouse-operator'
+)
+
 # ------------------------------------------
 # CLICKHOUSE (Always Required)
 # ------------------------------------------
-# ClickHouse is always deployed - resource limits controlled via profile configuration
+# ClickHouse is always deployed via Altinity ClickHouse Operator
 
-# Build ClickHouse resource limit flags from profile
-clickhouse_cfg = resources_cfg.get('clickhouse', {})
-clickhouse_flags = ['--values=./deploy/helm/clickhouse-values.yaml']
+print("Deploying ClickHouse via Altinity ClickHouse Operator")
 
-if clickhouse_cfg.get('cpu_limit'):
-    clickhouse_flags.append('--set=clickhouse.resources.limits.cpu=%s' % clickhouse_cfg['cpu_limit'])
-if clickhouse_cfg.get('memory_limit'):
-    clickhouse_flags.append('--set=clickhouse.resources.limits.memory=%s' % clickhouse_cfg['memory_limit'])
-if clickhouse_cfg.get('cpu_request'):
-    clickhouse_flags.append('--set=clickhouse.resources.requests.cpu=%s' % clickhouse_cfg['cpu_request'])
-if clickhouse_cfg.get('memory_request'):
-    clickhouse_flags.append('--set=clickhouse.resources.requests.memory=%s' % clickhouse_cfg['memory_request'])
+# Generate dynamic storage patch based on tilt-config.yaml
+clickhouse_storage = resources_cfg.get('clickhouse', {})
+hot_storage = clickhouse_storage.get('hot_storage', '2Gi')
+warm_storage = clickhouse_storage.get('warm_storage', '2Gi')
+cold_storage = clickhouse_storage.get('cold_storage', '5Gi')
+log_storage = clickhouse_storage.get('log_storage', '1Gi')
 
-print("ClickHouse resources: CPU=%s, Memory=%s" % (
-    clickhouse_cfg.get('cpu_limit', 'default'),
-    clickhouse_cfg.get('memory_limit', 'default')
-))
+# Build storage patch YAML
+storage_patch = """# Auto-generated storage patch from tilt-config.yaml
+# Profile: {profile} | Hot: {hot} | Warm: {warm} | Cold: {cold} | Log: {log}
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: canopyx
+spec:
+  defaults:
+    templates:
+      volumeClaimTemplates:
+        - name: hot-volume
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: {hot}
 
-helm_resource(
-  name='clickhouse',
-  chart='hyperdx/hdx-oss-v2',
-  release_name='clickhouse',
-  flags=clickhouse_flags,
-  pod_readiness='wait',
+        - name: warm-volume
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: {warm}
+
+        - name: cold-volume
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: {cold}
+
+        - name: log-volume
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: {log}
+""".format(profile=profile, hot=hot_storage, warm=warm_storage, cold=cold_storage, log=log_storage)
+
+# Write patch file using Python
+local_resource(
+  'generate-clickhouse-storage-patch',
+  """python3 -c "
+import os
+os.makedirs('deploy/k8s/clickhouse/overlays/local', exist_ok=True)
+with open('deploy/k8s/clickhouse/overlays/local/pvc-sizes.yaml', 'w') as f:
+    f.write('''%s''')
+" """ % storage_patch,
   labels=['clickhouse']
 )
 
-# Patch ClickHouse ConfigMap with increased limits after Helm install
+print("  ClickHouse storage sizes (profile=%s): hot=%s, warm=%s, cold=%s, log=%s" % (profile, hot_storage, warm_storage, cold_storage, log_storage))
+
+# Step 1: Deploy ClickHouse Operator (installs CRDs)
+helm_resource(
+  name='clickhouse-operator',
+  chart='clickhouse-operator/altinity-clickhouse-operator',
+  release_name='clickhouse-operator',
+  flags=['--set=metrics.enabled=true'],
+  pod_readiness='wait',
+  resource_deps=['helm-repo-clickhouse-operator'],
+  labels=['clickhouse']
+)
+
+# Step 1.5: Wait 30s for operator to register CRDs
 local_resource(
-  'clickhouse-config-patch',
-  cmd='''
-    echo "Patching ClickHouse ConfigMap with increased concurrency limits..."
-    kubectl get configmap clickhouse-hdx-oss-v2-clickhouse-config -o yaml | \\
-      sed 's/<max_concurrent_queries>100<\\/max_concurrent_queries>/<max_concurrent_queries>2000<\\/max_concurrent_queries>/' | \\
-      sed 's/<max_connections>4096<\\/max_connections>/<max_connections>3000<\\/max_connections>/' | \\
-      kubectl apply -f - && \\
-    echo "Restarting ClickHouse pod to apply new configuration..." && \\
-    kubectl delete pod -l app.kubernetes.io/name=clickhouse --wait && \\
-    echo "ClickHouse configuration updated successfully!"
-  ''',
+  'clickhouse-operator-ready',
+  'echo "Waiting 30s for ClickHouse operator CRDs to be registered..." && sleep 30',
+  resource_deps=['clickhouse-operator', 'generate-clickhouse-storage-patch'],
+  labels=['clickhouse']
+)
+
+# Step 2 & 3: Deploy ClickHouseKeeperInstallation and ClickHouseInstallation
+# Using kustomize overlay with dynamically generated storage patch from tilt-config.yaml
+k8s_yaml(kustomize('./deploy/k8s/clickhouse/overlays/local'))
+
+k8s_resource(
+  objects=['canopyx-keeper:ClickHouseKeeperInstallation:default'],
+  new_name='clickhouse-keeper',
+  resource_deps=['clickhouse-operator-ready'],
+  labels=['clickhouse']
+)
+
+k8s_resource(
+  objects=['canopyx:ClickHouseInstallation:default'],
+  new_name='clickhouse',
+  resource_deps=['clickhouse-keeper'],
+  labels=['clickhouse'],
+  port_forwards=[
+    "%s:8123" % get_port('clickhouse_server', 8123),
+    "%s:9000" % get_port('clickhouse_native', 9000)
+  ]
+)
+
+# Attach to individual ClickHouse replica pods for debugging replication
+# These pods are created by the clickhouse-operator
+k8s_attach('clickhouse-replica-0', 'pod/chi-canopyx-canopyx-0-0-0')
+k8s_resource(
+  'clickhouse-replica-0',
   resource_deps=['clickhouse'],
   labels=['clickhouse'],
+  port_forwards=[
+    "%s:8123" % get_port('clickhouse_replica_0_http', 8124),
+    "%s:9000" % get_port('clickhouse_replica_0_native', 9001)
+  ]
 )
 
-# Apply ClickHouse storage tiering configuration
-local_resource(
-  'clickhouse-storage-config',
-  cmd='''
-    echo "Applying ClickHouse storage tiering configuration (hot/warm/cold)..."
-    kubectl apply -f ./deploy/k8s/clickhouse/configmap.yaml && \\
-    kubectl patch deployment clickhouse-hdx-oss-v2-clickhouse -p '{"spec":{"template":{"spec":{"volumes":[{"name":"storage-config","configMap":{"name":"clickhouse-storage-config"}}],"containers":[{"name":"clickhouse","volumeMounts":[{"name":"storage-config","mountPath":"/etc/clickhouse-server/config.d/storage-policy.xml","subPath":"storage-policy.xml"}]}]}}}}' && \\
-    echo "Storage tiering configured: hot (30d) -> warm (180d) -> cold (permanent)" && \\
-    echo "Restarting ClickHouse to apply storage configuration..." && \\
-    kubectl delete pod -l app.kubernetes.io/name=clickhouse --wait && \\
-    echo "ClickHouse storage configuration applied successfully!"
-  ''',
-  resource_deps=['clickhouse-config-patch'],
+k8s_attach('clickhouse-replica-1', 'pod/chi-canopyx-canopyx-0-1-0')
+k8s_resource(
+  'clickhouse-replica-1',
+  resource_deps=['clickhouse'],
   labels=['clickhouse'],
+  port_forwards=[
+    "%s:8123" % get_port('clickhouse_replica_1_http', 8125),
+    "%s:9000" % get_port('clickhouse_replica_1_native', 9002)
+  ]
 )
 
-# Patch ClickHouse deployment with Prometheus scrape annotations
-local_resource(
-  'clickhouse-prometheus-patch',
-  cmd='''
-    echo "Adding Prometheus scrape annotations to ClickHouse deployment..."
-    kubectl patch deployment clickhouse-hdx-oss-v2-clickhouse -p '{"spec":{"template":{"metadata":{"annotations":{"prometheus.io/scrape":"true","prometheus.io/port":"9363","prometheus.io/path":"/metrics"}}}}}' && \\
-    echo "Prometheus annotations applied successfully!"
+# Attach to individual ClickHouse keeper replicas pods for log tracking
+# These pods are created by the clickhouse-operator
+k8s_attach('clickhouse-keeper-0', 'pod/chk-canopyx-keeper-canopyx-0-0-0')
+k8s_resource(
+  'clickhouse-keeper-0',
+  resource_deps=['clickhouse'],
+  labels=['clickhouse']
+)
+# Attach to individual ClickHouse keeper replicas pods for log tracking
+# These pods are created by the clickhouse-operator
+k8s_attach('clickhouse-keeper-1', 'pod/chk-canopyx-keeper-canopyx-0-1-0')
+k8s_resource(
+  'clickhouse-keeper-1',
+  resource_deps=['clickhouse'],
+  labels=['clickhouse']
+)
+# Attach to individual ClickHouse keeper replicas pods for log tracking
+# These pods are created by the clickhouse-operator
+k8s_attach('clickhouse-keeper-2', 'pod/chk-canopyx-keeper-canopyx-0-2-0')
+k8s_resource(
+  'clickhouse-keeper-2',
+  resource_deps=['clickhouse'],
+  labels=['clickhouse']
+)
+
+# Cleanup ClickHouse PVCs on tilt down (prevents stale replica metadata)
+k8s_custom_deploy(
+  'cleanup-clickhouse-data',
+  apply_cmd='true',
+  delete_cmd='''
+    echo "Cleaning up ClickHouse persistent data..." && \
+    echo "Deleting ClickHouse StatefulSets..." && \
+    kubectl delete statefulset -l clickhouse.altinity.com/chi=canopyx --ignore-not-found --wait && \
+    echo "Deleting ClickHouse Keeper StatefulSets..." && \
+    kubectl delete statefulset -l clickhouse.altinity.com/chk=canopyx-keeper --ignore-not-found --wait && \
+    echo "Force-removing ClickHouse installation finalizers..." && \
+    kubectl patch clickhouseinstallation canopyx -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true && \
+    kubectl patch clickhousekeeperinstallation canopyx-keeper -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true && \
+    echo "Waiting for ClickHouse installations to be fully removed..." && \
+    kubectl wait --for=delete clickhouseinstallation/canopyx --timeout=30s 2>/dev/null || true && \
+    kubectl wait --for=delete clickhousekeeperinstallation/canopyx-keeper --timeout=30s 2>/dev/null || true && \
+    echo "Deleting ClickHouse Keeper PVCs (must wait to clear replica metadata)..." && \
+    kubectl delete pvc -l clickhouse-keeper.altinity.com/chk=canopyx-keeper --ignore-not-found --wait && \
+    echo "Deleting ClickHouse data PVCs (background)..." && \
+    kubectl delete pvc -l clickhouse.altinity.com/chi=canopyx --ignore-not-found --wait=false && \
+    echo "ClickHouse cleanup complete (data PVCs deleting in background)"
   ''',
-  resource_deps=['clickhouse-storage-config'],
-  labels=['clickhouse'],
+  deps=[],
 )
 
-# HyperDX web UI, MongoDB, and OTEL collector are disabled in clickhouse-values.yaml
-# Only attach to the ClickHouse server itself
-k8s_attach(
-    name="clickhouse-server",
-    obj="deployment/clickhouse-hdx-oss-v2-clickhouse",
-    port_forwards=["%s:8123" % get_port('clickhouse_server', 8123), "%s:9000" % get_port('clickhouse_native', 9000)],
-    resource_deps=["clickhouse"],
-    labels=['clickhouse'],
-)
+k8s_resource('cleanup-clickhouse-data', resource_deps=['clickhouse', 'clickhouse-keeper'], labels=['no-op'])
 
 # ------------------------------------------
 # TEMPORAL (Always Required)
@@ -235,6 +351,29 @@ k8s_attach(
     labels=['temporal'],
 )
 
+# Attach to Cassandra for monitoring (deployed by Temporal Helm chart)
+k8s_attach(
+    name="temporal-cassandra",
+    obj="statefulset/temporal-cassandra",
+    port_forwards=[
+        "%s:9042" % get_port('cassandra_cql', 9042),      # CQL native protocol
+        "%s:7199" % get_port('cassandra_jmx', 7199),      # JMX
+    ],
+    resource_deps=["temporal"],
+    labels=['temporal'],
+)
+
+# Attach to Cassandra for monitoring (deployed by Temporal Helm chart)
+k8s_attach(
+    name="temporal-elasticsearch",
+    obj="statefulset/elasticsearch-master",
+    port_forwards=[
+        "%s:9200" % get_port('elasticsearch_http', 9200)      # http
+    ],
+    resource_deps=["temporal"],
+    labels=['temporal'],
+)
+
 # ------------------------------------------
 # REDIS (Always Required)
 # ------------------------------------------
@@ -252,7 +391,7 @@ helm_resource(
 
 k8s_attach(
     name="redis-master",
-    obj="statefulset/redis-master",
+    obj="pod/redis-master-0",
     port_forwards=["%s:6379" % get_port('redis', 6379)],
     resource_deps=["redis"],
     labels=['redis'],
@@ -517,6 +656,13 @@ if components.get('admin', True):
                             if env_name in admin_env_overrides:
                                 env_var['value'] = str(admin_env_overrides[env_name])
                                 print("CanopyX Admin env override: %s=%s" % (env_name, env_var['value']))
+
+                    # Apply global ClickHouse connection strategy if configured
+                    if env_cfg.get('clickhouse_conn_strategy'):
+                        env_vars = container.get('env', [])
+                        env_vars.append({'name': 'CLICKHOUSE_CONN_STRATEGY', 'value': env_cfg['clickhouse_conn_strategy']})
+                        container['env'] = env_vars
+                        print("CanopyX Admin ClickHouse strategy: %s" % env_cfg['clickhouse_conn_strategy'])
             break
 
     k8s_yaml(encode_yaml_stream(admin_objects))
@@ -525,7 +671,7 @@ if components.get('admin', True):
         "canopyx-admin",
         port_forwards=["%s:3000" % get_port('admin', 3000)],
         labels=['apps'],
-        resource_deps=["clickhouse-server", "temporal-frontend"],
+        resource_deps=["clickhouse", "temporal-frontend"],
         pod_readiness='wait',
     )
 else:
@@ -757,12 +903,20 @@ if components.get('controller', True):
                             if env_name in controller_env_overrides:
                                 env_var['value'] = str(controller_env_overrides[env_name])
                                 print("CanopyX Controller env override: %s=%s" % (env_name, env_var['value']))
+
+                    # Apply global ClickHouse connection strategy if configured
+                    # Controller passes this to indexer deployments via provider_k8s.go
+                    if env_cfg.get('clickhouse_conn_strategy'):
+                        env_vars = container.get('env', [])
+                        env_vars.append({'name': 'CLICKHOUSE_CONN_STRATEGY', 'value': env_cfg['clickhouse_conn_strategy']})
+                        container['env'] = env_vars
+                        print("CanopyX Controller ClickHouse strategy: %s (will be passed to indexers)" % env_cfg['clickhouse_conn_strategy'])
             break
 
     k8s_yaml(encode_yaml_stream(controller_objects))
 
     # Build resource_deps dynamically based on what's enabled
-    controller_deps = ["clickhouse-server", "temporal-frontend"]
+    controller_deps = ["clickhouse", "temporal-frontend"]
     if components.get('admin', True):
         controller_deps.append("canopyx-admin")
 
@@ -777,124 +931,104 @@ else:
     print("Controller disabled")
 
 # ------------------------------------------
-# CANOPY LOCAL NODES (Optional - Dual Node Setup)
+# CANOPY RPC MOCK (Optional - Mock Blockchain Nodes)
 # ------------------------------------------
 
-# Get configured Canopy source path
-canopy_path = paths_cfg.get('canopy_source', '../canopy')
-# Note: Tilt/Starlark doesn't have os.path.expanduser, so use absolute paths in config or relative paths
+# Get configured Canopy RPC Mock source path
+canopy_rpc_mock_path = paths_cfg.get('canopy_rpc_mock_source', '../canopy-rpc-mock')
 
-# Get Canopy deployment mode: "off" | "single" | "dual"
-canopy_mode = components.get('canopy', 'off')
+# Check if canopy mock is enabled (boolean)
+canopy_enabled = components.get('canopy', False)
 
-if canopy_mode == 'dual':
-    if os.path.exists(canopy_path):
-        print("Canopy dual-node setup enabled - found source at %s" % canopy_path)
+if canopy_enabled:
+    if os.path.exists(canopy_rpc_mock_path):
+        print("Canopy RPC Mock enabled - found source at %s" % canopy_rpc_mock_path)
 
-        # Build single image for both nodes
+        # Get mock configuration from config
+        mock_chains = paths_cfg.get('mock_chains', 2)
+        mock_blocks = paths_cfg.get('mock_blocks', 100)
+        mock_start_port = paths_cfg.get('mock_start_port', 60000)
+        mock_start_chain_id = paths_cfg.get('mock_start_chain_id', 5)
+
+        print("Mock config: %d chains, %d blocks per chain, starting at port %d (chain ID %d)" % (
+            mock_chains, mock_blocks, mock_start_port, mock_start_chain_id
+        ))
+
+        # Build docker image for canopy-rpc-mock
         docker_build(
-            "localhost:5001/canopy-node",
-            canopy_path,
-            dockerfile=canopy_path + "/.docker/Dockerfile",
+            "localhost:5001/canopy-rpc-mock",
+            canopy_rpc_mock_path,
+            dockerfile=canopy_rpc_mock_path + "/Dockerfile",
             live_update=[],
         )
 
-        # Deploy both nodes
-        k8s_yaml(kustomize("./deploy/k8s/canopy-nodes/overlays/local"))
+        # Deploy canopy-rpc-mock with dynamic configuration
+        mock_objects = decode_yaml_stream(kustomize("./deploy/k8s/canopy-rpc-mock/overlays/local"))
 
-        # Node 1 resource (Chain ID 1)
-        k8s_resource(
-            "node-1",
-            objects=[
-                "node-1-config:configmap",
-                "node-1-genesis:configmap",
-                "node-1-keystore:configmap"
-            ],
-            port_forwards=[
-                "%s:50000" % get_port('canopy1_wallet', 50000),
-                "%s:50001" % get_port('canopy1_explorer', 50001),
-                "%s:50002" % get_port('canopy1_rpc', 50002),
-                "%s:50003" % get_port('canopy1_admin', 50003),
-                "%s:9001" % get_port('canopy1_p2p', 9001),
-            ],
-            labels=['blockchain'],
-            pod_readiness='wait',
-        )
+        for o in mock_objects:
+            if o.get('kind') == 'Deployment' and o.get('metadata', {}).get('name') == 'canopy-rpc-mock':
+                containers = o.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+                for container in containers:
+                    if container.get('name') == 'canopy-rpc-mock':
+                        # Update args with config values
+                        container['args'] = [
+                            "-chains", str(mock_chains),
+                            "-blocks", str(mock_blocks),
+                            "-start-port", str(mock_start_port),
+                            "-start-chain-id", str(mock_start_chain_id),
+                        ]
 
-        # Node 2 resource (Chain ID 2)
-        k8s_resource(
-            "node-2",
-            objects=[
-                "node-2-config:configmap",
-                "node-2-genesis:configmap",
-                "node-2-keystore:configmap"
-            ],
-            port_forwards=[
-                "%s:40000" % get_port('canopy2_wallet', 40000),
-                "%s:40001" % get_port('canopy2_explorer', 40001),
-                "%s:40002" % get_port('canopy2_rpc', 40002),
-                "%s:40003" % get_port('canopy2_admin', 40003),
-                "%s:9001" % get_port('canopy2_p2p', 9002),
-            ],
-            labels=['blockchain'],
-            pod_readiness='wait',
-        )
+                        # Update ports dynamically
+                        container_ports = []
+                        for i in range(mock_chains):
+                            chain_id = mock_start_chain_id + i
+                            port = mock_start_port + i
+                            container_ports.append({
+                                'name': 'chain-%d' % chain_id,
+                                'containerPort': port
+                            })
+                        container['ports'] = container_ports
+                        break
 
-        # Node 3 resource (Chain ID 1 - second validator)
+            # Update Service ports dynamically
+            if o.get('kind') == 'Service' and o.get('metadata', {}).get('name') == 'canopy-rpc-mock':
+                service_ports = []
+                for i in range(mock_chains):
+                    chain_id = mock_start_chain_id + i
+                    port = mock_start_port + i
+                    service_ports.append({
+                        'name': 'chain-%d' % chain_id,
+                        'port': port,
+                        'targetPort': port
+                    })
+                o['spec']['ports'] = service_ports
+
+        k8s_yaml(encode_yaml_stream(mock_objects))
+
+        # Build dynamic port forwards for all chains
+        port_forwards = []
+        for i in range(mock_chains):
+            port = mock_start_port + i
+            # For the first two chains, check if custom port is configured
+            if i == 0:
+                local_port = get_port('canopy_mock_chain_1', port)
+            elif i == 1:
+                local_port = get_port('canopy_mock_chain_2', port)
+            else:
+                # For additional chains, just use the default port
+                local_port = port
+            port_forwards.append("%s:%d" % (local_port, port))
+
         k8s_resource(
-            "node-3",
-            objects=[
-                "node-3-config:configmap",
-                "node-3-genesis:configmap",
-                "node-3-keystore:configmap"
-            ],
-            port_forwards=[
-                "%s:30000" % get_port('canopy3_wallet', 30000),
-                "%s:30001" % get_port('canopy3_explorer', 30001),
-                "%s:30002" % get_port('canopy3_rpc', 30002),
-                "%s:30003" % get_port('canopy3_admin', 30003),
-                "%s:9003" % get_port('canopy3_p2p', 9003),
-            ],
+            "canopy-rpc-mock",
+            port_forwards=port_forwards,
             labels=['blockchain'],
             pod_readiness='wait',
         )
     else:
-        fail("Canopy dual nodes enabled but source not found at: %s\nPlease update paths.canopy_source in tilt-config.yaml" % canopy_path)
-
-elif canopy_mode == 'single':
-    if os.path.exists(canopy_path):
-        print("Canopy single node enabled - found source at %s" % canopy_path)
-
-        docker_build(
-            "localhost:5001/canopy-node",
-            canopy_path,
-            dockerfile=canopy_path + "/.docker/Dockerfile",
-            live_update=[],
-        )
-
-        k8s_yaml(kustomize("./deploy/k8s/canopy-node/overlays/local"))
-
-        k8s_resource(
-            "canopy-node",
-            objects=["canopy-node-data:persistentvolumeclaim", "canopy-node-config:configmap", "canopy-node-genesis:configmap", "canopy-node-keystore:configmap"],
-            port_forwards=[
-                "%s:50000" % get_port('canopy_wallet', 50000),
-                "%s:50001" % get_port('canopy_explorer', 50001),
-                "%s:50002" % get_port('canopy_rpc', 50002),
-                "%s:50003" % get_port('canopy_admin_rpc', 50003),
-                "%s:9001" % get_port('canopy_p2p', 9001),
-                "%s:6060" % get_port('canopy_debug', 6060)
-            ],
-            labels=['blockchain'],
-            pod_readiness='wait',
-        )
-    else:
-        fail("Canopy single node enabled but source not found at: %s\nPlease update paths.canopy_source in tilt-config.yaml" % canopy_path)
-
-elif canopy_mode == 'off':
-    print("Canopy nodes disabled")
+        fail("Canopy RPC Mock enabled but source not found at: %s\nPlease update paths.canopy_rpc_mock_source in tilt-config.yaml" % canopy_rpc_mock_path)
 else:
-    fail("Invalid canopy mode: '%s'. Must be 'off', 'single', or 'dual'" % canopy_mode)
+    print("Canopy RPC Mock disabled")
 
 # ------------------------------------------
 # INDEXER (Always Required)
@@ -928,192 +1062,136 @@ local_resource(
 )
 
 # ------------------------------------------
-# TRIGGER DEFAULT CHAIN (Conditional on Canopy node)
+# AUTO-REGISTER MOCK CHAINS (Conditional on Mock RPC)
 # ------------------------------------------
 
-# Auto-register dual nodes
-if components.get('canopy', 'off') == 'dual' and os.path.exists(canopy_path):
+# Auto-register mock RPC chains
+if canopy_enabled and os.path.exists(canopy_rpc_mock_path):
     if dev_cfg.get('auto_register_chain', True) and components.get('admin', True):
-        print("Auto-registering dual Canopy chains")
+        print("Auto-registering %d mock Canopy chain(s)" % mock_chains)
 
         # Build resource_deps dynamically
-        register_deps = ["node-1", "node-2",
-        #"node-3"
-        ]
+        mock_deps = ["canopy-rpc-mock"]
         if components.get('admin', True):
-            register_deps.append("canopyx-admin")
+            mock_deps.append("canopyx-admin")
+
+        # Generate registration script for all chains
+        registration_cmds = []
+        registration_cmds.append("""
+        # Wait for admin API to be ready
+        echo "Waiting for admin API..."
+        for i in {1..30}; do
+          if curl -f http://localhost:3000/api/health 2>/dev/null; then
+            echo "✓ Admin API is ready"
+            break
+          fi
+          echo "  Waiting for admin API... attempt $i/30"
+          sleep 2
+        done
+        """)
+
+        # Add registration for each chain
+        for i in range(mock_chains):
+            chain_id = mock_start_chain_id + i
+            chain_port = mock_start_port + i
+            chain_name = "Mock Chain %d" % chain_id
+
+            registration_cmds.append("""
+        # Wait for mock RPC chain %d
+        echo "Waiting for %s on port %d..."
+        for i in {1..30}; do
+          if curl -f http://canopy-rpc-mock.default.svc.cluster.local:%d/v1/ 2>/dev/null; then
+            echo "✓ %s is ready"
+            break
+          fi
+          echo "  Waiting for mock RPC... attempt $i/30"
+          sleep 2
+        done
+
+        # Register %s
+        echo "Registering %s..."
+        if curl -X POST -f http://localhost:3000/api/chains \\
+          -H 'Authorization: Bearer devtoken' \\
+          -H 'Content-Type: application/json' \\
+          -d '{"chain_id":%d,"chain_name":"%s","rpc_endpoints":["http://canopy-rpc-mock.default.svc.cluster.local:%d"],"image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
+          echo "✓ Successfully registered %s"
+        else
+          echo "✗ Failed to register %s (may already exist or still starting)"
+        fi
+        """ % (chain_id, chain_name, chain_port, chain_port, chain_name, chain_name, chain_name, chain_id, chain_name, chain_port, chain_name, chain_name))
+
+        registration_cmds.append("""
+        echo ""
+        echo "Mock chain registration complete!"
+        """)
 
         local_resource(
-            name="register-canopy-chains",
-            cmd="""
-            # Wait for admin API to be ready
-            echo "Waiting for admin API..."
-            for i in {1..30}; do
-              if curl -f http://localhost:3000/api/health 2>/dev/null; then
-                echo "✓ Admin API is ready"
-                break
-              fi
-              echo "  Waiting for admin API... attempt $i/30"
-              sleep 2
-            done
-
-            # Wait for Canopy Node 1 to produce at least one block
-            echo "Waiting for Canopy Node 1 to produce blocks..."
-            for i in {1..60}; do
-              CHAIN_ID=$(curl -s -X POST http://node-1.default.svc.cluster.local:50002/v1/query/cert-by-height \\
-                -H 'Content-Type: application/json' \\
-                -d '{"height":0}' 2>/dev/null | grep -o '"chainId":[0-9]*' | cut -d: -f2)
-              if [ ! -z "$CHAIN_ID" ] && [ "$CHAIN_ID" != "0" ]; then
-                echo "✓ Node 1 is ready (Chain ID: $CHAIN_ID)"
-                break
-              fi
-              echo "  Waiting for node 1... attempt $i/60"
-              sleep 2
-            done
-
-            # Wait for Canopy Node 2 to produce at least one block
-            echo "Waiting for Canopy Node 2 to produce blocks..."
-            for i in {1..60}; do
-              CHAIN_ID=$(curl -s -X POST http://node-2.default.svc.cluster.local:40002/v1/query/cert-by-height \\
-                -H 'Content-Type: application/json' \\
-                -d '{"height":0}' 2>/dev/null | grep -o '"chainId":[0-9]*' | cut -d: -f2)
-              if [ ! -z "$CHAIN_ID" ] && [ "$CHAIN_ID" != "0" ]; then
-                echo "✓ Node 2 is ready (Chain ID: $CHAIN_ID)"
-                break
-              fi
-              echo "  Waiting for node 2... attempt $i/60"
-              sleep 2
-            done
-
-            # Register Chain 1 (Root Chain) - NO chain_id field, let controller discover it
-            echo ""
-            echo "Registering Canopy Chain 1..."
-            if curl -X POST -f http://localhost:3000/api/chains \\
-              -H 'Authorization: Bearer devtoken' \\
-              -H 'Content-Type: application/json' \\
-              -d '{"rpc_endpoints":["http://node-1.default.svc.cluster.local:50002"], "chain_name":"Canopy Chain 1","image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
-              echo "✓ Successfully registered Canopy Chain 1"
-            else
-              echo "✗ Failed to register Canopy Chain 1 (may already exist or still starting)"
-            fi
-
-            # Wait a bit before registering second chain
-            sleep 3
-
-            # Register Chain 2 (Subchain) - NO chain_id field, let controller discover it
-            echo "Registering Canopy Chain 2..."
-            if curl -X POST -f http://localhost:3000/api/chains \\
-              -H 'Authorization: Bearer devtoken' \\
-              -H 'Content-Type: application/json' \\
-              -d '{"rpc_endpoints":["http://node-2.default.svc.cluster.local:40002"], "chain_name":"Canopy Chain 2","image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
-              echo "✓ Successfully registered Canopy Chain 2"
-            else
-              echo "✗ Failed to register Canopy Chain 2 (may already exist or still starting)"
-            fi
-
-            echo ""
-            echo "Chain registration complete!"
-            """,
+            name="register-mock-chains",
+            cmd=''.join(registration_cmds),
             deps=[],
             labels=['setup'],
-            resource_deps=register_deps,
+            resource_deps=mock_deps,
             allow_parallel=False,
             auto_init=True,
         )
 
         # Only attach indexers if controller is enabled
         if components.get('controller', True):
-            # Attach to Chain 1 indexer (root chain)
-            k8s_attach(
-                name="indexer-chain-1",
-                obj="deployment/canopyx-indexer-1",
-                resource_deps=["canopyx-controller", "register-canopy-chains"],
-                labels=['indexers'],
-            )
-
-            # Attach to Chain 2 indexer (subchain)
-            k8s_attach(
-                name="indexer-chain-2",
-                obj="deployment/canopyx-indexer-2",
-                resource_deps=["canopyx-controller", "register-canopy-chains"],
-                labels=['indexers'],
-            )
+            for i in range(mock_chains):
+                chain_id = mock_start_chain_id + i
+                k8s_attach(
+                    name="indexer-chain-%d" % chain_id,
+                    obj="deployment/canopyx-indexer-%d" % chain_id,
+                    resource_deps=["canopyx-controller", "register-mock-chains"],
+                    labels=['indexers'],
+                )
     elif not components.get('admin', True):
-        print("Auto-register chains disabled - admin API required")
+        print("Auto-register mock chains disabled - admin API required")
     else:
-        print("Auto-register chains disabled in config")
-
-# Auto-register single node (legacy support)
-elif components.get('canopy', 'off') == 'single' and os.path.exists(canopy_path):
-    if dev_cfg.get('auto_register_chain', True) and components.get('admin', True):
-        print("Auto-registering local Canopy chain")
-
-        # Build resource_deps dynamically
-        single_deps = ["canopy-node"]
-        if components.get('admin', True):
-            single_deps.append("canopyx-admin")
-
-        local_resource(
-            name="add-canopy-local",
-            cmd="""
-            for i in {1..30}; do
-              if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '{"chain_id":"canopy_local","chain_name":"Canopy Local","rpc_endpoints":["http://canopy-node.default.svc.cluster.local:50002"], "image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
-                echo "Successfully registered canopy_local chain"
-                exit 0
-              fi
-              echo "Waiting for admin API to be ready... attempt $i/30"
-              sleep 2
-            done
-            echo "Failed to register chain after 30 attempts"
-            exit 1
-            """,
-            deps=[],
-            labels=['no-op'],
-            resource_deps=single_deps,
-            allow_parallel=False,
-            auto_init=True,
-        )
-
-        # Only attach indexer if controller is enabled
-        if components.get('controller', True):
-            k8s_attach(
-                name="indexer-local",
-                obj="deployment/canopyx-indexer-canopy-local",
-                resource_deps=["canopyx-controller", "add-canopy-local"],
-                labels=['indexers'],
-            )
-    elif not components.get('admin', True):
-        print("Auto-register chain disabled - admin API required")
-    else:
-        print("Auto-register chain disabled in config")
+        print("Auto-register mock chains disabled in config")
 
 # ------------------------------------------
 # AUTO-REGISTER EXTERNAL CHAINS
 # ------------------------------------------
-# Register external Canopy networks from config
+# Auto-register external chains from configuration
+# Only rpc_endpoints is required - chain_id will be auto-detected from RPC
+# and chain_name will default to "Chain {id}" if not provided.
 if chains_cfg and len(chains_cfg) > 0 and components.get('admin', True):
     print("Auto-registering %d external Canopy chain(s)" % len(chains_cfg))
 
-    for chain in chains_cfg:
-        chain_id = chain.get('chain_id')
-        chain_name = chain.get('chain_name')
+    for idx, chain in enumerate(chains_cfg):
+        chain_id_config = chain.get('chain_id', 0)  # 0 means auto-detect from RPC
+        chain_name = chain.get('chain_name', '')  # Empty string means use default "Chain {id}"
         rpc_endpoints = chain.get('rpc_endpoints', [])
         min_replicas = chain.get('min_replicas', 1)
-        max_replicas = chain.get('max_replicas', 3)
-        image = chain.get('image', idx_repo)  # Default to dev indexer image
+        max_replicas = chain.get('max_replicas', 1)  # Changed default from 3 to 1
+        image = chain.get('image', 'canopynetwork/canopyx-indexer:latest')  # Changed to public image
 
-        if not chain_id or not chain_name or not rpc_endpoints:
-            fail("Invalid chain configuration: chain_id, chain_name, and rpc_endpoints are required")
+        # Only RPC endpoints are required
+        if not rpc_endpoints or len(rpc_endpoints) == 0:
+            fail("Invalid chain configuration: at least one rpc_endpoint is required")
+
+        # Fetch actual chain_id from RPC if not provided in config
+        actual_chain_id = chain_id_config
+        if chain_id_config == 0:
+            # Use helper script to fetch chain_id from RPC endpoint
+            print("Fetching chain ID from RPC endpoint: %s" % rpc_endpoints[0])
+            detected_id = str(local("bash scripts/get-chain-id.sh '%s'" % rpc_endpoints[0])).strip()
+            actual_chain_id = int(detected_id)
+            print("Detected chain ID: %d" % actual_chain_id)
 
         # Build JSON payload for chain registration manually (Starlark doesn't have json.encode)
         rpc_endpoints_str = ', '.join(['"%s"' % ep for ep in rpc_endpoints])
-        chain_payload = '{\"chain_id\":\"%s\",\"chain_name\":\"%s\",\"rpc_endpoints\":[%s],\"image\":\"%s\",\"min_replicas\":%d,\"max_replicas\":%d}' % (
-            chain_id, chain_name, rpc_endpoints_str, image, min_replicas, max_replicas
+        # Always include the actual chain_id in the payload
+        chain_payload = '{\"chain_id\":%d,\"chain_name\":\"%s\",\"rpc_endpoints\":[%s],\"image\":\"%s\",\"min_replicas\":%d,\"max_replicas\":%d}' % (
+            actual_chain_id, chain_name, rpc_endpoints_str, image, min_replicas, max_replicas
         )
 
-        resource_name = "add-chain-%s" % chain_id
+        # Use actual chain_id for resource naming
+        resource_name = "add-chain-%d" % actual_chain_id
 
-        print("Configuring auto-registration for chain: %s (%s)" % (chain_name, chain_id))
+        chain_display = chain_name if chain_name else ("Chain %d" % actual_chain_id)
+        print("Configuring auto-registration for chain: %s (ID: %d)" % (chain_display, actual_chain_id))
 
         # Build resource_deps dynamically
         chain_deps = []
@@ -1124,16 +1202,19 @@ if chains_cfg and len(chains_cfg) > 0 and components.get('admin', True):
             name=resource_name,
             cmd="""
             for i in {1..30}; do
-              if curl -X POST -f http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '%s' 2>/dev/null; then
-                echo "Successfully registered %s chain"
+              RESPONSE=$(curl -X POST -f -s http://localhost:3000/api/chains -H 'Authorization: Bearer devtoken' -d '%s' 2>/dev/null || echo "")
+              if [ -n "$RESPONSE" ]; then
+                # Extract chain_id from response to verify
+                CHAIN_ID=$(echo "$RESPONSE" | grep -o '"chain_id":[0-9]*' | head -1 | cut -d':' -f2)
+                echo "Successfully registered chain %s (ID: $CHAIN_ID)"
                 exit 0
               fi
               echo "Waiting for admin API to be ready... attempt $i/30"
               sleep 2
             done
-            echo "Failed to register %s chain after 30 attempts"
+            echo "Failed to register chain %s after 30 attempts"
             exit 1
-            """ % (chain_payload, chain_name, chain_name),
+            """ % (chain_payload, chain_display, chain_display),
             deps=[],
             labels=['chains'],
             resource_deps=chain_deps if chain_deps else None,
@@ -1148,9 +1229,10 @@ if chains_cfg and len(chains_cfg) > 0 and components.get('admin', True):
             if components.get('controller', True):
                 indexer_deps.append("canopyx-controller")
 
+            # Use actual_chain_id (fetched from RPC) for deployment name
             k8s_attach(
-                name="indexer-%s" % chain_id,
-                obj="deployment/canopyx-indexer-%s" % chain_id,
+                name="indexer-%d" % actual_chain_id,
+                obj="deployment/canopyx-indexer-%d" % actual_chain_id,
                 resource_deps=indexer_deps,
                 labels=['indexers'],
             )
@@ -1177,8 +1259,8 @@ k8s_custom_deploy(
   apply_cmd='true',
   delete_cmd='''
     echo "Cleaning up Temporal persistent data (Cassandra + Elasticsearch PVCs)..." && \
-    kubectl delete pvc -l app=cassandra --ignore-not-found && \
-    kubectl delete pvc -l app=elasticsearch-master --ignore-not-found && \
+    kubectl delete pvc -l app=cassandra --ignore-not-found --wait=false && \
+    kubectl delete pvc -l app=elasticsearch-master --ignore-not-found --wait=false && \
     echo "Temporal data cleanup initiated (will complete in background)"
   ''',
   deps=[],

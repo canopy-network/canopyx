@@ -3,43 +3,9 @@ package rpc
 import (
 	"context"
 	"encoding/json"
-)
 
-// Transaction represents a transaction from the RPC.
-type Transaction struct {
-	Sender      string `json:"sender"`
-	Recipient   string `json:"recipient"`
-	MessageType string `json:"messageType"`
-	Height      int    `json:"height"`
-	Index       int    `json:"index"` // Transaction index within block
-	Transaction struct {
-		Type string `json:"type"`
-		Msg  struct {
-			FromAddress      string                 `json:"fromAddress"`
-			ToAddress        string                 `json:"toAddress"`
-			Amount           int                    `json:"amount"`
-			ValidatorAddress string                 `json:"validatorAddress"`
-			Delegator        string                 `json:"delegator"`
-			Pool             string                 `json:"pool"`
-			Staker           string                 `json:"staker"`
-			ProposalID       int                    `json:"proposalId"`
-			Voter            string                 `json:"voter"`
-			Option           string                 `json:"option"`
-			Raw              map[string]interface{} `json:"-"` // Capture all fields for unknown types
-		} `json:"msg"`
-		Signature struct {
-			PublicKey string `json:"publicKey"`
-			Signature string `json:"signature"`
-		} `json:"signature"`
-		Time          int64  `json:"time"`
-		CreatedHeight int    `json:"createdHeight"`
-		Fee           int    `json:"fee"`
-		NetworkID     int    `json:"networkID"`
-		ChainID       int    `json:"chainID"`
-		Memo          string `json:"memo"`
-	} `json:"transaction"`
-	TxHash string `json:"txHash"`
-}
+	"github.com/canopy-network/canopy/lib"
+)
 
 // DetectMemoType checks if a memo contains a recognized pattern (poll/order operations).
 // Returns MsgTypeUnknown if memo is empty, invalid JSON, or doesn't match any pattern.
@@ -366,10 +332,11 @@ func ParseMessage(msgType string, msgData map[string]interface{}) (Message, erro
 	}
 }
 
-// TxsByHeight returns all raw RPC transactions for a given height.
+// TxsByHeight returns all Canopy TxResult for a given height.
+// JSON from RPC is unmarshaled directly into lib.TxResult (protobuf types support JSON).
 // Callers should convert to indexer models using transform.Transaction() if needed.
-func (c *HTTPClient) TxsByHeight(ctx context.Context, height uint64) ([]*Transaction, error) {
-	txs, txsErr := ListPaged[*Transaction](ctx, c, txsByHeightPath, NewQueryByHeightRequest(height))
+func (c *HTTPClient) TxsByHeight(ctx context.Context, height uint64) ([]*lib.TxResult, error) {
+	txs, txsErr := ListPaged[*lib.TxResult](ctx, c, txsByHeightPath, NewQueryByHeightRequest(height))
 	if txsErr != nil {
 		return nil, txsErr
 	}

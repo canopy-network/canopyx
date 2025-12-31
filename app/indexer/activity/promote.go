@@ -56,8 +56,48 @@ func (ac *Context) PromoteData(ctx context.Context, in types.ActivityPromoteData
 
 // CleanPromotedData removes promoted data from staging table after successful promotion.
 // This is a generic activity that works for ALL entities defined in the entities package.
-// This operation is optional and non-critical - failures are logged but don't fail the workflow.
+// Failures will be retried by Temporal according to the configured retry policy.
 // The operation is idempotent and safe to retry on failure.
+
+// CleanAllPromotedData cleans all staging tables using PARALLEL WITH for maximum performance.
+// This is significantly faster than cleaning entities one by one.
+func (ac *Context) CleanAllPromotedData(ctx context.Context, in types.ActivityCleanAllPromotedDataInput) (types.ActivityCleanAllPromotedDataOutput, error) {
+	start := time.Now()
+
+	// Convert entity strings to type-safe Entities
+	entitiesToClean := make([]entities.Entity, 0, len(in.Entities))
+	for _, entityStr := range in.Entities {
+		entity, err := entities.FromString(entityStr)
+		if err != nil {
+			return types.ActivityCleanAllPromotedDataOutput{}, fmt.Errorf("invalid entity %q: %w", entityStr, err)
+		}
+		entitiesToClean = append(entitiesToClean, entity)
+	}
+
+	// Get the chain database connection
+	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
+	if err != nil {
+		return types.ActivityCleanAllPromotedDataOutput{}, fmt.Errorf("get chain db: %w", err)
+	}
+
+	ac.Logger.Debug("Cleaning all promoted data with PARALLEL WITH",
+		zap.Uint64("chainId", ac.ChainID),
+		zap.Int("entity_count", len(entitiesToClean)),
+		zap.Uint64("height", in.Height))
+
+	// Clean all staging tables in a single PARALLEL WITH batch
+	if err := chainDb.CleanAllEntitiesStaging(ctx, entitiesToClean, in.Height); err != nil {
+		return types.ActivityCleanAllPromotedDataOutput{}, fmt.Errorf("clean staging batch at height %d: %w", in.Height, err)
+	}
+
+	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+
+	return types.ActivityCleanAllPromotedDataOutput{
+		EntityCount: len(entitiesToClean),
+		DurationMs:  durationMs,
+	}, nil
+}
+
 func (ac *Context) CleanPromotedData(ctx context.Context, in types.ActivityCleanPromotedDataInput) (types.ActivityCleanPromotedDataOutput, error) {
 	start := time.Now()
 
@@ -79,15 +119,9 @@ func (ac *Context) CleanPromotedData(ctx context.Context, in types.ActivityClean
 		zap.Uint64("height", in.Height))
 
 	// Attempt to clean the staging table
-	// Note: CleanEntityStaging logs warnings internally for failures
+	// Return error on failure so Temporal retries the activity
 	if err := chainDb.CleanEntityStaging(ctx, entity, in.Height); err != nil {
-		// Log the error but don't fail the activity - cleanup is non-critical
-		ac.Logger.Warn("Failed to clean staging data (non-critical)",
-			zap.Uint64("chainId", ac.ChainID),
-			zap.String("entity", entity.String()),
-			zap.Uint64("height", in.Height),
-			zap.Error(err))
-		// Continue and return success with the timing data
+		return types.ActivityCleanPromotedDataOutput{}, fmt.Errorf("clean staging for %s at height %d: %w", entity, in.Height, err)
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0

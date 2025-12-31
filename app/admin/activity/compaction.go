@@ -8,6 +8,7 @@ import (
 	"github.com/canopy-network/canopyx/app/admin/types"
 
 	"github.com/canopy-network/canopyx/pkg/db/crosschain"
+	"go.temporal.io/sdk/activity"
 	"go.uber.org/zap"
 )
 
@@ -22,7 +23,7 @@ func (ac *Context) CompactGlobalTable(ctx context.Context, input types.ActivityC
 		zap.String("table", globalTableName))
 
 	// Execute OPTIMIZE TABLE FINAL
-	err := ac.CrossChainDB.OptimizeTable(ctx, ac.CrossChainDB.Name, globalTableName, true)
+	err := ac.CrossChainDB.OptimizeTable(ctx, ac.CrossChainDB.DatabaseName(), globalTableName, true)
 	duration := time.Since(startTime)
 
 	if err != nil {
@@ -64,7 +65,10 @@ func (ac *Context) CompactAllGlobalTables(ctx context.Context) (types.ActivityCo
 	failureCount := 0
 
 	// Compact each table sequentially
-	for _, config := range configs {
+	for i, config := range configs {
+		// Report heartbeat before each table compaction (activity can run up to 30 minutes)
+		activity.RecordHeartbeat(ctx, fmt.Sprintf("compacting_table_%d_of_%d_%s", i+1, len(configs), config.TableName))
+
 		result, err := ac.CompactGlobalTable(ctx, types.ActivityCompactGlobalTableInput{
 			TableName: config.TableName,
 		})
@@ -82,6 +86,9 @@ func (ac *Context) CompactAllGlobalTables(ctx context.Context) (types.ActivityCo
 		} else {
 			failureCount++
 		}
+
+		// Report heartbeat after each table completes
+		activity.RecordHeartbeat(ctx, fmt.Sprintf("completed_table_%d_of_%d_%s", i+1, len(configs), config.TableName))
 	}
 
 	totalDuration := time.Since(startTime)

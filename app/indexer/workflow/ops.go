@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
@@ -169,18 +170,27 @@ func (wc *Context) HeadScan(ctx workflow.Context, in types.WorkflowHeadScanInput
 			// Just check if workflow started successfully
 			var childExec workflow.Execution
 			if err := future.GetChildWorkflowExecution().Get(ctx, &childExec); err != nil {
-				logger.Error("Failed to start SchedulerWorkflow",
+				// Check if error is "already started" - this is not a failure, it means scheduler is already running
+				if strings.Contains(err.Error(), "ChildWorkflowExecutionAlreadyStartedError") ||
+					strings.Contains(err.Error(), "child workflow execution already started") {
+					logger.Info("SchedulerWorkflow already running (concurrent start detected)",
+						"chain_id", wc.ChainID,
+					)
+					// Not an error - scheduler is already doing what we want
+				} else {
+					logger.Error("Failed to start SchedulerWorkflow",
+						"chain_id", wc.ChainID,
+						"error", err.Error(),
+					)
+					return nil, err
+				}
+			} else {
+				logger.Info("SchedulerWorkflow started successfully",
 					"chain_id", wc.ChainID,
-					"error", err.Error(),
+					"workflow_id", childExec.ID,
+					"run_id", childExec.RunID,
 				)
-				return nil, err
 			}
-
-			logger.Info("SchedulerWorkflow started successfully",
-				"chain_id", wc.ChainID,
-				"workflow_id", childExec.ID,
-				"run_id", childExec.RunID,
-			)
 		}
 	}
 
@@ -343,18 +353,27 @@ func (wc *Context) GapScanWorkflow(ctx workflow.Context) error {
 			// Just check if workflow started successfully
 			var childExec workflow.Execution
 			if err := future.GetChildWorkflowExecution().Get(ctx, &childExec); err != nil {
-				logger.Error("Failed to start SchedulerWorkflow",
+				// Check if error is "already started" - this is not a failure, it means scheduler is already running
+				if strings.Contains(err.Error(), "ChildWorkflowExecutionAlreadyStartedError") ||
+					strings.Contains(err.Error(), "child workflow execution already started") {
+					logger.Info("SchedulerWorkflow already running (concurrent start detected)",
+						"chain_id", wc.ChainID,
+					)
+					// Not an error - scheduler is already doing what we want
+				} else {
+					logger.Error("Failed to start SchedulerWorkflow",
+						"chain_id", wc.ChainID,
+						"error", err.Error(),
+					)
+					return err
+				}
+			} else {
+				logger.Info("SchedulerWorkflow started successfully",
 					"chain_id", wc.ChainID,
-					"error", err.Error(),
+					"workflow_id", childExec.ID,
+					"run_id", childExec.RunID,
 				)
-				return err
 			}
-
-			logger.Info("SchedulerWorkflow started successfully",
-				"chain_id", wc.ChainID,
-				"workflow_id", childExec.ID,
-				"run_id", childExec.RunID,
-			)
 		}
 	}
 
@@ -477,6 +496,11 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.WorkflowS
 		}
 
 		processed += uint64(batchSize)
+
+		// Safe decrement - prevent uint64 underflow when batchStartHeight is 0
+		if batchStartHeight == 0 {
+			break // Reached height 0, all blocks processed
+		}
 		currentHeight = batchStartHeight - 1
 
 		// Log progress every 500 blocks

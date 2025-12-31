@@ -8,14 +8,17 @@ const DexPricesProductionTableName = "dex_prices"
 const DexPricesStagingTableName = "dex_prices_staging"
 
 // DexPriceColumns defines the schema for the dex_prices table.
+// Codecs are optimized for 15x compression ratio:
+// - DoubleDelta,LZ4 for sequential/monotonic values (height, timestamps)
+// - Delta,ZSTD(3) for gradually changing values (chain_id, pool amounts, prices)
 var DexPriceColumns = []ColumnDef{
-	{Name: "local_chain_id", Type: "UInt64"},
-	{Name: "remote_chain_id", Type: "UInt64"},
-	{Name: "height", Type: "UInt64"},
-	{Name: "local_pool", Type: "UInt64"},
-	{Name: "remote_pool", Type: "UInt64"},
-	{Name: "price_e6", Type: "UInt64"},
-	{Name: "height_time", Type: "DateTime64(6)"},
+	{Name: "local_chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "remote_chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "local_pool", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "remote_pool", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "price_e6", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
 	{Name: "price_delta", Type: "Int64", Codec: "Delta, ZSTD(3)"},
 	{Name: "local_pool_delta", Type: "Int64", Codec: "Delta, ZSTD(3)"},
 	{Name: "remote_pool_delta", Type: "Int64", Codec: "Delta, ZSTD(3)"},

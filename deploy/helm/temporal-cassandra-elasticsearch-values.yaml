@@ -1,5 +1,6 @@
-# Minimal Temporal with Cassandra + Elasticsearch
-# Let the chart use its defaults with minimal overrides
+# Temporal with Cassandra for persistence + Elasticsearch for visibility
+# Cassandra: High write throughput for workflow execution (default store)
+# Elasticsearch: Required for visibility store (Helm chart limitation)
 
 # Use Cassandra
 cassandra:
@@ -28,25 +29,26 @@ cassandra:
     prometheus.io/port: "5556"
     prometheus.io/path: "/metrics"
 
-# Use Elasticsearch
+# Enable Elasticsearch for visibility (required by Helm chart)
+# Minimal configuration: 1 replica, reduced resources
 elasticsearch:
   enabled: true
   replicas: 1
+  minimumMasterNodes: 1
   persistence:
     enabled: true
-    size: 20Gi
-  # NOTE: The Elastic Elasticsearch chart doesn't support persistentVolumeClaimRetentionPolicy
-  # PVCs must be manually deleted: kubectl delete pvc -l app.kubernetes.io/instance=temporal
+    size: 10Gi
+  # Use newer ES version with better cgroup v2 support
   imageTag: 7.17.18
-  # Fix for cgroup v2 on newer kernels + increased heap for production workload
-  esJavaOpts: "-Xmx1536m -Xms1536m"  # Increased to 1.5GB heap (fits in 3GB container)
+  # Fix for cgroup v2 on newer kernels
+  esJavaOpts: "-Xms1g -Xmx1g"
   resources:
     requests:
-      memory: "3Gi"
-      cpu: "1000m"
+      cpu: "500m"
+      memory: "2Gi"
     limits:
-      memory: "3Gi"
-      cpu: "2000m"
+      cpu: "1000m"
+      memory: "2Gi"
   sysctlInitContainer:
     enabled: true
   # Use yellow status for single-node cluster (green requires replicas)
@@ -96,6 +98,24 @@ server:
 
   config:
     numHistoryShards: 512
+
+    # Persistence configuration
+    # - Cassandra for default store (workflow execution data)
+    # - Elasticsearch for visibility (auto-configured by Helm chart when enabled)
+    persistence:
+      default:
+        driver: "cassandra"
+        cassandra:
+          hosts: ["temporal-cassandra"]
+          port: 9042
+          keyspace: temporal
+          user: "user"
+          password: "password"
+          replicationFactor: 1
+          consistency:
+            default:
+              consistency: "local_quorum"
+              serialConsistency: "local_serial"
 
     # Increase rate limits for high-throughput (aggressive scaling)
     # Goal: Find system stability limits, not rate limit bottlenecks

@@ -18,22 +18,27 @@ import (
 // - Delta codec for monotonically increasing counters and heights
 func (db *DB) initValidatorSigningInfo(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorSigningInfoColumns)
-	queryTemplate := `
-        CREATE TABLE IF NOT EXISTS "%s"."%s" (
+
+	// Production table: ORDER BY (address, height) for efficient address lookups
+	productionQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (address, height)
 		SETTINGS index_granularity = 8192
-	`
-
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorSigningInfoProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.ValidatorSigningInfoProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorSigningInfoProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorSigningInfoProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ValidatorSigningInfoStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, address) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, address)
+		SETTINGS index_granularity = 8192
+	`, db.Name, indexermodels.ValidatorSigningInfoStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorSigningInfoStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ValidatorSigningInfoStagingTableName, err)
 	}
@@ -50,8 +55,8 @@ func (db *DB) InsertValidatorSigningInfoStaging(ctx context.Context, signingInfo
 	}
 
 	query := fmt.Sprintf(
-		`INSERT INTO %s (address, missed_blocks_count, missed_blocks_window, last_signed_height, start_height, height, height_time) VALUES`,
-		indexermodels.ValidatorSigningInfoStagingTableName,
+		`INSERT INTO "%s"."%s" (address, missed_blocks_count, missed_blocks_window, last_signed_height, start_height, height, height_time) VALUES`,
+		db.Name, indexermodels.ValidatorSigningInfoStagingTableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

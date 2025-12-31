@@ -3,28 +3,17 @@ package rpc
 import (
 	"context"
 	"fmt"
+
+	"github.com/canopy-network/canopy/fsm"
 )
-
-// PointsEntry represents a single address and points allocation in a pool.
-type PointsEntry struct {
-	Address string `json:"Address"`
-	Points  uint64 `json:"Points"`
-}
-
-// RpcPool represents a pool response from the RPC.
-// This matches the JSON structure returned by /v1/query/pool?id={id}.
-type RpcPool struct {
-	ID              uint64        `json:"id"`
-	ChainID         uint64        `json:"chainId,omitempty"` // Blockchain's internal chain/committee ID (if provided by RPC)
-	Amount          uint64        `json:"amount"`
-	Points          []PointsEntry `json:"points"`
-	TotalPoolPoints uint64        `json:"totalPoints"`
-}
 
 // PoolsByHeight returns all pools at the current chain head using pagination.
 // The RPC endpoint returns pools in pages, this method fetches all pages.
-func (c *HTTPClient) PoolsByHeight(ctx context.Context, height uint64) ([]*RpcPool, error) {
-	pools, err := ListPaged[*RpcPool](ctx, c, poolsPath, NewQueryByHeightRequest(height))
+//
+// Returns fsm.Pool (protobuf type from Canopy).
+// The Canopy RPC endpoint /v1/query/pools returns fsm.Pool structures.
+func (c *HTTPClient) PoolsByHeight(ctx context.Context, height uint64) ([]*fsm.Pool, error) {
+	pools, err := ListPaged[*fsm.Pool](ctx, c, poolsPath, NewQueryByHeightRequest(height))
 	if err != nil {
 		return nil, fmt.Errorf("fetch pools: %w", err)
 	}

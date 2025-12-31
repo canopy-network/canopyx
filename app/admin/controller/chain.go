@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -13,11 +14,11 @@ import (
 	"github.com/canopy-network/canopyx/pkg/temporal/indexer"
 
 	"github.com/canopy-network/canopyx/app/admin/controller/types"
+	indexertypes "github.com/canopy-network/canopyx/app/indexer/types"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/alitto/pond/v2"
 	admintypes "github.com/canopy-network/canopyx/app/admin/types"
-	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	"github.com/canopy-network/canopyx/pkg/utils"
@@ -31,8 +32,12 @@ import (
 )
 
 // HandleChainsList returns all registered chains
+// Query param: ?deleted=true to include soft-deleted chains
 func (c *Controller) HandleChainsList(w http.ResponseWriter, r *http.Request) {
-	cs, err := c.App.AdminDB.ListChain(r.Context())
+	// Parse query param to determine if we should include deleted chains
+	includeDeleted := r.URL.Query().Get("deleted") == "true"
+
+	cs, err := c.App.AdminDB.ListChain(r.Context(), includeDeleted)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -100,8 +105,19 @@ func (c *Controller) HandleChainsUpsert(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Default chain_name if not provided
+	chain.ChainName = strings.TrimSpace(chain.ChainName)
+	if chain.ChainName == "" {
+		chain.ChainName = fmt.Sprintf("Chain %d", chain.ChainID)
+	}
+
 	chain.Image = strings.TrimSpace(chain.Image)
 	chain.Notes = strings.TrimSpace(chain.Notes)
+
+	// Default image if not provided
+	if chain.Image == "" {
+		chain.Image = "canopynetwork/canopyx-indexer:latest"
+	}
 
 	if chain.MinReplicas == 0 {
 		chain.MinReplicas = 1
@@ -114,9 +130,20 @@ func (c *Controller) HandleChainsUpsert(w http.ResponseWriter, r *http.Request) 
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "max_replicas must be greater than or equal to min_replicas"})
 		return
 	}
-	if chain.Image == "" {
+
+	// Default reindex settings if not provided
+	if chain.ReindexMinReplicas == 0 {
+		chain.ReindexMinReplicas = 1
+	}
+	if chain.ReindexMaxReplicas == 0 {
+		chain.ReindexMaxReplicas = 3
+	}
+	if chain.ReindexScaleThreshold == 0 {
+		chain.ReindexScaleThreshold = 100
+	}
+	if chain.ReindexMaxReplicas < chain.ReindexMinReplicas {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "image required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "reindex_max_replicas must be greater than or equal to reindex_min_replicas"})
 		return
 	}
 
@@ -136,14 +163,22 @@ func (c *Controller) HandleChainsUpsert(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Setup cross-chain sync for this chain (non-fatal - just log warnings)
+	// Note: This may fail if the chain database hasn't been created by the indexer yet
 	if c.App.CrossChainDB != nil {
 		if ccStore, ok := c.App.CrossChainDB.(interface {
 			SetupChainSync(context.Context, uint64) error
 		}); ok {
 			if syncErr := ccStore.SetupChainSync(ctx, chain.ChainID); syncErr != nil {
-				c.App.Logger.Warn("Failed to setup cross-chain sync for chain - cross-chain queries may be incomplete",
-					zap.Uint64("chain_id", chain.ChainID),
-					zap.Error(syncErr))
+				// Check if error is due to database not existing yet (expected on new chains)
+				if strings.Contains(syncErr.Error(), "does not exist") {
+					c.App.Logger.Info("Chain database not created yet - cross-chain sync will be set up when indexer starts",
+						zap.Uint64("chain_id", chain.ChainID),
+						zap.String("note", "This is normal for newly registered chains"))
+				} else {
+					c.App.Logger.Warn("Failed to setup cross-chain sync for chain - cross-chain queries may be incomplete",
+						zap.Uint64("chain_id", chain.ChainID),
+						zap.Error(syncErr))
+				}
 			} else {
 				c.App.Logger.Info("Cross-chain sync setup complete for chain",
 					zap.Uint64("chain_id", chain.ChainID))
@@ -158,7 +193,9 @@ func (c *Controller) HandleChainsUpsert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+	// Return the full chain object including auto-detected chain_id
+	// This is especially important for Tilt auto-registration to get the actual chain_id
+	_ = json.NewEncoder(w).Encode(chain)
 }
 
 // HandleChainDetail returns a chain by ID
@@ -172,7 +209,7 @@ func (c *Controller) HandleChainDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	chain, err := c.App.AdminDB.GetChain(r.Context(), chainID)
 	if err != nil {
-		w.WriteHeader(404)
+		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 		return
 	}
@@ -284,8 +321,8 @@ func (c *Controller) HandleIndexProgressHistory(w http.ResponseWriter, r *http.R
 func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// 1) Get chains (for RPC fanout + to ensure we cover all known IDs)
-	chains, err := c.App.AdminDB.ListChain(ctx)
+	// 1) Get chains (including deleted ones - UI will filter them)
+	chains, err := c.App.AdminDB.ListChain(ctx, true)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -354,12 +391,14 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				id := fmt.Sprintf("%d", chainID)
-				cs, ok := out.Load(id)
-				if !ok {
-					cs = admintypes.ChainStatus{ChainID: chainID}
-				}
-				cs.LastIndexed = last
-				out.Store(id, cs)
+				// Use Compute for atomic update to prevent race condition
+				out.Compute(id, func(oldValue admintypes.ChainStatus, loaded bool) (admintypes.ChainStatus, xsync.ComputeOp) {
+					if !loaded {
+						oldValue = admintypes.ChainStatus{ChainID: chainID}
+					}
+					oldValue.LastIndexed = last
+					return oldValue, xsync.UpdateOp
+				})
 			}
 			_ = rows.Err()
 		}
@@ -390,14 +429,17 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				id := fmt.Sprintf("%d", chainID)
-				cs, ok := out.Load(id)
-				if !ok {
-					cs = admintypes.ChainStatus{ChainID: chainID}
-				}
-				if cs.LastIndexed == 0 {
-					cs.LastIndexed = last
-					out.Store(id, cs)
-				}
+				// Use Compute for atomic update to prevent race condition
+				out.Compute(id, func(oldValue admintypes.ChainStatus, loaded bool) (admintypes.ChainStatus, xsync.ComputeOp) {
+					if !loaded {
+						oldValue = admintypes.ChainStatus{ChainID: chainID}
+					}
+					// Only update if not already set
+					if oldValue.LastIndexed == 0 {
+						oldValue.LastIndexed = last
+					}
+					return oldValue, xsync.UpdateOp
+				})
 			}
 			_ = rows.Err()
 		}
@@ -452,12 +494,14 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 			}
 
 			chainIDStr := strconv.FormatUint(chn.ChainID, 10)
-			cs, ok := out.Load(chainIDStr)
-			if !ok {
-				cs = admintypes.ChainStatus{ChainID: chn.ChainID}
-			}
-			cs.Head = head
-			out.Store(chainIDStr, cs)
+			// Use Compute for atomic update to prevent race condition
+			out.Compute(chainIDStr, func(oldValue admintypes.ChainStatus, loaded bool) (admintypes.ChainStatus, xsync.ComputeOp) {
+				if !loaded {
+					oldValue = admintypes.ChainStatus{ChainID: chn.ChainID}
+				}
+				oldValue.Head = head
+				return oldValue, xsync.UpdateOp
+			})
 		})
 	}
 
@@ -496,16 +540,17 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Update chain status with gap information
-			cs, ok := out.Load(chainIDStr)
-			if !ok {
-				cs = admintypes.ChainStatus{ChainID: chn.ChainID}
-			}
-			cs.MissingBlocksCount = missingCount
-			cs.GapRangesCount = len(gaps)
-			cs.LargestGapStart = largestGapStart
-			cs.LargestGapEnd = largestGapEnd
-			out.Store(chainIDStr, cs)
+			// Update chain status with gap information (atomic to prevent race condition)
+			out.Compute(chainIDStr, func(oldValue admintypes.ChainStatus, loaded bool) (admintypes.ChainStatus, xsync.ComputeOp) {
+				if !loaded {
+					oldValue = admintypes.ChainStatus{ChainID: chn.ChainID}
+				}
+				oldValue.MissingBlocksCount = missingCount
+				oldValue.GapRangesCount = len(gaps)
+				oldValue.LargestGapStart = largestGapStart
+				oldValue.LargestGapEnd = largestGapEnd
+				return oldValue, xsync.UpdateOp
+			})
 		})
 	}
 
@@ -654,6 +699,36 @@ func (c *Controller) HandleTriggerGapScan(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }
 
+// validateReindexBlocks checks if blocks exist in the database (already indexed).
+// Returns only blocks that have been previously indexed.
+func (c *Controller) validateReindexBlocks(ctx context.Context, chainID uint64, heights []uint64) (alreadyIndexed []uint64, notIndexed []uint64, err error) {
+	chainIDStr := strconv.FormatUint(chainID, 10)
+	store, ok := c.App.LoadChainStore(ctx, chainIDStr)
+	if !ok {
+		return nil, nil, fmt.Errorf("failed to load chain store for chain %d", chainID)
+	}
+
+	for _, height := range heights {
+		// Check if block exists in database
+		exists, err := store.HasBlock(ctx, height)
+		if err != nil {
+			c.App.Logger.Warn("failed to check block existence",
+				zap.Uint64("chain_id", chainID),
+				zap.Uint64("height", height),
+				zap.Error(err))
+			continue
+		}
+
+		if exists {
+			alreadyIndexed = append(alreadyIndexed, height)
+		} else {
+			notIndexed = append(notIndexed, height)
+		}
+	}
+
+	return alreadyIndexed, notIndexed, nil
+}
+
 // HandleReindex processes a reindex request for the specified chain, validates input, and enqueues blocks for indexing.
 func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
@@ -691,11 +766,7 @@ func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid range"})
 			return
 		}
-		if to-from > 500 {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "range too large"})
-			return
-		}
+		// No block limit - allow unlimited ranges for full history reindex
 		for h := from; h <= to; h++ {
 			addHeight(h)
 		}
@@ -707,45 +778,121 @@ func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(heights) > 500 {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "too many heights"})
-		return
-	}
+	// No block limit - allow unlimited ranges for full history reindex
 
-	user := c.currentUser(r)
-
-	// Enqueue workflows and collect execution info
-	workflowInfos := make([]adminstore.ReindexWorkflowInfo, 0, len(heights))
-
-	for _, h := range heights {
-		workflowID, runID, err := c.enqueueIndexBlock(r.Context(), id, h, true)
-		if err != nil {
-			c.App.Logger.Error("reindex enqueue failed", zap.String("chain_id", id), zap.Uint64("height", h), zap.String("user", user), zap.Error(err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		workflowInfos = append(workflowInfos, adminstore.ReindexWorkflowInfo{
-			Height:     h,
-			WorkflowID: workflowID,
-			RunID:      runID,
-		})
-	}
-
-	// Record all reindex requests with workflow info
+	// Parse chain ID for validation
 	chainIDUint, parseErr := strconv.ParseUint(id, 10, 64)
 	if parseErr != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid chain ID"})
 		return
 	}
-	if err := c.App.AdminDB.RecordReindexRequestsWithWorkflow(r.Context(), chainIDUint, user, workflowInfos); err != nil {
-		c.App.Logger.Warn("failed to record reindex history", zap.String("chain_id", id), zap.Error(err))
+
+	// Validate that blocks exist in database (already indexed)
+	alreadyIndexed, notIndexed, err := c.validateReindexBlocks(r.Context(), chainIDUint, heights)
+	if err != nil {
+		c.App.Logger.Error("failed to validate reindex blocks",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "validation failed"})
+		return
 	}
 
-	c.App.Logger.Info("reindex queued", zap.String("chain_id", id), zap.String("user", user), zap.Int("count", len(heights)), zap.Any("heights", heights))
-	_ = json.NewEncoder(w).Encode(map[string]any{"queued": len(heights)})
+	if len(notIndexed) > 0 {
+		c.App.Logger.Warn("some blocks not yet indexed",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Any("not_indexed", notIndexed))
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":              "cannot reindex blocks that haven't been indexed yet",
+			"not_indexed_blocks": notIndexed,
+		})
+		return
+	}
+
+	// Use only validated blocks that are already indexed
+	heights = alreadyIndexed
+
+	// Sort heights in descending order (newest first) as per requirement
+	sort.Slice(heights, func(i, j int) bool {
+		return heights[i] > heights[j]
+	})
+
+	user := c.currentUser(r)
+
+	// Trigger ReindexSchedulerWorkflow for the entire range
+	minHeight := heights[len(heights)-1] // Last element (sorted descending)
+	maxHeight := heights[0]              // First element (sorted descending)
+
+	// Generate unique request ID for this reindex operation
+	// This ensures deterministic workflow IDs and prevents duplicate workflows
+	requestID := fmt.Sprintf("%d-%d-%d", chainIDUint, minHeight, time.Now().Unix())
+
+	input := indexertypes.WorkflowReindexSchedulerInput{
+		ChainID:     chainIDUint,
+		StartHeight: minHeight,
+		EndHeight:   maxHeight,
+		RequestedBy: user,
+		RequestID:   requestID, // Unique ID for deterministic workflow IDs
+	}
+
+	workflowID := fmt.Sprintf("reindex-scheduler-chain-%d-range-%d-%d-%d",
+		chainIDUint, minHeight, maxHeight, time.Now().Unix())
+
+	tc := c.App.TemporalClient
+	if tc == nil {
+		c.App.Logger.Error("temporal client unavailable",
+			zap.Uint64("chain_id", chainIDUint))
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporal client unavailable"})
+		return
+	}
+
+	options := client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: tc.GetIndexerOpsQueue(chainIDUint), // Scheduler runs on ops queue
+		RetryPolicy: &sdktemporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 1.2,
+			MaximumInterval:    5 * time.Second,
+			MaximumAttempts:    0, // Unlimited retries
+		},
+	}
+
+	run, err := tc.TClient.ExecuteWorkflow(r.Context(), options, "ReindexSchedulerWorkflow", input)
+	if err != nil {
+		c.App.Logger.Error("failed to start reindex scheduler",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Uint64("start", minHeight),
+			zap.Uint64("end", maxHeight),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to schedule reindex"})
+		return
+	}
+
+	// Record the reindex request
+	if err := c.App.AdminDB.RecordReindexRequests(r.Context(), chainIDUint, user, heights); err != nil {
+		c.App.Logger.Warn("failed to record reindex history",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+	}
+
+	c.App.Logger.Info("reindex scheduler started",
+		zap.String("chain_id", id),
+		zap.String("user", user),
+		zap.Int("count", len(heights)),
+		zap.Uint64("start", minHeight),
+		zap.Uint64("end", maxHeight),
+		zap.String("workflow_id", run.GetID()),
+		zap.String("run_id", run.GetRunID()))
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"queued":      len(heights),
+		"workflow_id": run.GetID(),
+		"run_id":      run.GetRunID(),
+	})
 }
 
 // startOpsWorkflow starts a Temporal workflow to perform operations related to a specific chain and workflow name.
@@ -782,80 +929,6 @@ func (c *Controller) startOpsWorkflow(ctx context.Context, chainID, workflowName
 
 	_, err := tc.TClient.ExecuteWorkflow(ctx, options, workflowName, input)
 	return err
-}
-
-// enqueueIndexBlock enqueues a block for indexing by determining the proper queue based on its age and reindex flag.
-// It communicates with the Temporal service to initiate the indexing process and determines queue routing dynamically.
-// Returns the workflow ID, run ID, or an error if the Temporal client is unavailable or an issue occurs during execution.
-func (c *Controller) enqueueIndexBlock(ctx context.Context, chainID string, height uint64, reindex bool) (string, string, error) {
-	tc := c.App.TemporalClient
-	if tc == nil {
-		return "", "", fmt.Errorf("temporal client unavailable")
-	}
-
-	// Convert string chainID to uint64
-	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
-	if parseErr != nil {
-		return "", "", fmt.Errorf("invalid chain ID format: %w", parseErr)
-	}
-
-	// Get latest head to determine queue routing (same logic as StartIndexWorkflow activity)
-	var taskQueue string
-	latest, err := c.App.AdminDB.LastIndexed(ctx, chainIDUint)
-	if err != nil {
-		// Failed to get latest, check if we can get it from RPC
-		ch, err := c.App.AdminDB.GetChain(ctx, chainIDUint)
-		if err == nil && len(ch.RPCEndpoints) > 0 {
-			cli := rpc.NewHTTPWithOpts(rpc.Opts{Endpoints: ch.RPCEndpoints})
-			if head, err := cli.ChainHead(ctx); err == nil {
-				latest = head
-			}
-		}
-		// If still no latest, default to historical queue for manual reindex
-		if latest == 0 {
-			c.App.Logger.Debug("Unable to determine latest head for queue routing, defaulting to historical queue",
-				zap.String("chain_id", chainID),
-				zap.Uint64("height", height),
-			)
-		}
-	}
-
-	// Determine target queue based on block age using the same logic as ops.go
-	if indexer.IsLiveBlock(latest, height) {
-		taskQueue = tc.GetIndexerLiveQueue(chainIDUint)
-		c.App.Logger.Debug("Manual reindex routing to live queue",
-			zap.String("chain_id", chainID),
-			zap.String("task_queue", taskQueue),
-			zap.Uint64("latest", latest),
-			zap.Uint64("height", height),
-		)
-	} else {
-		taskQueue = tc.GetIndexerHistoricalQueue(chainIDUint)
-		c.App.Logger.Debug("Manual reindex routing to historical queue",
-			zap.String("chain_id", chainID),
-			zap.String("task_queue", taskQueue),
-			zap.Uint64("latest", latest),
-			zap.Uint64("height", height),
-		)
-	}
-
-	input := indexer.IndexBlockInput{ChainID: chainIDUint, Height: height, Reindex: reindex, PriorityKey: "1"}
-	options := client.StartWorkflowOptions{
-		ID:        c.App.TemporalClient.GetIndexBlockWorkflowIdWithTime(chainIDUint, height),
-		TaskQueue: taskQueue, // Use the dynamically determined queue
-		RetryPolicy: &sdktemporal.RetryPolicy{
-			InitialInterval:    time.Second,
-			BackoffCoefficient: 1.2,
-			MaximumInterval:    5 * time.Second,
-			MaximumAttempts:    0,
-		},
-	}
-
-	run, err := tc.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", input)
-	if err != nil {
-		return "", "", err
-	}
-	return run.GetID(), run.GetRunID(), nil
 }
 
 // describeBothQueues fetches metrics for both the ops queue and indexer queue for a given chain.
@@ -1129,7 +1202,27 @@ func (c *Controller) HandleChainPatch(w http.ResponseWriter, r *http.Request) {
 				cleaned = append(cleaned, e)
 			}
 		}
-		cur.RPCEndpoints = utils.Dedup(cleaned)
+		cleaned = utils.Dedup(cleaned)
+
+		// Validate endpoints match chain ID
+		if len(cleaned) > 0 {
+			detectedChainID, err := rpc.ValidateAndExtractChainID(r.Context(), cleaned, c.App.Logger)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error": fmt.Sprintf("failed to validate RPC endpoints: %v", err),
+				})
+				return
+			}
+			if detectedChainID != chainIDUint {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error": fmt.Sprintf("chain ID mismatch: chain is %d but RPC endpoints report %d", chainIDUint, detectedChainID),
+				})
+				return
+			}
+		}
+		cur.RPCEndpoints = cleaned
 	}
 
 	// Update MinReplicas if provided (non-zero value)
@@ -1199,8 +1292,10 @@ func (c *Controller) HandlePatchChainsStatus(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleChainDelete handles the deletion of a chain by marking it as deleted,
-// removing Temporal schedules, and optionally dropping the chain database.
+// HandleChainDelete handles the deletion of a chain.
+// Query param: ?hard=true for permanent deletion (cannot be undone)
+// Default (soft delete): marks as deleted, stops processing, preserves data for recovery
+// Hard delete: soft delete + permanently removes all chain data
 func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {
@@ -1210,6 +1305,9 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// Parse query param to determine if this is a hard delete
+	hardDelete := r.URL.Query().Get("hard") == "true"
 
 	// 1. Verify chain exists
 	chainIDUint, parseErr := strconv.ParseUint(id, 10, 64)
@@ -1251,8 +1349,22 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. Mark chain as deleted in admin database
+	// 3. Mark chain as deleted and clear health status in admin database
 	chain.Deleted = 1
+	// Clear all health statuses to "unknown" for deleted chains
+	now := time.Now()
+	chain.OverallHealthStatus = "unknown"
+	chain.OverallHealthUpdatedAt = now
+	chain.RPCHealthStatus = "unknown"
+	chain.RPCHealthMessage = ""
+	chain.RPCHealthUpdatedAt = now
+	chain.QueueHealthStatus = "unknown"
+	chain.QueueHealthMessage = ""
+	chain.QueueHealthUpdatedAt = now
+	chain.DeploymentHealthStatus = "unknown"
+	chain.DeploymentHealthMessage = ""
+	chain.DeploymentHealthUpdatedAt = now
+
 	if err := c.App.AdminDB.UpsertChain(ctx, chain); err != nil {
 		c.App.Logger.Error("failed to mark chain as deleted", zap.String("chain_id", id), zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1282,11 +1394,123 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 	// 6. Clear queue stats cache for this chain
 	c.App.QueueStatsCache.Delete(id)
 
-	// 7. Delete endpoint health records for this chain
-	if err := c.App.AdminDB.DeleteEndpointsForChain(ctx, chainIDUint); err != nil {
-		c.App.Logger.Warn("failed to delete endpoint health records", zap.String("chain_id", id), zap.Error(err))
+	// Hard delete only: permanently remove all data
+	if hardDelete {
+		// 7. Delete endpoint health records for this chain
+		if err := c.App.AdminDB.DeleteEndpointsForChain(ctx, chainIDUint); err != nil {
+			c.App.Logger.Warn("failed to delete endpoint health records", zap.String("chain_id", id), zap.Error(err))
+		}
+
+		// 8. Delete index progress records for this chain
+		if err := c.App.AdminDB.DeleteIndexProgressForChain(ctx, chainIDUint); err != nil {
+			c.App.Logger.Warn("failed to delete index progress records", zap.String("chain_id", id), zap.Error(err))
+		}
+
+		// 9. Delete reindex request records for this chain
+		if err := c.App.AdminDB.DeleteReindexRequestsForChain(ctx, chainIDUint); err != nil {
+			c.App.Logger.Warn("failed to delete reindex request records", zap.String("chain_id", id), zap.Error(err))
+		}
+
+		// 10. Drop the chain-specific database
+		if err := c.App.AdminDB.DropChainDatabase(ctx, chainIDUint); err != nil {
+			c.App.Logger.Warn("failed to drop chain database", zap.String("chain_id", id), zap.Error(err))
+		}
+
+		// 11. Permanently remove chain record from chains table
+		if err := c.App.AdminDB.HardDeleteChain(ctx, chainIDUint); err != nil {
+			c.App.Logger.Error("failed to hard delete chain record", zap.String("chain_id", id), zap.Error(err))
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to permanently delete chain"})
+			return
+		}
+
+		c.App.Logger.Info("chain hard deleted successfully (permanent)", zap.String("chain_id", id), zap.String("user", user))
+	} else {
+		c.App.Logger.Info("chain soft deleted successfully (recoverable)", zap.String("chain_id", id), zap.String("user", user))
 	}
 
-	c.App.Logger.Info("chain deleted successfully", zap.String("chain_id", id), zap.String("user", user))
+	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+}
+
+// HandleChainRecover restores a soft-deleted chain by setting deleted=0,
+// recreating Temporal workflows/schedules, and re-adding cross-chain sync.
+func (c *Controller) HandleChainRecover(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
+		return
+	}
+
+	ctx := r.Context()
+	user := c.currentUser(r)
+
+	// Parse chain ID
+	chainIDUint, parseErr := strconv.ParseUint(id, 10, 64)
+	if parseErr != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid chain ID"})
+		return
+	}
+
+	c.App.Logger.Info("recovering chain", zap.String("chain_id", id), zap.String("user", user))
+
+	// 1. Recover the chain (set deleted = 0)
+	if err := c.App.AdminDB.RecoverChain(ctx, chainIDUint); err != nil {
+		c.App.Logger.Error("failed to recover chain", zap.String("chain_id", id), zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// 2. Recreate Temporal schedules (head scan + gap scan)
+	if c.App.TemporalClient != nil {
+		// Ensure head scan schedule exists
+		if err := c.App.EnsureHeadSchedule(ctx, id); err != nil {
+			c.App.Logger.Warn("failed to ensure head scan schedule during recovery",
+				zap.String("chain_id", id), zap.Error(err))
+		}
+
+		// Ensure gap scan schedule exists
+		if err := c.App.EnsureGapScanSchedule(ctx, id); err != nil {
+			c.App.Logger.Warn("failed to ensure gap scan schedule during recovery",
+				zap.String("chain_id", id), zap.Error(err))
+		}
+
+		// Ensure poll snapshot schedule exists
+		if err := c.App.EnsurePollSnapshotSchedule(ctx, id); err != nil {
+			c.App.Logger.Warn("failed to ensure poll snapshot schedule during recovery",
+				zap.String("chain_id", id), zap.Error(err))
+		}
+	}
+
+	// 3. Re-add cross-chain sync
+	if c.App.CrossChainDB != nil {
+		if ccStore, ok := c.App.CrossChainDB.(interface {
+			SetupChainSync(context.Context, uint64) error
+		}); ok {
+			if syncErr := ccStore.SetupChainSync(ctx, chainIDUint); syncErr != nil {
+				c.App.Logger.Warn("Failed to setup cross-chain sync during recovery",
+					zap.Uint64("chain_id", chainIDUint),
+					zap.Error(syncErr))
+			} else {
+				c.App.Logger.Info("Cross-chain sync restored for chain",
+					zap.Uint64("chain_id", chainIDUint))
+			}
+		}
+	}
+
+	// 4. Ensure chain database exists and is in cache (should already exist from soft delete)
+	chainDb, chainDbErr := c.App.NewChainDb(ctx, id)
+	if chainDbErr != nil {
+		c.App.Logger.Warn("failed to initialize chain database during recovery",
+			zap.String("chain_id", id), zap.Error(chainDbErr))
+	} else {
+		c.App.Logger.Info("Chain database initialized and cached during recovery",
+			zap.String("chain_id", id))
+		_ = chainDb // chainDb is stored in cache by NewChainDb
+	}
+
+	c.App.Logger.Info("chain recovered successfully", zap.String("chain_id", id), zap.String("user", user))
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }

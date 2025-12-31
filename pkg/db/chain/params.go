@@ -16,20 +16,20 @@ func (db *DB) initParams(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ParamsColumns)
 
 	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (height)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ParamsProductionTableName, schemaSQL)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ParamsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ParamsProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ParamsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ParamsStagingTableName, schemaSQL)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.ParamsStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ParamsStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.ParamsStagingTableName, err)
 	}
@@ -46,15 +46,15 @@ func (db *DB) initParams(ctx context.Context) error {
 // Query usage: SELECT height FROM params_change_height ORDER BY height
 func (db *DB) initParamsChangeHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."params_change_height"
-		ENGINE = AggregatingMergeTree()
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."params_change_height" %s
+		ENGINE = %s
 		ORDER BY height
 		AS SELECT
 			height,
 			max(height_time) as height_time
 		FROM "%s"."params"
 		GROUP BY height
-	`, db.Name, db.Name)
+	`, db.Name, db.OnCluster(), db.Engine("params_change_height", "AggregatingMergeTree", ""), db.Name)
 
 	return db.Exec(ctx, query)
 }
@@ -63,7 +63,7 @@ func (db *DB) initParamsChangeHeightView(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // Params are only inserted when they differ from the previous height.
 func (db *DB) InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error {
-	query := fmt.Sprintf(`INSERT INTO "%s".params_staging (
+	query := fmt.Sprintf(`INSERT INTO "%s"."params_staging" (
 		height, height_time,
 		block_size, protocol_version, root_chain_id, retired,
 		unstaking_blocks, max_pause_blocks, double_sign_slash_percentage,
@@ -71,7 +71,8 @@ func (db *DB) InsertParamsStaging(ctx context.Context, params *indexermodels.Par
 		max_committees, max_committee_size, early_withdrawal_penalty,
 		delegate_unstaking_blocks, minimum_order_size, stake_percent_for_subsidized,
 		max_slash_per_committee, delegate_reward_percentage, buy_deadline_blocks,
-		lock_order_fee_multiplier,
+		lock_order_fee_multiplier, minimum_stake_for_validators, minimum_stake_for_delegates,
+		maximum_delegates_per_committee,
 		send_fee, stake_fee, edit_stake_fee, unstake_fee,
 		pause_fee, unpause_fee, change_parameter_fee, dao_transfer_fee,
 		certificate_results_fee, subsidy_fee, create_order_fee, edit_order_fee,
@@ -96,7 +97,8 @@ func (db *DB) InsertParamsStaging(ctx context.Context, params *indexermodels.Par
 		params.MaxCommittees, params.MaxCommitteeSize, params.EarlyWithdrawalPenalty,
 		params.DelegateUnstakingBlocks, params.MinimumOrderSize, params.StakePercentForSubsidized,
 		params.MaxSlashPerCommittee, params.DelegateRewardPercentage, params.BuyDeadlineBlocks,
-		params.LockOrderFeeMultiplier,
+		params.LockOrderFeeMultiplier, params.MinimumStakeForValidators, params.MinimumStakeForDelegates,
+		params.MaximumDelegatesPerCommittee,
 		params.SendFee, params.StakeFee, params.EditStakeFee, params.UnstakeFee,
 		params.PauseFee, params.UnpauseFee, params.ChangeParameterFee, params.DaoTransferFee,
 		params.CertificateResultsFee, params.SubsidyFee, params.CreateOrderFee, params.EditOrderFee,

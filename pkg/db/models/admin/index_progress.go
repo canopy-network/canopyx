@@ -5,6 +5,8 @@ import (
 )
 
 const IndexProgressTableName = "index_progress"
+const IndexProgressAggTableName = "index_progress_agg"
+const IndexProgressMvTableName = "index_progress_mv"
 
 // IndexProgressColumns defines the schema for the index_progress table.
 var IndexProgressColumns = []ColumnDef{

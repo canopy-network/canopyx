@@ -2,14 +2,16 @@ package activity
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/alitto/pond/v2"
+	"github.com/canopy-network/canopy/fsm"
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.uber.org/zap"
 )
 
@@ -36,7 +38,7 @@ import (
 func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexAtHeight) (types.ActivityIndexAccountsOutput, error) {
 	start := time.Now()
 
-	// Create RPC client with height-aware endpoint selection
+	// Create an RPC client with height-aware endpoint selection
 	cli, cliErr := ac.rpcClientForHeight(ctx, input.Height)
 	if cliErr != nil {
 		return types.ActivityIndexAccountsOutput{}, cliErr
@@ -48,10 +50,10 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 		return types.ActivityIndexAccountsOutput{}, err
 	}
 
-	// Parallel RPC fetch using shared worker pool for performance
+	// Parallel RPC fetch using a shared worker pool for performance
 	var (
-		currentAccounts  []*rpc.Account
-		previousAccounts []*rpc.Account
+		currentAccounts  []*fsm.Account
+		previousAccounts []*fsm.Account
 		currentErr       error
 		previousErr      error
 	)
@@ -78,7 +80,7 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 		}
 		if input.Height == 1 {
 			// Genesis case: whatever comes at height 1 is the genesis state, so we should save them always.
-			previousAccounts = make([]*rpc.Account, 0)
+			previousAccounts = make([]*fsm.Account, 0)
 		} else if input.Height > 1 {
 			// Normal case: fetch from RPC
 			previousAccounts, previousErr = cli.AccountsByHeight(groupCtx, input.Height-1)
@@ -105,34 +107,50 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 	// Build previous state map for O(1) lookups
 	prevMap := make(map[string]uint64, len(previousAccounts))
 	for _, acc := range previousAccounts {
-		prevMap[acc.Address] = acc.Amount
+		prevMap[hex.EncodeToString(acc.Address)] = acc.Amount
 	}
 
-	// Query account-related events from staging table (event-driven correlation)
+	// Query account-related events from a staging table (event-driven correlation)
 	// These events provide context for account balance changes:
 	// - EventReward: Validator receives block rewards
 	// - EventSlash: Validator slashed for Byzantine behavior
 	accountEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height, true,
-		rpc.EventTypeAsStr(rpc.EventTypeReward),
-		rpc.EventTypeAsStr(rpc.EventTypeSlash),
+		string(lib.EventTypeReward),
+		string(lib.EventTypeSlash),
 	)
 	if err != nil {
 		return types.ActivityIndexAccountsOutput{}, fmt.Errorf("query account events at height %d: %w", input.Height, err)
 	}
+
+	ac.Logger.Info(
+		"Loaded events from staging table for Reward & Slashes",
+		zap.Int("numEvents", len(accountEvents)),
+		zap.Uint64("height", input.Height),
+	)
 
 	// Build event maps by address for O(1) lookup
 	rewardEvents := make(map[string]*indexer.Event)
 	slashEvents := make(map[string]*indexer.Event)
 
 	for _, event := range accountEvents {
-		// Events have Address field which corresponds to account/validator address
+		// Events have an Address field which corresponds to account/validator address
 		addr := event.Address
 
 		switch event.EventType {
-		case "EventReward":
+		case string(lib.EventTypeReward):
 			rewardEvents[addr] = event
-		case "EventSlash":
+			ac.Logger.Info("Found reward event",
+				zap.String("address", addr),
+				zap.Uint64("amount", *event.Amount),
+				zap.Uint64("height", input.Height))
+		case string(lib.EventTypeSlash):
 			slashEvents[addr] = event
+			ac.Logger.Info("Found slash event",
+				zap.String("address", addr),
+				zap.Uint64("amount", *event.Amount),
+				zap.Uint64("height", input.Height))
+		default:
+			ac.Logger.Warn("Unexpected event type", zap.String("type", event.EventType))
 		}
 	}
 
@@ -141,13 +159,39 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 	var numAccountsNew uint32
 
 	for _, curr := range currentAccounts {
-		prevAmount, existed := prevMap[curr.Address]
+		addrHex := hex.EncodeToString(curr.Address)
+		prevAmount, existed := prevMap[addrHex]
 
-		// Only create snapshot if balance changed
-		if curr.Amount != prevAmount {
+		// Calculate cumulative rewards and slashes from events
+		var cumulativeRewards, cumulativeSlashes uint64
+		if rewardEvent, hasReward := rewardEvents[addrHex]; hasReward {
+			// Parse reward amount from the event
+			if rewardEvent.Amount != nil {
+				cumulativeRewards = *rewardEvent.Amount
+				ac.Logger.Debug("Account matched reward event",
+					zap.String("address", addrHex),
+					zap.Uint64("reward", cumulativeRewards),
+					zap.Uint64("height", input.Height))
+			}
+		}
+		if slashEvent, hasSlash := slashEvents[addrHex]; hasSlash {
+			// Parse slash amount from event
+			if slashEvent.Amount != nil {
+				cumulativeSlashes = *slashEvent.Amount
+				ac.Logger.Debug("Account matched slash event",
+					zap.String("address", addrHex),
+					zap.Uint64("slash", cumulativeSlashes),
+					zap.Uint64("height", input.Height))
+			}
+		}
+
+		// Only create snapshot if balance changed OR has reward/slash events
+		if curr.Amount != prevAmount || cumulativeRewards > 0 || cumulativeSlashes > 0 {
 			changedAccounts = append(changedAccounts, &indexer.Account{
-				Address:    curr.Address,
+				Address:    addrHex,
 				Amount:     curr.Amount,
+				Rewards:    cumulativeRewards,
+				Slashes:    cumulativeSlashes,
 				Height:     input.Height,
 				HeightTime: input.BlockTime,
 			})

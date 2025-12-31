@@ -23,6 +23,7 @@ func (wc *Context) CompactCrossChainTablesWorkflow(ctx workflow.Context) (types.
 	// Allow up to 30 minutes for all tables (should be much faster, but be conservative)
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Minute,
+		HeartbeatTimeout:    2 * time.Minute, // Heartbeat every 2 minutes (reported after each table)
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    1 * time.Second,
 			BackoffCoefficient: 2.0,

@@ -39,7 +39,7 @@ type ReindexEntry = {
 }
 
 type ChainConfig = {
-  chain_id: string
+  chain_id: string | number // Backend returns number, URL params are string
   chain_name: string
   rpc_endpoints: string[]
   paused: boolean
@@ -47,6 +47,9 @@ type ChainConfig = {
   image: string
   min_replicas: number
   max_replicas: number
+  reindex_min_replicas: number
+  reindex_max_replicas: number
+  reindex_scale_threshold: number
   notes?: string
   created_at: string
   updated_at: string
@@ -387,12 +390,36 @@ export default function ChainDetailPage() {
         <span className="text-white">{config.chain_name || config.chain_id}</span>
       </nav>
 
+      {/* Deleted Chain Banner */}
+      {config.deleted && (
+        <div className="rounded-lg border-2 border-rose-500 bg-rose-500/10 p-4">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0">
+              <svg className="h-6 w-6 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-rose-200">Chain Deleted</h3>
+              <p className="mt-1 text-sm text-rose-300">
+                This chain was soft-deleted on {formatTimestamp(config.updated_at)}. All indexing and monitoring has been stopped.
+                The chain data is preserved and can be recovered if needed.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold text-white">{config.chain_name || config.chain_id}</h1>
-            {config.paused ? (
+            {config.deleted ? (
+              <span className="rounded-full bg-rose-500/20 px-3 py-1 text-sm font-semibold text-rose-300 border border-rose-500/50">
+                DELETED
+              </span>
+            ) : config.paused ? (
               <span className="badge-warning">Paused</span>
             ) : (
               <span className={getHealthBadgeClass(overallHealth)}>
@@ -404,7 +431,7 @@ export default function ChainDetailPage() {
           <p className="mt-2 text-sm text-slate-400">{config.chain_id}</p>
 
           {/* Index Progress Indicator */}
-          {status && (
+          {status && !config.deleted && (
             <div className="mt-4 flex items-center gap-6 text-sm">
               <div className="flex items-center gap-2">
                 <span className="text-slate-500">Last Indexed:</span>
@@ -459,46 +486,65 @@ export default function ChainDetailPage() {
               </div>
             </div>
           )}
+          {/* Deleted Chain Status - Show static info only */}
+          {status && config.deleted && (
+            <div className="mt-4 flex items-center gap-6 text-sm opacity-60">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Last Indexed:</span>
+                <span className="font-mono font-semibold text-slate-400">{formatNumber(status.last_indexed)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Replicas:</span>
+                <span className="font-mono font-semibold text-slate-400">0/0 (Stopped)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Status:</span>
+                <span className="font-mono font-semibold text-rose-400">Inactive</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Quick Actions */}
-        <div className="flex flex-wrap gap-2">
-          <button onClick={handleHeadScan} className="btn text-sm">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            Head Scan
-          </button>
-          <button onClick={handleGapScan} className="btn text-sm">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            Gap Scan
-          </button>
-          <button onClick={handleTogglePause} className="btn-secondary text-sm">
-            {config.paused ? (
-              <>
-                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-                </svg>
-                Resume
-              </>
-            ) : (
-              <>
-                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M5.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75A.75.75 0 007.25 3h-1.5zM12.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75a.75.75 0 00-.75-.75h-1.5z" />
-                </svg>
-                Pause
-              </>
-            )}
-          </button>
-          <button onClick={loadChainData} className="btn-secondary text-sm">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            Refresh
-          </button>
-        </div>
+        {!config.deleted && (
+          <div className="flex flex-wrap gap-2">
+            <button onClick={handleHeadScan} className="btn text-sm">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Head Scan
+            </button>
+            <button onClick={handleGapScan} className="btn text-sm">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              Gap Scan
+            </button>
+            <button onClick={handleTogglePause} className="btn-secondary text-sm">
+              {config.paused ? (
+                <>
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                  </svg>
+                  Resume
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M5.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75A.75.75 0 007.25 3h-1.5zM12.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75a.75.75 0 00-.75-.75h-1.5z" />
+                  </svg>
+                  Pause
+                </>
+              )}
+            </button>
+            <button onClick={loadChainData} className="btn-secondary text-sm">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Tab Navigation */}
@@ -536,10 +582,10 @@ export default function ChainDetailPage() {
         />
       )}
 
-      {activeTab === 'explorer' && <ExplorerTab chainId={chainId} />}
+      {activeTab === 'explorer' && <ExplorerTab chainId={chainId} isDeleted={config.deleted ? 1 : 0} />}
 
       {activeTab === 'settings' && (
-        <SettingsTab config={config} onRefresh={loadChainData} />
+        <SettingsTab config={config} onRefresh={loadChainData} isDeleted={config.deleted} />
       )}
     </div>
   )
@@ -623,7 +669,7 @@ function OverviewTab({
   return (
     <div className="space-y-6">
       {/* Live Sync Status - NEW */}
-      {status && (
+      {status && !config.deleted && (
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Sync Status</h3>
@@ -638,7 +684,7 @@ function OverviewTab({
       )}
 
       {/* Gap Ranges Display - NEW */}
-      {status && status.gap_ranges_count !== undefined && (
+      {status && !config.deleted && status.gap_ranges_count !== undefined && (
         <GapRangesDisplay
           gap_ranges_count={status.gap_ranges_count}
           largest_gap_start={status.largest_gap_start}
@@ -676,7 +722,7 @@ function OverviewTab({
       </div>
 
       {/* Queue Metrics */}
-      {status && (
+      {status && !config.deleted && (
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Queue Metrics</h3>
@@ -744,7 +790,7 @@ function OverviewTab({
       </div>
 
       {/* Indexing Progress Chart */}
-      <IndexingProgressChart chainId={config.chain_id} />
+      <IndexingProgressChart chainId={String(config.chain_id)} />
 
       {/* Transaction Type Breakdown */}
       {blockSummary && blockSummary.tx_counts_by_type && (
@@ -813,7 +859,7 @@ function OverviewTab({
       <ReindexDialog
         open={reindexDialogOpen}
         onOpenChange={setReindexDialogOpen}
-        chainName={config.chain_name || config.chain_id}
+        chainName={config.chain_name || String(config.chain_id)}
         onSubmit={handleReindex}
       />
     </div>
@@ -853,7 +899,7 @@ function HealthCard({
 }
 
 // Explorer Tab Component
-function ExplorerTab({ chainId }: { chainId: string }) {
+function ExplorerTab({ chainId, isDeleted }: { chainId: string; isDeleted: number }) {
   const { notify } = useToast()
 
   // Entities state
@@ -1024,8 +1070,9 @@ function ExplorerTab({ chainId }: { chainId: string }) {
       try {
         // Use entity name directly (not route path) - schema endpoint expects entity names
         const tableName = useStaging && hasStaging ? `${selectedTable}_staging` : selectedTable
+        const deletedParam = isDeleted ? '&deleted=true' : ''
         const response = await apiFetch(
-          `/api/chains/${chainId}/schema?table=${tableName}`
+          `/api/chains/${chainId}/schema?table=${tableName}${deletedParam}`
         )
 
         if (!response.ok) {
@@ -1045,7 +1092,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     }
 
     fetchSchema()
-  }, [chainId, selectedTable, entityMap, useStaging, hasStaging])
+  }, [chainId, selectedTable, entityMap, useStaging, hasStaging, isDeleted])
 
   // Fetch data when table or page changes
   useEffect(() => {
@@ -1057,9 +1104,10 @@ function ExplorerTab({ chainId }: { chainId: string }) {
         const cursor = cursors[currentPageIndex]
         const cursorParam = cursor !== null ? `&cursor=${cursor}` : ''
         const stagingParam = useStaging && hasStaging ? '&use_staging=true' : ''
+        const deletedParam = isDeleted ? '&deleted=true' : ''
 
         const response = await apiFetch(
-          `/api/chains/${chainId}/entity/${selectedTable}?limit=${itemsPerPage}&sort=${sortOrder}${cursorParam}${stagingParam}`
+          `/api/chains/${chainId}/entity/${selectedTable}?limit=${itemsPerPage}&sort=${sortOrder}${cursorParam}${stagingParam}${deletedParam}`
         )
 
         if (!response.ok) {
@@ -1082,7 +1130,7 @@ function ExplorerTab({ chainId }: { chainId: string }) {
     if (schema.length > 0) {
       fetchData()
     }
-  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, itemsPerPage, sortOrder, entityMap, useStaging, hasStaging])
+  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, itemsPerPage, sortOrder, entityMap, useStaging, hasStaging, isDeleted])
 
   const handleTableChange = (newTable: string) => {
     setSelectedTable(newTable)
@@ -1646,9 +1694,11 @@ function ExplorerTab({ chainId }: { chainId: string }) {
 function SettingsTab({
   config,
   onRefresh,
+  isDeleted,
 }: {
   config: ChainConfig
   onRefresh: () => void
+  isDeleted: boolean
 }) {
   const { notify } = useToast()
   const router = useRouter()
@@ -1656,6 +1706,9 @@ function SettingsTab({
   const [image, setImage] = useState(config.image)
   const [minReplicas, setMinReplicas] = useState(config.min_replicas)
   const [maxReplicas, setMaxReplicas] = useState(config.max_replicas)
+  const [reindexMinReplicas, setReindexMinReplicas] = useState(config.reindex_min_replicas)
+  const [reindexMaxReplicas, setReindexMaxReplicas] = useState(config.reindex_max_replicas)
+  const [reindexScaleThreshold, setReindexScaleThreshold] = useState(config.reindex_scale_threshold)
   const [notes, setNotes] = useState(config.notes || '')
   const [rpcEndpoints, setRpcEndpoints] = useState<string[]>(config.rpc_endpoints || [])
   const [newEndpoint, setNewEndpoint] = useState('')
@@ -1692,6 +1745,9 @@ function SettingsTab({
           image,
           min_replicas: minReplicas,
           max_replicas: maxReplicas,
+          reindex_min_replicas: reindexMinReplicas,
+          reindex_max_replicas: reindexMaxReplicas,
+          reindex_scale_threshold: reindexScaleThreshold,
           notes: notes.trim() || undefined,
           rpc_endpoints: rpcEndpoints,
         }),
@@ -1754,6 +1810,7 @@ function SettingsTab({
                     onClick={() => handleRemoveEndpoint(index)}
                     className="btn-danger px-3 py-2"
                     title="Remove endpoint"
+                    disabled={isDeleted}
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1770,8 +1827,9 @@ function SettingsTab({
                   onKeyDown={(e) => e.key === 'Enter' && handleAddEndpoint()}
                   className="input flex-1"
                   placeholder="https://rpc.example.com"
+                  disabled={isDeleted}
                 />
-                <button onClick={handleAddEndpoint} className="btn-secondary">
+                <button onClick={handleAddEndpoint} className="btn-secondary" disabled={isDeleted}>
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
@@ -1790,30 +1848,81 @@ function SettingsTab({
               onChange={(e) => setImage(e.target.value)}
               className="input"
               placeholder="ghcr.io/..."
+              disabled={isDeleted}
             />
           </div>
 
-          {/* Replicas */}
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-300">Min Replicas</label>
-              <input
-                type="number"
-                min={1}
-                value={minReplicas}
-                onChange={(e) => setMinReplicas(Number(e.target.value))}
-                className="input"
-              />
+          {/* Regular Indexing Replicas */}
+          <div>
+            <h3 className="mb-3 text-sm font-semibold text-slate-300">Regular Indexing</h3>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Min Replicas</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={minReplicas}
+                  onChange={(e) => setMinReplicas(Number(e.target.value))}
+                  className="input"
+                  disabled={isDeleted}
+                />
+                <p className="mt-1 text-xs text-slate-500">Minimum number of worker replicas</p>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Max Replicas</label>
+                <input
+                  type="number"
+                  min={minReplicas}
+                  value={maxReplicas}
+                  onChange={(e) => setMaxReplicas(Number(e.target.value))}
+                  className="input"
+                  disabled={isDeleted}
+                />
+                <p className="mt-1 text-xs text-slate-500">Maximum number of worker replicas</p>
+              </div>
             </div>
-            <div>
-              <label className="mb-2 block text-sm font-medium text-slate-300">Max Replicas</label>
-              <input
-                type="number"
-                min={minReplicas}
-                value={maxReplicas}
-                onChange={(e) => setMaxReplicas(Number(e.target.value))}
-                className="input"
-              />
+          </div>
+
+          {/* Reindex Settings */}
+          <div>
+            <h3 className="mb-3 text-sm font-semibold text-slate-300">Reindex Settings</h3>
+            <div className="grid gap-4 md:grid-cols-3">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Min Replicas</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={reindexMinReplicas}
+                  onChange={(e) => setReindexMinReplicas(Number(e.target.value))}
+                  className="input"
+                  disabled={isDeleted}
+                />
+                <p className="mt-1 text-xs text-slate-500">Min replicas during reindex</p>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Max Replicas</label>
+                <input
+                  type="number"
+                  min={reindexMinReplicas}
+                  value={reindexMaxReplicas}
+                  onChange={(e) => setReindexMaxReplicas(Number(e.target.value))}
+                  className="input"
+                  disabled={isDeleted}
+                />
+                <p className="mt-1 text-xs text-slate-500">Max replicas during reindex</p>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Scale Threshold</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={reindexScaleThreshold}
+                  onChange={(e) => setReindexScaleThreshold(Number(e.target.value))}
+                  className="input"
+                  disabled={isDeleted}
+                />
+                <p className="mt-1 text-xs text-slate-500">Queue depth to trigger scaling</p>
+              </div>
             </div>
           </div>
 
@@ -1826,6 +1935,7 @@ function SettingsTab({
               className="textarea"
               rows={4}
               placeholder="Optional notes about this chain..."
+              disabled={isDeleted}
             />
           </div>
 
@@ -1843,27 +1953,30 @@ function SettingsTab({
                 checked={paused}
                 onChange={(e) => setPaused(e.target.checked)}
                 className="peer sr-only"
+                disabled={isDeleted}
               />
-              <div className="peer h-6 w-11 rounded-full bg-slate-700 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500"></div>
+              <div className="peer h-6 w-11 rounded-full bg-slate-700 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-all after:content-[''] peer-checked:bg-indigo-600 peer-checked:after:translate-x-full peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed"></div>
             </label>
           </div>
 
           {/* Save Button */}
-          <button onClick={handleSave} className="btn w-full" disabled={saving}>
-            {saving ? (
-              <>
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
-                Saving...
-              </>
-            ) : (
-              <>
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                Save Changes
-              </>
-            )}
-          </button>
+          {!isDeleted && (
+            <button onClick={handleSave} className="btn w-full" disabled={saving}>
+              {saving ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Save Changes
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1873,8 +1986,15 @@ function SettingsTab({
           <h3 className="card-title text-rose-200">Danger Zone</h3>
         </div>
         <p className="text-sm text-rose-300">
-          Deleting a chain will permanently remove all configuration, indexing progress, and chain data.
-          This action cannot be undone.
+          {isDeleted ? (
+            <>
+              This chain is already soft-deleted. Clicking the button below will <strong>permanently delete</strong> all chain data from the database, including configuration, indexing progress, and blockchain data. This action cannot be undone and the chain cannot be recovered.
+            </>
+          ) : (
+            <>
+              Deleting a chain will stop all indexing and monitoring. You can choose between soft delete (recoverable) or permanent deletion (cannot be undone).
+            </>
+          )}
         </p>
         <button
           onClick={() => setDeleteDialogOpen(true)}
@@ -1883,15 +2003,16 @@ function SettingsTab({
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
-          Delete Chain
+          {isDeleted ? 'Permanently Delete Chain' : 'Delete Chain'}
         </button>
       </div>
 
       <DeleteChainDialog
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
-        chainId={config.chain_id}
+        chainId={String(config.chain_id)}
         chainName={config.chain_name}
+        isDeleted={isDeleted}
         onSuccess={() => {
           notify('Chain deleted successfully')
           router.push('/dashboard')
@@ -2054,33 +2175,40 @@ function DeleteChainDialog({
   onOpenChange,
   chainId,
   chainName,
+  isDeleted,
   onSuccess,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   chainId: string
   chainName: string
+  isDeleted: boolean
   onSuccess: () => void
 }) {
   const { notify } = useToast()
   const [confirmText, setConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
+  const [hardDelete, setHardDelete] = useState(isDeleted)
 
   useEffect(() => {
     if (!open) {
       setConfirmText('')
+      setHardDelete(isDeleted)
     }
-  }, [open])
+  }, [open, isDeleted])
 
   const handleDelete = async () => {
-    if (confirmText !== chainId) {
+    if (confirmText !== String(chainId)) {
       notify('Chain ID does not match', 'error')
       return
     }
 
     setDeleting(true)
     try {
-      const res = await apiFetch(`/api/chains/${chainId}`, {
+      const url = hardDelete
+        ? `/api/chains/${chainId}?hard=true`
+        : `/api/chains/${chainId}`
+      const res = await apiFetch(url, {
         method: 'DELETE',
       })
       if (!res.ok) throw new Error('Failed to delete chain')
@@ -2098,21 +2226,68 @@ function DeleteChainDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content className="fixed left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-rose-500/50 bg-slate-900 p-6 shadow-2xl">
-          <Dialog.Title className="text-xl font-bold text-rose-200">Delete Chain</Dialog.Title>
+          <Dialog.Title className="text-xl font-bold text-rose-200">
+            {isDeleted ? 'Permanently Delete Chain' : 'Delete Chain'}
+          </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm text-slate-400">
-            This action cannot be undone. This will permanently delete the chain configuration and all associated data.
+            {hardDelete
+              ? 'This action cannot be undone. This will permanently delete the chain configuration and all associated data.'
+              : 'This will soft-delete the chain, stopping all indexing and monitoring. The data will be preserved and can be recovered if needed.'}
           </Dialog.Description>
 
           <div className="mt-6 space-y-4">
-            <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-sm text-rose-200">
-              <p className="font-semibold">The following will be permanently deleted:</p>
-              <ul className="mt-2 list-inside list-disc space-y-1">
-                <li>Chain configuration</li>
-                <li>Indexing progress and metadata</li>
-                <li>All indexed blockchain data</li>
-                <li>Reindex history</li>
-              </ul>
-            </div>
+            {/* Hard Delete Checkbox */}
+            {!isDeleted && (
+              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={hardDelete}
+                    onChange={(e) => setHardDelete(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 cursor-pointer rounded border-amber-500 bg-slate-800 text-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold text-amber-200">
+                      Permanent Deletion (Hard Delete)
+                    </div>
+                    <div className="mt-1 text-xs text-amber-300/90">
+                      This will permanently remove all chain data from the database. Use this only if you're certain you won't need to recover the chain.
+                    </div>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {/* Show warning for already deleted chains */}
+            {isDeleted && (
+              <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4">
+                <div className="flex items-start gap-3">
+                  <svg className="h-5 w-5 text-rose-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold text-rose-200">
+                      Permanent Deletion Required
+                    </div>
+                    <div className="mt-1 text-xs text-rose-300/90">
+                      This chain is already soft-deleted. The only option now is permanent deletion, which will remove all chain data from the database. This action cannot be undone.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(hardDelete || isDeleted) && (
+              <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-sm text-rose-200">
+                <p className="font-semibold">The following will be permanently deleted:</p>
+                <ul className="mt-2 list-inside list-disc space-y-1">
+                  <li>Chain configuration</li>
+                  <li>Indexing progress and metadata</li>
+                  <li>All indexed blockchain data</li>
+                  <li>Reindex history</li>
+                </ul>
+              </div>
+            )}
 
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-300">
@@ -2136,19 +2311,19 @@ function DeleteChainDialog({
               <button
                 onClick={handleDelete}
                 className="btn-danger"
-                disabled={deleting || confirmText !== chainId}
+                disabled={deleting || confirmText !== String(chainId)}
               >
                 {deleting ? (
                   <>
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
-                    Deleting...
+                    {hardDelete ? 'Permanently Deleting...' : 'Deleting...'}
                   </>
                 ) : (
                   <>
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
-                    Delete Chain
+                    {hardDelete ? 'Permanently Delete' : 'Delete Chain'}
                   </>
                 )}
               </button>

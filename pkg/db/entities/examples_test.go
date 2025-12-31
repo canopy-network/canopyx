@@ -96,6 +96,19 @@ func Example_workflowUsage() {
 	// Promoting orders at height 1000
 	// Promoting pools at height 1000
 	// Promoting dex_prices at height 1000
+	// Promoting dex_orders at height 1000
+	// Promoting dex_deposits at height 1000
+	// Promoting dex_withdrawals at height 1000
+	// Promoting pool_points_by_holder at height 1000
+	// Promoting params at height 1000
+	// Promoting validators at height 1000
+	// Promoting validator_signing_info at height 1000
+	// Promoting validator_double_signing_info at height 1000
+	// Promoting committees at height 1000
+	// Promoting committee_validators at height 1000
+	// Promoting committee_payments at height 1000
+	// Promoting poll_snapshots at height 1000
+	// Promoting supply at height 1000
 	// All entities promoted
 }
 

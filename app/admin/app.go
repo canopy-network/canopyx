@@ -8,15 +8,32 @@ import (
 	"github.com/canopy-network/canopyx/app/admin/types"
 	"github.com/canopy-network/canopyx/app/admin/workflow"
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
+	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 	"github.com/canopy-network/canopyx/pkg/db/crosschain"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	temporaladmin "github.com/canopy-network/canopyx/pkg/temporal/admin"
 	"github.com/canopy-network/canopyx/pkg/utils"
+	"github.com/puzpuzpuz/xsync/v4"
 	"go.temporal.io/sdk/worker"
 	temporalworkflow "go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
+)
+
+// ========================================================================
+// PARALLELISM CALCULATION - Admin Component
+// ========================================================================
+// Admin has fixed, low parallelism:
+// - Maintenance worker: 10 concurrent activities max
+// - Web UI queries: occasional, low volume
+// Formula: (max_activities × connections_per_activity) + buffer
+
+const (
+	maintenanceMaxActivities = 10 // Maintenance worker concurrent activities
+	connectionsPerActivity   = 2  // Max ClickHouse connections per activity
+	bufferConnections        = 10 // Buffer for web UI queries
 )
 
 func Initialize(ctx context.Context) *types.App {
@@ -26,25 +43,54 @@ func Initialize(ctx context.Context) *types.App {
 		panic(err)
 	}
 
+	// Calculate required connection pool sizes
+	adminIdleConns := maintenanceMaxActivities * connectionsPerActivity
+	adminMaxConns := adminIdleConns + bufferConnections
+
+	// Configure pool sizes for an admin database (low throughput)
+	// This single pool is shared by admin DB, crosschain DB, and per-chain DBs
+	adminPoolConfig := clickhouse.PoolConfig{
+		MaxOpenConns:    adminMaxConns,
+		MaxIdleConns:    adminIdleConns,
+		ConnMaxLifetime: clickhouse.ParseConnMaxLifetime(utils.Env("CLICKHOUSE_CONN_MAX_LIFETIME", "1h")),
+		Component:       "admin",
+	}
+
+	logger.Info("Admin parallelism configuration",
+		zap.Int("maintenance_max_activities", maintenanceMaxActivities),
+		zap.Int("connections_per_activity", connectionsPerActivity),
+		zap.Int("total_max_connections", adminMaxConns),
+		zap.String("note", "shared by admin, crosschain, and per-chain DBs"),
+	)
+
 	indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
 
-	indexerDb, err := adminstore.New(ctx, logger, indexerDbName)
+	indexerDb, err := adminstore.NewWithPoolConfig(ctx, logger, indexerDbName, adminPoolConfig)
 	if err != nil {
 		logger.Fatal("Unable to initialize indexer database", zap.Error(err))
 	}
 
-	chainsDb, chainsDbErr := indexerDb.EnsureChainsDbs(ctx)
-	if chainsDbErr != nil {
-		logger.Fatal("Unable to initialize chains database", zap.Error(chainsDbErr))
+	// Initialize a cross-chain database (required)
+	// Reuse admin DB's connection pool - crosschain ops are part of the same 10 concurrent activities
+	crossChainDBName := utils.Env("CROSSCHAIN_DB", "canopyx_cross_chain")
+	crossChainDB := crosschain.NewWithSharedClient(indexerDb.Client, crossChainDBName)
+
+	// Initialize a database and tables (create if they don't exist)
+	// This is idempotent - safe to call on every startup
+	if dbErr := crossChainDB.InitializeDB(ctx); dbErr != nil {
+		logger.Fatal("Cross-chain database initialization failed",
+			zap.Error(dbErr))
 	}
+
+	logger.Info("Cross-chain database initialized successfully",
+		zap.String("database", crossChainDB.Name))
 
 	temporalClient, err := temporal.NewClient(ctx, logger)
 	if err != nil {
 		logger.Fatal("Unable to establish temporal connection", zap.Error(err))
 	}
 
-	// Ensure the Temporal namespace exists (Helm chart doesn't auto-create it)
-	// Use 7-day retention to match the Helm values configuration
+	// Ensure the Temporal namespace exists
 	err = temporalClient.EnsureNamespace(ctx, 7*24*time.Hour)
 	if err != nil {
 		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
@@ -68,8 +114,9 @@ func Initialize(ctx context.Context) *types.App {
 
 	app := &types.App{
 		// Database initialization
-		AdminDB:  indexerDb,
-		ChainsDB: chainsDb,
+		AdminDB:      indexerDb,
+		CrossChainDB: crossChainDB,
+		ChainsDB:     xsync.NewMap[string, chainstore.Store](), // Initialize empty chain DB cache
 
 		// Temporal initialization
 		TemporalClient: temporalClient,
@@ -84,41 +131,21 @@ func Initialize(ctx context.Context) *types.App {
 		QueueStatsCache: types.NewQueueStatsCache(),
 	}
 
-	// Initialize cross-chain database (required)
-	crossChainDBName := utils.Env("CROSSCHAIN_DB", "canopyx_cross_chain")
-	crossChainDB, crossChainErr := crosschain.NewStore(ctx, logger, crossChainDBName)
-	if crossChainErr != nil {
-		logger.Fatal("Cross-chain database initialization failed",
-			zap.Error(crossChainErr))
-	}
+	logger.Info("Admin app initialized",
+		zap.Bool("chains_db_initialized", app.ChainsDB != nil),
+		zap.Bool("admin_db_initialized", app.AdminDB != nil))
 
-	// Initialize schema (create global tables if they don't exist)
-	// This is idempotent - safe to call on every startup
-	if schemaErr := crossChainDB.InitializeSchema(ctx); schemaErr != nil {
-		logger.Fatal("Cross-chain schema initialization failed",
-			zap.Error(schemaErr))
-	}
-
-	app.CrossChainDB = crossChainDB
-	logger.Info("Cross-chain database initialized successfully",
-		zap.String("database", crossChainDB.Name))
-
-	// Set up materialized views for all existing chains
-	// This is idempotent - SetupChainSync uses CREATE IF NOT EXISTS for MVs
-	chains, listErr := app.AdminDB.ListChain(ctx)
+	// Set up materialized views for all existing chains in parallel
+	chains, listErr := app.AdminDB.ListChain(ctx, false)
 	if listErr != nil {
-		logger.Fatal("Failed to list chains for cross-chain sync setup",
+		logger.Warn("Failed to list chains for cross-chain sync setup, sync will be retried later",
 			zap.Error(listErr))
-	}
-
-	for _, chain := range chains {
-		if syncErr := crossChainDB.SetupChainSync(ctx, chain.ChainID); syncErr != nil {
-			logger.Fatal("Failed to setup cross-chain sync for chain",
-				zap.Uint64("chain_id", chain.ChainID),
-				zap.Error(syncErr))
+	} else if len(chains) > 0 {
+		for _, chain := range chains {
+			if err := crossChainDB.SetupChainSync(ctx, chain.ChainID); err != nil {
+				logger.Fatal("Failed to setup cross-chain sync for chain", zap.Error(err))
+			}
 		}
-		logger.Info("Cross-chain sync setup complete for chain",
-			zap.Uint64("chain_id", chain.ChainID))
 	}
 
 	// Initialize Temporal maintenance worker for cross-chain compaction

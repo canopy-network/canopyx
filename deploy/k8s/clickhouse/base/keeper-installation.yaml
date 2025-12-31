@@ -1,0 +1,72 @@
+apiVersion: "clickhouse-keeper.altinity.com/v1"
+kind: "ClickHouseKeeperInstallation"
+metadata:
+  name: canopyx-keeper
+  namespace: default
+  annotations:
+    prometheus.io/port: "7000"
+    prometheus.io/scrape: "true"
+spec:
+  defaults:
+    templates:
+      podTemplate: clickhouse-keeper-pod
+      volumeClaimTemplate: keeper-data-volume
+
+  configuration:
+    clusters:
+      - name: canopyx
+        layout:
+          replicasCount: 3  # Recommended for Raft consensus (quorum = 2)
+
+    settings:
+      # Keeper server settings
+      keeper_server/tcp_port: "2181"
+      keeper_server/log_storage_path: "/var/lib/clickhouse-keeper/coordination/log"
+      keeper_server/snapshot_storage_path: "/var/lib/clickhouse-keeper/coordination/snapshots"
+
+      # Coordination settings - Optimized for 20s block time (need indexing in 5-10s)
+      keeper_server/coordination_settings/operation_timeout_ms: "2000"    # 2s - fast fail for operations
+      keeper_server/coordination_settings/min_session_timeout_ms: "2000"  # 2s minimum session timeout
+      keeper_server/coordination_settings/session_timeout_ms: "10000"     # 10s maximum session timeout
+      keeper_server/coordination_settings/raft_logs_level: "information"
+
+      # Performance optimizations
+      keeper_server/coordination_settings/heart_beat_interval_ms: "500"   # Faster heartbeats for quick failure detection
+      keeper_server/coordination_settings/election_timeout_lower_bound_ms: "1000"  # Fast leader election
+      keeper_server/coordination_settings/election_timeout_upper_bound_ms: "2000"
+
+  templates:
+    podTemplates:
+      - name: clickhouse-keeper-pod
+        metadata:
+          annotations:
+            prometheus.io/port: "7000"
+            prometheus.io/scrape: "true"
+        spec:
+          containers:
+            - name: clickhouse-keeper
+              image: "clickhouse/clickhouse-keeper:24.8"
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  memory: "2Gi"   # Increased for coordination overhead with fast timeouts
+                  cpu: "2000m"    # 2 full cores for fast consensus operations
+                limits:
+                  memory: "4Gi"   # Headroom for coordination overhead
+                  cpu: "4000m"    # Allow burst for consensus operations
+              ports:
+                - name: client
+                  containerPort: 2181
+                - name: raft
+                  containerPort: 9444
+                - name: prometheus
+                  containerPort: 7000
+
+    volumeClaimTemplates:
+      - name: keeper-data-volume
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 10Gi  # Keeper logs and snapshots

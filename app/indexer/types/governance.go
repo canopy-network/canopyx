@@ -12,6 +12,12 @@ type ActivityIndexPollOutput struct {
 	DurationMs   float64 `json:"durationMs"`   // Execution time in milliseconds
 }
 
+// ActivityIndexProposalsOutput contains the result of indexing proposals data along with execution duration.
+type ActivityIndexProposalsOutput struct {
+	NumProposals uint32  `json:"numProposals"` // Number of proposals indexed
+	DurationMs   float64 `json:"durationMs"`   // Execution time in milliseconds
+}
+
 // ActivityIndexCommitteesOutput contains the result of indexing committees along with execution duration.
 type ActivityIndexCommitteesOutput struct {
 	NumCommittees           uint32  `json:"numCommittees"`           // Number of committees that changed

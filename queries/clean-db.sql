@@ -1,0 +1,5 @@
+DROP DATABASE IF EXISTS `canopyx_indexer` ON CLUSTER canopyx SYNC;
+
+DROP DATABASE IF EXISTS `canopyx_cross_chain` ON CLUSTER canopyx SYNC;
+
+DROP DATABASE IF EXISTS `chain_5` ON CLUSTER canopyx SYNC;

@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
@@ -39,6 +40,8 @@ type Store interface {
 	InsertCommitteePaymentsStaging(ctx context.Context, payments []*indexermodels.CommitteePayment) error
 	InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
 	InsertPollSnapshots(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
+	InsertProposalSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.ProposalSnapshot) error
+	InsertProposalSnapshots(ctx context.Context, snapshots []*indexermodels.ProposalSnapshot) error
 	InsertSupplyStaging(ctx context.Context, supplies []*indexermodels.Supply) error
 
 	// --- Query entities
@@ -46,6 +49,7 @@ type Store interface {
 	GetBlock(ctx context.Context, height uint64) (*indexermodels.Block, error)
 	GetBlockSummary(ctx context.Context, height uint64, staging bool) (*indexermodels.BlockSummary, error)
 	HasBlock(ctx context.Context, height uint64) (bool, error)
+	GetHighestBlockBeforeTime(ctx context.Context, targetTime time.Time) (*indexermodels.Block, error)
 	GetEventsByTypeAndHeight(ctx context.Context, height uint64, staging bool, eventTypes ...string) ([]*indexermodels.Event, error)
 
 	// --- Delete entities
@@ -63,4 +67,5 @@ type Store interface {
 	GetTableDataPaginated(ctx context.Context, tableName string, limit, offset int, fromHeight, toHeight *uint64) ([]map[string]interface{}, int64, bool, error)
 	PromoteEntity(ctx context.Context, entity entities.Entity, height uint64) error
 	CleanEntityStaging(ctx context.Context, entity entities.Entity, height uint64) error
+	CleanAllEntitiesStaging(ctx context.Context, entitiesToClean []entities.Entity, height uint64) error
 }

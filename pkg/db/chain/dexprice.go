@@ -14,21 +14,24 @@ import (
 func (db *DB) initDexPrices(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.DexPriceColumns)
 
-	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+	// Production table: ORDER BY (local_chain_id, remote_chain_id, height) for efficient chain pair lookups
+	productionQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
+		) ENGINE = %s
 		ORDER BY (local_chain_id, remote_chain_id, height)
-	`
-
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPricesProductionTableName, schemaSQL)
+	`, db.Name, indexermodels.DexPricesProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.DexPricesProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexPricesProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexPricesStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, local_chain_id, remote_chain_id) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, local_chain_id, remote_chain_id)
+	`, db.Name, indexermodels.DexPricesStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.DexPricesStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexPricesStagingTableName, err)
 	}
@@ -43,8 +46,7 @@ func (db *DB) InsertDexPricesStaging(ctx context.Context, prices []*indexermodel
 		return nil
 	}
 
-	stagingTable := fmt.Sprintf("%s.dex_prices_staging", db.Name)
-	query := fmt.Sprintf(`INSERT INTO %s (local_chain_id, remote_chain_id, height, local_pool, remote_pool, price_e6, height_time) VALUES`, stagingTable)
+	query := fmt.Sprintf(`INSERT INTO "%s"."dex_prices_staging" (local_chain_id, remote_chain_id, height, local_pool, remote_pool, price_e6, height_time, price_delta, local_pool_delta, remote_pool_delta) VALUES`, db.Name)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err
@@ -62,6 +64,9 @@ func (db *DB) InsertDexPricesStaging(ctx context.Context, prices []*indexermodel
 			price.RemotePool,
 			price.PriceE6,
 			price.HeightTime,
+			price.PriceDelta,
+			price.LocalPoolDelta,
+			price.RemotePoolDelta,
 		)
 		if err != nil {
 			return err

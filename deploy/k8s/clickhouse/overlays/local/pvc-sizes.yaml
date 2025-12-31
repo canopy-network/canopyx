@@ -1,0 +1,41 @@
+# Auto-generated storage patch from tilt-config.yaml
+# Profile: development | Hot: 2Gi | Warm: 2Gi | Cold: 5Gi | Log: 1Gi
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: canopyx
+spec:
+  defaults:
+    templates:
+      volumeClaimTemplates:
+        - name: hot-volume
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 2Gi
+
+        - name: warm-volume
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 2Gi
+
+        - name: cold-volume
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+
+        - name: log-volume
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi

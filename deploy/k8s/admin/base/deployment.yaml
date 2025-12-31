@@ -12,13 +12,20 @@ spec:
       labels:
         app: canopyx-admin
     spec:
+      # DNS optimization: reduce DNS lookup latency in Kubernetes
+      # ndots=1 prevents unnecessary search domain lookups for fully-qualified domain names
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+
       # InitContainer in the future maybe run migrations once needed.
       containers:
         - name: admin
           image: localhost:5001/canopyx-admin
           env:
             # Logging
-            - { name: LOG_LEVEL, value: "debug" }
+            - { name: LOG_LEVEL, value: "info" }
             # ADMIN server
             - { name: ADDR, value: ":3000" }
             - { name: ADMIN_TOKEN, value: "devtoken" }
@@ -26,8 +33,17 @@ spec:
             - { name: ADMIN_PASSWORD, value: "admin" }
             - { name: ADMIN_USERS, value: "" }
             - { name: SESSION_SECRET, value: "change-me-please" }
-            # ClickHouse connection
-            - { name: CLICKHOUSE_ADDR, value: "clickhouse://clickhouse-hdx-oss-v2-clickhouse.default.svc.cluster.local:9000?sslmode=disable" }
+            # ClickHouse connection - Multiple replicas for failover with ConnOpenInOrder strategy
+            # Connects to replica-0 by default, falls back to replica-1 on failure
+            # Provides read-after-write consistency without Keeper overhead
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://canopyx:canopyx@chi-canopyx-canopyx-0-0.default.svc.cluster.local:9000,chi-canopyx-canopyx-0-1.default.svc.cluster.local:9000?sslmode=disable" }
+            # ClickHouse connection strategy: in_order (default), round_robin, or random
+            # in_order provides read-after-write consistency for admin operations
+            - { name: CLICKHOUSE_CONN_STRATEGY, value: "in_order" }
+            # ClickHouse connection pool configuration
+            # Admin calculates pool sizes deterministically based on maintenance worker parallelism (10 activities)
+            # Formula: (10 activities × 2 connections) + 10 buffer = 30 total connections
+            - { name: CLICKHOUSE_CONN_MAX_LIFETIME, value: "1h" }
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
             - { name: CROSSCHAIN_DB, value: "canopyx_cross_chain" }
@@ -46,16 +62,17 @@ spec:
             httpGet:
               path: /api/health
               port: 3000
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            timeoutSeconds: 3
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 30
             successThreshold: 1
-            failureThreshold: 3
+            failureThreshold: 10
           livenessProbe:
             httpGet:
               path: /api/health
               port: 3000
-            initialDelaySeconds: 15
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 30
+            successThreshold: 1
+            failureThreshold: 10

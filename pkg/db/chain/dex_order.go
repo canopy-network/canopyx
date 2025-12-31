@@ -13,21 +13,25 @@ import (
 // The staging table has the same schema but no TTL (TTL only on production).
 func (db *DB) initDexOrders(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.DexOrderColumns)
-	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (order_id, height)
-	`
 
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexOrdersProductionTableName, schemaSQL)
+	// Production table: ORDER BY (order_id, height) for efficient order_id lookups
+	productionQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (order_id, height)
+	`, db.Name, indexermodels.DexOrdersProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.DexOrdersProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexOrdersProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexOrdersStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, order_id) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, order_id)
+	`, db.Name, indexermodels.DexOrdersStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.DexOrdersStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexOrdersStagingTableName, err)
 	}
@@ -41,7 +45,7 @@ func (db *DB) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodel
 		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s".dex_orders_staging (
+	query := fmt.Sprintf(`INSERT INTO "%s"."dex_orders_staging" (
 		order_id, height, height_time, committee, address,
 		amount_for_sale, requested_amount, state, success,
 		sold_amount, bought_amount, local_origin, locked_height
@@ -89,15 +93,15 @@ func (db *DB) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodel
 // Query usage: SELECT order_id, created_height FROM dex_order_created_height WHERE order_id = ?
 func (db *DB) initDexOrderCreatedHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."dex_order_created_height"
-		ENGINE = AggregatingMergeTree()
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."dex_order_created_height" %s
+		ENGINE = %s
 		ORDER BY order_id
 		AS SELECT
 			order_id,
 			min(height) as created_height
 		FROM "%s"."dex_orders"
 		GROUP BY order_id
-	`, db.Name, db.Name)
+	`, db.Name, db.OnCluster(), db.Engine("dex_order_created_height", "ReplacingMergeTree", "created_height"), db.Name)
 
 	return db.Exec(ctx, query)
 }

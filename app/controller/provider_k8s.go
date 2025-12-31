@@ -27,19 +27,21 @@ import (
 
 // K8sProvider represents a Kubernetes provider responsible for deploying and managing resources in a Kubernetes cluster.
 type K8sProvider struct {
-	Logger    *zap.Logger
-	client    kubernetes.Interface
-	ns        string
-	image     string
-	tag       string
-	replicas  int32
-	env       []corev1.EnvVar
-	resReq    *corev1.ResourceRequirements
-	enableHPA bool
-	hpaMin    int32
-	hpaMax    int32
-	hpaCPU    int32 // target CPU utilization %
-	tqPrefix  string
+	Logger         *zap.Logger
+	client         kubernetes.Interface
+	ns             string
+	image          string
+	tag            string
+	replicas       int32
+	env            []corev1.EnvVar
+	resReq         *corev1.ResourceRequirements
+	enableHPA      bool
+	hpaMin         int32
+	hpaMax         int32
+	hpaCPU         int32 // target CPU utilization %
+	tqPrefix       string
+	pullPolicy     corev1.PullPolicy
+	pullSecretName string
 }
 
 var _ Provider = (*K8sProvider)(nil)
@@ -88,20 +90,34 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 	hpaCPU := int32FromEnv("INDEXER_HPA_CPU_TARGET", 80)
 	tqPrefix := getEnv("TEMPORAL_TASK_QUEUE_PREFIX", "index:")
 
+	// Image pull configuration
+	pullPolicy := parsePullPolicy(getEnv("INDEXER_PULL_POLICY", "Always"))
+	pullSecretName := getEnv("INDEXER_PULL_SECRET", "")
+
 	// Container env (common + per-chain overrides later).
 	env := []corev1.EnvVar{
 		{Name: "CHAIN_ID", Value: ""},
 		{Name: "TEMPORAL_HOSTPORT", Value: mustEnv("TEMPORAL_HOSTPORT")},
 		{Name: "TEMPORAL_NAMESPACE", Value: mustEnv("TEMPORAL_NAMESPACE")},
 		{Name: "CLICKHOUSE_ADDR", Value: mustEnv("CLICKHOUSE_ADDR")},
+		// ClickHouse connection strategy: in_order (default), round_robin, or random
+		// in_order provides read-after-write consistency for indexer (same-replica routing)
+		{Name: "CLICKHOUSE_CONN_STRATEGY", Value: getEnv("CLICKHOUSE_CONN_STRATEGY", "in_order")},
+		{Name: "CLICKHOUSE_CONN_MAX_LIFETIME", Value: getEnv("CLICKHOUSE_CONN_MAX_LIFETIME", "1h")},
+		// Parallelism configuration - controls concurrent block processing
+		// Indexer calculates connection pool sizes and Temporal worker limits from these values
+		// Formula: (parallel_blocks × 35 activities × 2 connections) + 100 buffer
+		{Name: "LIVE_PARALLEL_BLOCKS", Value: getEnv("LIVE_PARALLEL_BLOCKS", "5")},
+		{Name: "HISTORICAL_PARALLEL_BLOCKS", Value: getEnv("HISTORICAL_PARALLEL_BLOCKS", "10")},
+		{Name: "REINDEX_PARALLEL_BLOCKS", Value: getEnv("REINDEX_PARALLEL_BLOCKS", "10")},
 		{Name: "REDIS_HOST", Value: mustEnv("REDIS_HOST")},
 		{Name: "REDIS_PORT", Value: mustEnv("REDIS_PORT")},
-		//@TODO: Allow to customize the ones below - Now sets defaults so indexer will do his best
-		{Name: "SCHEDULER_CATCHUP_THRESHOLD", Value: ""},
-		{Name: "DIRECT_SCHEDULE_BATCH_SIZE", Value: ""},
-		{Name: "SCHEDULER_BATCH_SIZE", Value: ""},
-		{Name: "BLOCK_TIME_SECONDS", Value: ""},
-		{Name: "SCHEDULER_BATCH_MAX_PARALLELISM", Value: ""},
+		// Scheduler configuration - Customizable for different chain block times
+		{Name: "SCHEDULER_CATCHUP_THRESHOLD", Value: getEnv("SCHEDULER_CATCHUP_THRESHOLD", "")},
+		{Name: "DIRECT_SCHEDULE_BATCH_SIZE", Value: getEnv("DIRECT_SCHEDULE_BATCH_SIZE", "")},
+		{Name: "SCHEDULER_BATCH_SIZE", Value: getEnv("SCHEDULER_BATCH_SIZE", "")},
+		{Name: "BLOCK_TIME_SECONDS", Value: getEnv("BLOCK_TIME_SECONDS", "")},
+		{Name: "SCHEDULER_BATCH_MAX_PARALLELISM", Value: getEnv("SCHEDULER_BATCH_MAX_PARALLELISM", "")},
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		env = append(env, corev1.EnvVar{Name: "LOG_LEVEL", Value: v})
@@ -146,19 +162,21 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 	}
 
 	p := &K8sProvider{
-		Logger:    log,
-		client:    cs,
-		ns:        ns,
-		image:     image,
-		tag:       tag,
-		replicas:  replicas,
-		env:       env,
-		resReq:    res,
-		enableHPA: enableHPA,
-		hpaMin:    hpaMin,
-		hpaMax:    hpaMax,
-		hpaCPU:    hpaCPU,
-		tqPrefix:  tqPrefix,
+		Logger:         log,
+		client:         cs,
+		ns:             ns,
+		image:          image,
+		tag:            tag,
+		replicas:       replicas,
+		env:            env,
+		resReq:         res,
+		enableHPA:      enableHPA,
+		hpaMin:         hpaMin,
+		hpaMax:         hpaMax,
+		hpaCPU:         hpaCPU,
+		tqPrefix:       tqPrefix,
+		pullPolicy:     pullPolicy,
+		pullSecretName: pullSecretName,
 	}
 
 	log.Info("provider initialized",
@@ -172,6 +190,8 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 		zap.Int32("hpa_max", hpaMax),
 		zap.Int32("hpa_cpu_target", hpaCPU),
 		zap.String("tq_prefix", tqPrefix),
+		zap.String("pull_policy", string(pullPolicy)),
+		zap.String("pull_secret", pullSecretName),
 		zap.Bool("resources_configured", res != nil),
 	)
 
@@ -222,6 +242,40 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		}
 	}
 
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{{
+			Name:            "indexer",
+			Image:           image,
+			ImagePullPolicy: p.pullPolicy,
+			Env:             env,
+			Resources: func() corev1.ResourceRequirements {
+				if p.resReq != nil {
+					return *p.resReq
+				}
+				return corev1.ResourceRequirements{}
+			}(),
+		}},
+		// Topology spread constraints for high availability
+		// Ensures pods are distributed across different nodes with maxSkew of 1
+		TopologySpreadConstraints: []corev1.TopologySpreadConstraint{
+			{
+				MaxSkew:           1,
+				TopologyKey:       "kubernetes.io/hostname",
+				WhenUnsatisfiable: corev1.ScheduleAnyway,
+				LabelSelector: &meta.LabelSelector{
+					MatchLabels: labels,
+				},
+			},
+		},
+	}
+
+	// Add image pull secrets if configured
+	if p.pullSecretName != "" {
+		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{
+			{Name: p.pullSecretName},
+		}
+	}
+
 	desired := &appsv1.Deployment{
 		ObjectMeta: meta.ObjectMeta{
 			Name:      name,
@@ -234,7 +288,6 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		Spec: appsv1.DeploymentSpec{
 			Replicas: int32Ptr(replicas),
 			Selector: &meta.LabelSelector{MatchLabels: labels},
-			// @TODO: we need to add nodeSelector/affinity/anty-affinity support
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: meta.ObjectMeta{
 					Labels: labels,
@@ -242,21 +295,7 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 						"canopyx/env-checksum": ck,
 					},
 				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  "indexer",
-						Image: image,
-						// @TODO: this needs to be change for production by env
-						ImagePullPolicy: corev1.PullAlways,
-						Env:             env,
-						Resources: func() corev1.ResourceRequirements {
-							if p.resReq != nil {
-								return *p.resReq
-							}
-							return corev1.ResourceRequirements{}
-						}(),
-					}},
-				},
+				Spec: podSpec,
 			},
 		},
 	}
@@ -488,6 +527,154 @@ func (p *K8sProvider) Close() error {
 	return nil
 }
 
+// EnsureReindexWorker ensures that a reindex worker deployment exists with the specified replicas.
+func (p *K8sProvider) EnsureReindexWorker(ctx context.Context, c *Chain) error {
+	start := time.Now()
+	chainIDUint, parseErr := strconv.ParseUint(c.ID, 10, 64)
+	if parseErr != nil {
+		p.Logger.Error("invalid chain ID format", zap.String("chain_id", c.ID), zap.Error(parseErr))
+		return fmt.Errorf("invalid chain ID: %w", parseErr)
+	}
+	name := reindexDeploymentName(chainIDUint)
+	labels := map[string]string{
+		"app":         "indexer-reindex",
+		"managed-by":  "canopyx-controller",
+		"chain":       c.ID,
+		"worker-type": "reindex",
+	}
+
+	// Per-chain env (same as regular indexer, but with WORKER_MODE=reindex)
+	env := make([]corev1.EnvVar, 0, len(p.env)+1)
+	for _, e := range p.env {
+		switch e.Name {
+		case "CHAIN_ID":
+			env = append(env, corev1.EnvVar{Name: "CHAIN_ID", Value: c.ID})
+		default:
+			env = append(env, e)
+		}
+	}
+	// Add WORKER_MODE to distinguish reindex workers
+	env = append(env, corev1.EnvVar{Name: "WORKER_MODE", Value: "reindex"})
+
+	// Build deployment spec (same as regular indexer)
+	replicas := c.Replicas
+
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{{
+			Name:            "indexer-reindex",
+			Image:           c.Image,
+			ImagePullPolicy: p.pullPolicy,
+			Env:             env,
+		}},
+		// Topology spread constraints for high availability
+		TopologySpreadConstraints: []corev1.TopologySpreadConstraint{
+			{
+				MaxSkew:           1,
+				TopologyKey:       "kubernetes.io/hostname",
+				WhenUnsatisfiable: corev1.ScheduleAnyway,
+				LabelSelector: &meta.LabelSelector{
+					MatchLabels: labels,
+				},
+			},
+		},
+	}
+
+	// Add image pull secrets if configured
+	if p.pullSecretName != "" {
+		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{
+			{Name: p.pullSecretName},
+		}
+	}
+
+	// Add resources if configured
+	if p.resReq != nil {
+		podSpec.Containers[0].Resources = *p.resReq
+	}
+
+	dep := &appsv1.Deployment{
+		ObjectMeta: meta.ObjectMeta{
+			Name:      name,
+			Namespace: p.ns,
+			Labels:    labels,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &meta.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: meta.ObjectMeta{Labels: labels},
+				Spec:       podSpec,
+			},
+		},
+	}
+
+	// Get or create deployment
+	existing, err := p.client.AppsV1().Deployments(p.ns).Get(ctx, name, meta.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Create new deployment
+			if _, err := p.client.AppsV1().Deployments(p.ns).Create(ctx, dep, meta.CreateOptions{}); err != nil {
+				p.Logger.Error("reindex deployment create failed", zap.String("chain_id", c.ID), zap.String("deployment", name), zap.Error(err))
+				return fmt.Errorf("create reindex deployment %s: %w", name, err)
+			}
+			p.Logger.Info("reindex deployment created",
+				zap.String("chain_id", c.ID),
+				zap.String("deployment", name),
+				zap.Int32("replicas", replicas),
+				zap.Duration("elapsed", time.Since(start)))
+			return nil
+		}
+		return fmt.Errorf("get reindex deployment %s: %w", name, err)
+	}
+
+	// Update if needed
+	if needsUpdate(existing, dep) {
+		existing.Spec = dep.Spec
+		if _, err := p.client.AppsV1().Deployments(p.ns).Update(ctx, existing, meta.UpdateOptions{}); err != nil {
+			p.Logger.Error("reindex deployment update failed", zap.String("chain_id", c.ID), zap.String("deployment", name), zap.Error(err))
+			return fmt.Errorf("update reindex deployment %s: %w", name, err)
+		}
+		p.Logger.Info("reindex deployment updated",
+			zap.String("chain_id", c.ID),
+			zap.String("deployment", name),
+			zap.Int32("replicas", replicas),
+			zap.Duration("elapsed", time.Since(start)))
+	} else {
+		p.Logger.Debug("reindex deployment unchanged", zap.String("chain_id", c.ID), zap.String("deployment", name))
+	}
+
+	return nil
+}
+
+// DeleteReindexWorker removes the reindex worker deployment for the given chain.
+func (p *K8sProvider) DeleteReindexWorker(ctx context.Context, chainID string) error {
+	start := time.Now()
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		p.Logger.Error("invalid chain ID format", zap.String("chain_id", chainID), zap.Error(parseErr))
+		return fmt.Errorf("invalid chain ID: %w", parseErr)
+	}
+	name := reindexDeploymentName(chainIDUint)
+
+	// Delete deployment
+	deletePolicy := meta.DeletePropagationForeground
+	if err := p.client.AppsV1().Deployments(p.ns).Delete(ctx, name, meta.DeleteOptions{
+		PropagationPolicy: &deletePolicy,
+	}); err != nil {
+		if !apierrors.IsNotFound(err) {
+			p.Logger.Error("reindex deployment delete failed", zap.String("chain_id", chainID), zap.String("deployment", name), zap.Error(err))
+			return fmt.Errorf("delete reindex deployment %s: %w", name, err)
+		}
+		p.Logger.Debug("reindex deployment not found (already deleted)", zap.String("chain_id", chainID), zap.String("deployment", name))
+	} else {
+		p.Logger.Info("reindex deployment deleted",
+			zap.String("chain_id", chainID),
+			zap.String("deployment", name),
+			zap.Duration("elapsed", time.Since(start)))
+	}
+
+	return nil
+}
+
 // ensureHPA ensures that the given HPA exists and is configured as expected.
 func (p *K8sProvider) ensureHPA(ctx context.Context, name string, labels map[string]string, c *Chain) error {
 	start := time.Now()
@@ -656,6 +843,15 @@ func deploymentName(chainID uint64) string {
 	return s
 }
 
+// reindexDeploymentName generates a DNS-compliant deployment name for reindex workers.
+func reindexDeploymentName(chainID uint64) string {
+	s := "canopyx-indexer-reindex-" + strconv.FormatUint(chainID, 10)
+	if len(s) > 63 {
+		s = s[:63]
+	}
+	return s
+}
+
 // needsUpdate determines whether an update is needed between the current and desired Deployment specifications.
 func needsUpdate(curr, desired *appsv1.Deployment) bool {
 	// replicas
@@ -692,4 +888,18 @@ func checksumEnv(env []corev1.EnvVar) string {
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+// parsePullPolicy parses image pull policy from string
+func parsePullPolicy(policy string) corev1.PullPolicy {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "always":
+		return corev1.PullAlways
+	case "never":
+		return corev1.PullNever
+	case "ifnotpresent":
+		return corev1.PullIfNotPresent
+	default:
+		return corev1.PullAlways // Safe default for production
+	}
 }

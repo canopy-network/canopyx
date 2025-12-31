@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+
+	"github.com/canopy-network/canopy/lib"
 )
 
 // CommitteesDataByHeight queries the /v1/query/committees-data endpoint to retrieve all committees data at a specific height.
@@ -13,16 +15,18 @@ import (
 //   - height: The block height to query committees data for (0 = latest)
 //
 // Returns:
-//   - []*RpcCommitteeData: List of all committees data at the specified height
+//   - []*lib.CommitteeData: List of all committees data at the specified height (from canopy/lib)
 //   - error: If the endpoint is unreachable or returns invalid data
-func (c *HTTPClient) CommitteesDataByHeight(ctx context.Context, height uint64) ([]*RpcCommitteeData, error) {
-	var committeesData RpcCommitteesData
+func (c *HTTPClient) CommitteesDataByHeight(ctx context.Context, height uint64) ([]*lib.CommitteeData, error) {
+	var committeesData struct {
+		List []*lib.CommitteeData `json:"list"`
+	}
 	req := QueryByHeightRequest{Height: height}
 	if err := c.doJSON(ctx, http.MethodPost, committeesDataPath, req, &committeesData); err != nil {
 		return nil, fmt.Errorf("fetch committees data at height %d: %w", height, err)
 	}
 	if committeesData.List == nil {
-		return []*RpcCommitteeData{}, nil
+		return []*lib.CommitteeData{}, nil
 	}
 	return committeesData.List, nil
 }
@@ -69,25 +73,6 @@ func (c *HTTPClient) RetiredCommitteesByHeight(ctx context.Context, height uint6
 	return committees, nil
 }
 
-// RpcPaymentPercent represents a payment recipient and their reward percentage.
-// This matches the PaymentPercents proto structure.
-type RpcPaymentPercent struct {
-	Address string `json:"address"` // Hex-encoded recipient address
-	Percent uint64 `json:"percent"` // Percentage of rewards (0-100)
-}
-
-// RpcCommitteeData represents committee data returned from the RPC.
-// This matches the CommitteeData proto structure returned by /v1/query/committee-data and /v1/query/committees-data.
-// A committee is a group of validators responsible for a specific chain.
-type RpcCommitteeData struct {
-	ChainID                uint64               `json:"chainID"`                // Unique identifier of the chain/committee
-	LastRootHeightUpdated  uint64               `json:"lastRootHeightUpdated"`  // Canopy height of most recent Certificate Results tx
-	LastChainHeightUpdated uint64               `json:"lastChainHeightUpdated"` // 3rd party chain height of most recent Certificate Results
-	PaymentPercents        []*RpcPaymentPercent `json:"paymentPercents"`        // List of reward recipients and percentages
-	NumberOfSamples        uint64               `json:"numberOfSamples"`        // Count of processed Certificate Result Transactions
-}
-
-// RpcCommitteesData represents a list of committee data returned from /v1/query/committees-data.
-type RpcCommitteesData struct {
-	List []*RpcCommitteeData `json:"list"` // List of all committees
-}
+// NOTE: RpcPaymentPercent, RpcCommitteeData, and RpcCommitteesData have been removed.
+// Use lib.PaymentPercents and lib.CommitteeData from github.com/canopy-network/canopy/lib instead.
+// These types are defined in the Canopy protocol and have proper JSON marshaling support.

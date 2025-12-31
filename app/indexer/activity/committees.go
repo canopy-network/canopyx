@@ -7,12 +7,21 @@ import (
 	"time"
 
 	"github.com/alitto/pond/v2"
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
+
+// bytesToHex converts a byte slice to a hex-encoded string.
+// Returns empty string if bytes are nil or empty.
+func bytesToHex(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%x", b)
+}
 
 // IndexCommittees indexes committee data for a given block height.
 // Committees are only inserted when their data differs from the previous height to maintain a sparse historical record.
@@ -34,8 +43,8 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 
 	// Parallel RPC fetch using shared worker pool for performance
 	var (
-		committeesAtH   []*rpc.RpcCommitteeData
-		committeesAtH1  []*rpc.RpcCommitteeData
+		committeesAtH   []*lib.CommitteeData
+		committeesAtH1  []*lib.CommitteeData
 		subsidizedAtH   []uint64
 		subsidizedAtH1  []uint64
 		retiredAtH      []uint64
@@ -83,7 +92,7 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 			return
 		}
 		if in.Height <= 1 {
-			committeesAtH1 = make([]*rpc.RpcCommitteeData, 0)
+			committeesAtH1 = make([]*lib.CommitteeData, 0)
 			return
 		}
 		committeesAtH1, committeesH1Err = cli.CommitteesDataByHeight(groupCtx, in.Height-1)
@@ -156,13 +165,13 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 	// Convert RPC committees at H to entity models with status flags
 	currentCommittees := make(map[uint64]*indexermodels.Committee)
 	for _, rpcCommittee := range committeesAtH {
-		currentCommittees[rpcCommittee.ChainID] = &indexermodels.Committee{
-			ChainID:                rpcCommittee.ChainID,
+		currentCommittees[rpcCommittee.ChainId] = &indexermodels.Committee{
+			ChainID:                rpcCommittee.ChainId,
 			LastRootHeightUpdated:  rpcCommittee.LastRootHeightUpdated,
 			LastChainHeightUpdated: rpcCommittee.LastChainHeightUpdated,
 			NumberOfSamples:        rpcCommittee.NumberOfSamples,
-			Subsidized:             subsidizedMapAtH[rpcCommittee.ChainID],
-			Retired:                retiredMapAtH[rpcCommittee.ChainID],
+			Subsidized:             subsidizedMapAtH[rpcCommittee.ChainId],
+			Retired:                retiredMapAtH[rpcCommittee.ChainId],
 			Height:                 in.Height,
 			HeightTime:             in.BlockTime,
 		}
@@ -197,13 +206,13 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 		// Convert RPC committees at H-1 to entity models
 		prevMap := make(map[uint64]*indexermodels.Committee)
 		for _, rpcCommittee := range committeesAtH1 {
-			prevMap[rpcCommittee.ChainID] = &indexermodels.Committee{
-				ChainID:                rpcCommittee.ChainID,
+			prevMap[rpcCommittee.ChainId] = &indexermodels.Committee{
+				ChainID:                rpcCommittee.ChainId,
 				LastRootHeightUpdated:  rpcCommittee.LastRootHeightUpdated,
 				LastChainHeightUpdated: rpcCommittee.LastChainHeightUpdated,
 				NumberOfSamples:        rpcCommittee.NumberOfSamples,
-				Subsidized:             subsidizedMapAtH1[rpcCommittee.ChainID],
-				Retired:                retiredMapAtH1[rpcCommittee.ChainID],
+				Subsidized:             subsidizedMapAtH1[rpcCommittee.ChainId],
+				Retired:                retiredMapAtH1[rpcCommittee.ChainId],
 			}
 		}
 
@@ -251,8 +260,8 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 	for _, rpcCommittee := range committeesAtH {
 		for _, pp := range rpcCommittee.PaymentPercents {
 			payments = append(payments, &indexermodels.CommitteePayment{
-				CommitteeID: rpcCommittee.ChainID,
-				Address:     pp.Address,
+				CommitteeID: rpcCommittee.ChainId,
+				Address:     bytesToHex(pp.Address),
 				Percent:     pp.Percent,
 				Height:      in.Height,
 				HeightTime:  in.BlockTime,

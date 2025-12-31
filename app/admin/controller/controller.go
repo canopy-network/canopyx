@@ -97,6 +97,17 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.Handle("/api/chains/{id}/headscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerHeadScan))).Methods(http.MethodPost)
 	r.Handle("/api/chains/{id}/gapscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerGapScan))).Methods(http.MethodPost)
 	r.Handle("/api/chains/{id}/reindex", c.RequireAuth(http.HandlerFunc(c.HandleReindex))).Methods(http.MethodPost)
+	r.Handle("/api/chains/{id}/recover", c.RequireAuth(http.HandlerFunc(c.HandleChainRecover))).Methods(http.MethodPost)
+
+	// LP Snapshot Schedule Management
+	r.Handle("/api/chains/{id}/lp-schedule", c.RequireAuth(http.HandlerFunc(c.HandleCreateLPSnapshotSchedule))).Methods(http.MethodPost)
+	r.Handle("/api/chains/{id}/lp-schedule/pause", c.RequireAuth(http.HandlerFunc(c.HandlePauseLPSnapshotSchedule))).Methods(http.MethodPost)
+	r.Handle("/api/chains/{id}/lp-schedule/unpause", c.RequireAuth(http.HandlerFunc(c.HandleUnpauseLPSnapshotSchedule))).Methods(http.MethodPost)
+	r.Handle("/api/chains/{id}/lp-schedule", c.RequireAuth(http.HandlerFunc(c.HandleDeleteLPSnapshotSchedule))).Methods(http.MethodDelete)
+	r.Handle("/api/chains/{id}/lp-snapshots/backfill", c.RequireAuth(http.HandlerFunc(c.HandleTriggerLPSnapshotBackfill))).Methods(http.MethodPost)
+
+	// LP Snapshot Query
+	r.Handle("/api/lp-snapshots", c.RequireAuth(http.HandlerFunc(c.HandleQueryLPSnapshots))).Methods(http.MethodGet)
 
 	// Schema introspection endpoints (migrated from query service)
 	r.Handle("/api/entities", c.RequireAuth(http.HandlerFunc(c.HandleEntities))).Methods(http.MethodGet)
@@ -111,7 +122,7 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.Handle("/api/chains/{id}/entity/{entity}/schema", c.RequireAuth(http.HandlerFunc(c.HandleEntitySchema))).Methods(http.MethodGet)
 
 	// WebSocket endpoint for real-time events (migrated from query service)
-	r.HandleFunc("/api/ws", c.HandleWebSocket).Methods(http.MethodGet)
+	r.Handle("/api/ws", c.RequireAuth(http.HandlerFunc(c.HandleWebSocket))).Methods(http.MethodGet)
 
 	// Cross-chain API endpoints
 	r.Handle("/api/crosschain/health", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainHealth))).Methods(http.MethodGet)

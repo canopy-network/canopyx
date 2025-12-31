@@ -6,6 +6,16 @@ import (
 
 const ChainsTableName = "chains"
 
+const (
+	ChainStatusHealthy     = "healthy"
+	ChainStatusWarning     = "warning"
+	ChainStatusDegraded    = "degraded"
+	ChainStatusFailed      = "failed"
+	ChainStatusCritical    = "critical"
+	ChainStatusUnreachable = "unreachable"
+	ChainStatusUnknown     = "unknown"
+)
+
 // ChainColumns defines the schema for the chains table.
 var ChainColumns = []ColumnDef{
 	{Name: "chain_id", Type: "UInt64"},
@@ -16,6 +26,9 @@ var ChainColumns = []ColumnDef{
 	{Name: "image", Type: "String"},
 	{Name: "min_replicas", Type: "UInt16"},
 	{Name: "max_replicas", Type: "UInt16"},
+	{Name: "reindex_min_replicas", Type: "UInt16"},
+	{Name: "reindex_max_replicas", Type: "UInt16"},
+	{Name: "reindex_scale_threshold", Type: "UInt32"},
 	{Name: "notes", Type: "String"},
 	{Name: "created_at", Type: "DateTime"},
 	{Name: "updated_at", Type: "DateTime"},
@@ -33,17 +46,20 @@ var ChainColumns = []ColumnDef{
 }
 
 type Chain struct {
-	ChainID      uint64    `json:"chain_id" ch:"chain_id"` // ORDER BY set via builder
-	ChainName    string    `json:"chain_name" ch:"chain_name"`
-	RPCEndpoints []string  `json:"rpc_endpoints" ch:"rpc_endpoints"` // []string -> Array(String)
-	Paused       uint8     `json:"paused" ch:"paused"`
-	Deleted      uint8     `json:"deleted" ch:"deleted"`
-	Image        string    `json:"image" ch:"image"`
-	MinReplicas  uint16    `json:"min_replicas" ch:"min_replicas"`
-	MaxReplicas  uint16    `json:"max_replicas" ch:"max_replicas"`
-	Notes        string    `json:"notes,omitempty" ch:"notes"`
-	CreatedAt    time.Time `json:"created_at" ch:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at" ch:"updated_at"`
+	ChainID               uint64    `json:"chain_id" ch:"chain_id"` // ORDER BY set via builder
+	ChainName             string    `json:"chain_name" ch:"chain_name"`
+	RPCEndpoints          []string  `json:"rpc_endpoints" ch:"rpc_endpoints"` // []string -> Array(String)
+	Paused                uint8     `json:"paused" ch:"paused"`
+	Deleted               uint8     `json:"deleted" ch:"deleted"`
+	Image                 string    `json:"image" ch:"image"`
+	MinReplicas           uint16    `json:"min_replicas" ch:"min_replicas"`
+	MaxReplicas           uint16    `json:"max_replicas" ch:"max_replicas"`
+	ReindexMinReplicas    uint16    `json:"reindex_min_replicas" ch:"reindex_min_replicas"`
+	ReindexMaxReplicas    uint16    `json:"reindex_max_replicas" ch:"reindex_max_replicas"`
+	ReindexScaleThreshold uint32    `json:"reindex_scale_threshold" ch:"reindex_scale_threshold"`
+	Notes                 string    `json:"notes,omitempty" ch:"notes"`
+	CreatedAt             time.Time `json:"created_at" ch:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at" ch:"updated_at"`
 
 	// Health Status Fields - Updated by various subsystems
 	// RPC Health: Updated by headscan workflow

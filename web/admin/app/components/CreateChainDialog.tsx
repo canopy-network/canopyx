@@ -10,6 +10,9 @@ type CreateChainFormData = {
   rpc_endpoints: string[]
   min_replicas: number
   max_replicas: number
+  reindex_min_replicas: number
+  reindex_max_replicas: number
+  reindex_scale_threshold: number
   notes?: string
 }
 
@@ -31,7 +34,10 @@ export default function CreateChainDialog({
   const [image, setImage] = useState('')
   const [rpcEndpoints, setRpcEndpoints] = useState('')
   const [minReplicas, setMinReplicas] = useState(1)
-  const [maxReplicas, setMaxReplicas] = useState(3)
+  const [maxReplicas, setMaxReplicas] = useState(1)  // Changed default from 3 to 1
+  const [reindexMinReplicas, setReindexMinReplicas] = useState(1)
+  const [reindexMaxReplicas, setReindexMaxReplicas] = useState(3)
+  const [reindexScaleThreshold, setReindexScaleThreshold] = useState(100)
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
   const prevOpenRef = useRef(false)
@@ -39,8 +45,8 @@ export default function CreateChainDialog({
   // Set defaults only when dialog transitions from closed to open
   useEffect(() => {
     if (open && !prevOpenRef.current) {
-      // Dialog just opened
-      if (!image) setImage('localhost:5001/canopyx-indexer:dev')
+      // Dialog just opened - set defaults
+      if (!image) setImage('canopynetwork/canopyx-indexer:latest')  // Changed to public image
       if (!rpcEndpoints) setRpcEndpoints('https://node1.canopy.us.nodefleet.net/rpc')
     }
     prevOpenRef.current = open
@@ -50,16 +56,7 @@ export default function CreateChainDialog({
     e.preventDefault()
     setError('')
 
-    // Validate required fields
-    if (!chainName.trim()) {
-      setError('Chain name is required')
-      return
-    }
-    if (!image.trim()) {
-      setError('Container image is required')
-      return
-    }
-
+    // RPC Endpoints validation (ONLY REQUIRED FIELD)
     const endpoints = rpcEndpoints
       .split('\n')
       .map((s) => s.trim())
@@ -70,6 +67,7 @@ export default function CreateChainDialog({
       return
     }
 
+    // Min/Max Replicas validation
     if (minReplicas < 1) {
       setError('Minimum replicas must be at least 1')
       return
@@ -80,22 +78,41 @@ export default function CreateChainDialog({
       return
     }
 
-    // Convert chain_id: empty string -> 0 (auto-detect), or parse as number
-    const chainIdNum = chainId.trim() === '' ? 0 : Number(chainId)
+    // Reindex Replicas validation
+    if (reindexMinReplicas < 1) {
+      setError('Reindex minimum replicas must be at least 1')
+      return
+    }
 
+    if (reindexMaxReplicas < reindexMinReplicas) {
+      setError('Reindex maximum replicas must be greater than or equal to reindex minimum replicas')
+      return
+    }
+
+    if (reindexScaleThreshold < 1) {
+      setError('Reindex scale threshold must be at least 1')
+      return
+    }
+
+    // Chain ID validation (optional)
+    const chainIdNum = chainId.trim() === '' ? 0 : Number(chainId)
     if (isNaN(chainIdNum) || chainIdNum < 0) {
       setError('Chain ID must be a positive number or empty for auto-detection')
       return
     }
 
     try {
+      // Build payload - send empty strings for optional fields (backend will apply defaults)
       await onSubmit({
         chain_id: chainIdNum,
-        chain_name: chainName,
-        image,
+        chain_name: chainName.trim() || '',  // Empty string if not provided
+        image: image.trim() || '',  // Empty string if not provided
         rpc_endpoints: endpoints,
         min_replicas: minReplicas,
         max_replicas: maxReplicas,
+        reindex_min_replicas: reindexMinReplicas,
+        reindex_max_replicas: reindexMaxReplicas,
+        reindex_scale_threshold: reindexScaleThreshold,
         notes: notes.trim() || undefined,
       })
     } catch (err: any) {
@@ -141,7 +158,8 @@ export default function CreateChainDialog({
 
               <div>
                 <label htmlFor="chain_name" className="mb-2 block text-sm font-medium text-slate-300">
-                  Chain Name <span className="text-rose-400">*</span>
+                  Chain Name
+                  <span className="ml-2 text-xs font-normal text-slate-500">(Optional - defaults to &quot;Chain {'{id}'}&quot;)</span>
                 </label>
                 <input
                   id="chain_name"
@@ -149,8 +167,7 @@ export default function CreateChainDialog({
                   value={chainName}
                   onChange={(e) => setChainName(e.target.value)}
                   className="input"
-                  placeholder="e.g., Ethereum Mainnet"
-                  required
+                  placeholder="Leave empty to use default: Chain {id}"
                 />
                 <p className="mt-1 text-xs text-slate-500">Display name for this chain</p>
               </div>
@@ -158,7 +175,8 @@ export default function CreateChainDialog({
 
             <div>
               <label htmlFor="image" className="mb-2 block text-sm font-medium text-slate-300">
-                Container Image <span className="text-rose-400">*</span>
+                Container Image
+                <span className="ml-2 text-xs font-normal text-slate-500">(Optional - defaults to canopynetwork/canopyx-indexer:latest)</span>
               </label>
               <input
                 id="image"
@@ -166,8 +184,7 @@ export default function CreateChainDialog({
                 value={image}
                 onChange={(e) => setImage(e.target.value)}
                 className="input"
-                placeholder="e.g., ghcr.io/myorg/indexer:latest"
-                required
+                placeholder="canopynetwork/canopyx-indexer:latest"
               />
               <p className="mt-1 text-xs text-slate-500">
                 Docker/container image for the indexer worker
@@ -192,35 +209,88 @@ export default function CreateChainDialog({
               </p>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label htmlFor="min_replicas" className="mb-2 block text-sm font-medium text-slate-300">
-                  Min Replicas
-                </label>
-                <input
-                  id="min_replicas"
-                  type="number"
-                  min={1}
-                  value={minReplicas}
-                  onChange={(e) => setMinReplicas(Number(e.target.value))}
-                  className="input"
-                />
-                <p className="mt-1 text-xs text-slate-500">Minimum number of worker replicas</p>
-              </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-300 mb-3">Regular Indexing</h3>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label htmlFor="min_replicas" className="mb-2 block text-sm font-medium text-slate-300">
+                    Min Replicas
+                  </label>
+                  <input
+                    id="min_replicas"
+                    type="number"
+                    min={1}
+                    value={minReplicas}
+                    onChange={(e) => setMinReplicas(Number(e.target.value))}
+                    className="input"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Minimum number of worker replicas</p>
+                </div>
 
-              <div>
-                <label htmlFor="max_replicas" className="mb-2 block text-sm font-medium text-slate-300">
-                  Max Replicas
-                </label>
-                <input
-                  id="max_replicas"
-                  type="number"
-                  min={minReplicas}
-                  value={maxReplicas}
-                  onChange={(e) => setMaxReplicas(Number(e.target.value))}
-                  className="input"
-                />
-                <p className="mt-1 text-xs text-slate-500">Maximum number of worker replicas</p>
+                <div>
+                  <label htmlFor="max_replicas" className="mb-2 block text-sm font-medium text-slate-300">
+                    Max Replicas
+                  </label>
+                  <input
+                    id="max_replicas"
+                    type="number"
+                    min={minReplicas}
+                    value={maxReplicas}
+                    onChange={(e) => setMaxReplicas(Number(e.target.value))}
+                    className="input"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Maximum number of worker replicas</p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-slate-300 mb-3">Reindex Settings</h3>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <label htmlFor="reindex_min_replicas" className="mb-2 block text-sm font-medium text-slate-300">
+                    Min Replicas
+                  </label>
+                  <input
+                    id="reindex_min_replicas"
+                    type="number"
+                    min={1}
+                    value={reindexMinReplicas}
+                    onChange={(e) => setReindexMinReplicas(Number(e.target.value))}
+                    className="input"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Min replicas during reindex</p>
+                </div>
+
+                <div>
+                  <label htmlFor="reindex_max_replicas" className="mb-2 block text-sm font-medium text-slate-300">
+                    Max Replicas
+                  </label>
+                  <input
+                    id="reindex_max_replicas"
+                    type="number"
+                    min={reindexMinReplicas}
+                    value={reindexMaxReplicas}
+                    onChange={(e) => setReindexMaxReplicas(Number(e.target.value))}
+                    className="input"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Max replicas during reindex</p>
+                </div>
+
+                <div>
+                  <label htmlFor="reindex_scale_threshold" className="mb-2 block text-sm font-medium text-slate-300">
+                    Scale Threshold
+                  </label>
+                  <input
+                    id="reindex_scale_threshold"
+                    type="number"
+                    min={1}
+                    value={reindexScaleThreshold}
+                    onChange={(e) => setReindexScaleThreshold(Number(e.target.value))}
+                    className="input"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Queue depth to trigger scaling</p>
+                </div>
               </div>
             </div>
 

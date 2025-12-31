@@ -11,10 +11,11 @@ const AccountsStagingTableName = AccountsProductionTableName + entities.StagingS
 
 // AccountColumns defines the schema for the accounts table.
 // This is the single source of truth - used by both chain tables and cross-chain tables.
-// Note: Rewards and Slashes fields exist in the struct but are NOT in the database yet.
 var AccountColumns = []ColumnDef{
 	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "rewards", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "slashes", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
 	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
 }

@@ -39,5 +39,17 @@ func (p *FakeProvider) GetDeploymentHealth(_ context.Context, chainID string) (s
 	return "healthy", "fake provider deployment always healthy", nil
 }
 
+// EnsureReindexWorker is a no-op.
+func (p *FakeProvider) EnsureReindexWorker(_ context.Context, c *Chain) error {
+	log.Printf("[controller/Provider=fake] ensure reindex worker chain=%s replicas=%d", c.ID, c.Replicas)
+	return nil
+}
+
+// DeleteReindexWorker is a no-op.
+func (p *FakeProvider) DeleteReindexWorker(_ context.Context, chainID string) error {
+	log.Printf("[controller/Provider=fake] delete reindex worker chain=%s", chainID)
+	return nil
+}
+
 // Close is a no-op.
 func (p *FakeProvider) Close() error { return nil }

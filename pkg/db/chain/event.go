@@ -10,24 +10,28 @@ import (
 
 // initEvents creates the events table and its staging table with ZSTD compression.
 // Uses ReplacingMergeTree with height as the deduplication key.
+// ORDER BY (height, event_type, ...) for optimal GetEventsByTypeAndHeight queries.
 func (db *DB) initEvents(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.EventColumns)
 
+	// Production and staging both use (height, event_type) as first two columns
+	// This optimizes the common query: WHERE height = ? AND event_type IN (...)
+	// Used by all indexer activities that call GetEventsByTypeAndHeight
 	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (height, chain_id, address, reference, event_type)
+		) ENGINE = %s
+		ORDER BY (height, event_type, chain_id, address, reference)
 	`
 
 	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsProductionTableName, schemaSQL)
+	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.EventsProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.EventsProductionTableName, err)
 	}
 
 	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsStagingTableName, schemaSQL)
+	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.EventsStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.EventsStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.EventsStagingTableName, err)
 	}
@@ -42,8 +46,13 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 		return nil
 	}
 
-	stagingTable := fmt.Sprintf("%s.events_staging", db.Name)
-	query := fmt.Sprintf(`INSERT INTO %s (height, chain_id, address, reference, event_type, amount, sold_amount, bought_amount, local_amount, remote_amount, success, local_origin, order_id, points_received, points_burned, msg, height_time) VALUES`, stagingTable)
+	query := fmt.Sprintf(`INSERT INTO "%s"."events_staging" (
+		height, chain_id, address, reference, event_type, block_height, block_hash,
+		amount, sold_amount, bought_amount, local_amount, remote_amount,
+		success, local_origin, order_id, points_received, points_burned,
+		data, seller_receive_address, buyer_send_address, sellers_send_address,
+		msg, height_time
+	) VALUES`, db.Name)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err
@@ -59,6 +68,8 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 			event.Address,
 			event.Reference,
 			event.EventType,
+			event.BlockHeight,
+			event.BlockHash,
 			event.Amount,
 			event.SoldAmount,
 			event.BoughtAmount,
@@ -69,6 +80,10 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 			event.OrderID,
 			event.PointsReceived,
 			event.PointsBurned,
+			event.Data,
+			event.SellerReceiveAddress,
+			event.BuyerSendAddress,
+			event.SellersSendAddress,
 			event.Msg,
 			event.HeightTime,
 		)
@@ -116,9 +131,10 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, stagi
 
 	query := fmt.Sprintf(`
 		SELECT
-			height, chain_id, address, reference, event_type,
+			height, chain_id, address, reference, event_type, block_height, block_hash,
 			amount, sold_amount, bought_amount, local_amount, remote_amount,
 			success, local_origin, order_id, points_received, points_burned,
+			data, seller_receive_address, buyer_send_address, sellers_send_address,
 			msg, height_time
 		FROM "%s"."%s" FINAL
 		WHERE height = ? AND %s
@@ -147,6 +163,8 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, stagi
 			&event.Address,
 			&event.Reference,
 			&event.EventType,
+			&event.BlockHeight,
+			&event.BlockHash,
 			&event.Amount,
 			&event.SoldAmount,
 			&event.BoughtAmount,
@@ -157,6 +175,10 @@ func (db *DB) GetEventsByTypeAndHeight(ctx context.Context, height uint64, stagi
 			&event.OrderID,
 			&event.PointsReceived,
 			&event.PointsBurned,
+			&event.Data,
+			&event.SellerReceiveAddress,
+			&event.BuyerSendAddress,
+			&event.SellersSendAddress,
 			&event.Msg,
 			&event.HeightTime,
 		); err != nil {

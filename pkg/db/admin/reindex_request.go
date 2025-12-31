@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db/models/admin"
+	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
+	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
 )
 
 // ReindexWorkflowInfo contains workflow execution information for a reindex request.
@@ -18,18 +19,25 @@ type ReindexWorkflowInfo struct {
 }
 
 // initReindexRequests creates the reindex request log table.
-// Engine: ReplacingMergeTree(requested_at)
+// Engine: ReplicatedReplacingMergeTree(requested_at)
 // Order: (chain_id, requested_at, height)
 func (db *DB) initReindexRequests(ctx context.Context) error {
-	schemaSQL := admin.ColumnsToSchemaSQL(admin.ReindexRequestColumns)
+	schemaSQL := adminmodels.ColumnsToSchemaSQL(adminmodels.ReindexRequestColumns)
+	engine := clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "requested_at")
 
+	// Use a fully qualified table name to avoid ambiguity
 	query := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS reindex_requests (
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
 			%s
-		) ENGINE = ReplacingMergeTree(requested_at)
+		) ENGINE = %s
 		ORDER BY (chain_id, requested_at, height)
-	`, schemaSQL)
-	return db.Db.Exec(ctx, query)
+	`, db.Name, adminmodels.ReindexRequestsTableName, db.OnCluster(), schemaSQL, engine)
+
+	err := db.Db.Exec(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to create reindex_requests table: %w", err)
+	}
+	return nil
 }
 
 // RecordReindexRequests logs a set of reindex requests for auditing purposes.
@@ -38,13 +46,13 @@ func (db *DB) RecordReindexRequests(ctx context.Context, chainID uint64, request
 		return nil
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	for _, h := range heights {
-		req := &admin.ReindexRequest{
+		req := &adminmodels.ReindexRequest{
 			ChainID:     chainID,
 			Height:      h,
 			RequestedBy: requestedBy,
-			Status:      "queued",
+			Status:      adminmodels.ReindexRequestStatusQueued,
 			RequestedAt: now,
 		}
 		if err := db.insertReindexRequest(ctx, req); err != nil {
@@ -55,11 +63,11 @@ func (db *DB) RecordReindexRequests(ctx context.Context, chainID uint64, request
 }
 
 // insertReindexRequest inserts a new reindex request record.
-func (db *DB) insertReindexRequest(ctx context.Context, req *admin.ReindexRequest) error {
-	query := `
-		INSERT INTO reindex_requests (chain_id, height, requested_by, status, workflow_id, run_id, requested_at)
+func (db *DB) insertReindexRequest(ctx context.Context, req *adminmodels.ReindexRequest) error {
+	query := fmt.Sprintf(`
+		INSERT INTO "%s"."%s" (chain_id, height, requested_by, status, workflow_id, run_id, requested_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`
+	`, db.Name, adminmodels.ReindexRequestsTableName)
 	return db.Db.Exec(ctx, query,
 		req.ChainID,
 		req.Height,
@@ -79,11 +87,11 @@ func (db *DB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainID uin
 
 	now := time.Now()
 	for _, info := range infos {
-		req := &admin.ReindexRequest{
+		req := &adminmodels.ReindexRequest{
 			ChainID:     chainID,
 			Height:      info.Height,
 			RequestedBy: requestedBy,
-			Status:      "queued",
+			Status:      adminmodels.ReindexRequestStatusQueued,
 			WorkflowID:  info.WorkflowID,
 			RunID:       info.RunID,
 			RequestedAt: now,
@@ -96,22 +104,31 @@ func (db *DB) RecordReindexRequestsWithWorkflow(ctx context.Context, chainID uin
 }
 
 // ListReindexRequests returns the most recent reindex requests for a chain.
-func (db *DB) ListReindexRequests(ctx context.Context, chainID uint64, limit int) ([]admin.ReindexRequest, error) {
+func (db *DB) ListReindexRequests(ctx context.Context, chainID uint64, limit int) ([]adminmodels.ReindexRequest, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 		SELECT chain_id, height, requested_by, status, workflow_id, run_id, requested_at
-		FROM reindex_requests
+		FROM "%s"."%s" FINAL
 		WHERE chain_id = ?
 		ORDER BY requested_at DESC
 		LIMIT ?
-	`
+	`, db.Name, adminmodels.ReindexRequestsTableName)
 
-	var rows []admin.ReindexRequest
-	if err := db.Select(ctx, &rows, query, chainID, limit); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	var rows []adminmodels.ReindexRequest
+	if err := db.SelectWithFinal(ctx, &rows, query, chainID, limit); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	return rows, nil
+}
+
+// DeleteReindexRequestsForChain removes all reindex request records for a chain.
+func (db *DB) DeleteReindexRequestsForChain(ctx context.Context, chainID uint64) error {
+	query := fmt.Sprintf(
+		`DELETE FROM "%s"."%s" %s WHERE chain_id = ?`,
+		db.Name, adminmodels.ReindexRequestsTableName, db.OnCluster(),
+	)
+	return db.Db.Exec(ctx, query, chainID)
 }

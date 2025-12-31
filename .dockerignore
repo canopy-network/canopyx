@@ -4,6 +4,8 @@
 **/*.test
 /build/
 coverage*.out
+bin
+.gocache
 
 # Node/Next
 web/admin/node_modules
@@ -17,6 +19,13 @@ web/admin/out
 .vscode
 .idea
 .DS_Store
+.github
+.claude
 
 # Misc
 *.log
+.pnpm-store
+queries
+tests
+docs
+deploy

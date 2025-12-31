@@ -10,6 +10,7 @@ import (
 	"time"
 
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
+	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/canopy-network/canopyx/pkg/utils"
@@ -70,8 +71,41 @@ func Initialize(ctx context.Context, provider Provider) (*App, error) {
 	// Scope the logger for this component
 	logger = logger.With(zap.String("component", "controller"))
 
+	// ========================================================================
+	// PARALLELISM CALCULATION - Controller Component
+	// ========================================================================
+	// Controller has minimal database usage:
+	// - Periodic reconciliation queries (list chains, update health status)
+	// - No Temporal workers or activities
+	// - Very low connection requirements
+
+	const (
+		maxConcurrentQueries = 5 // Max concurrent database queries during reconciliation
+		connectionsPerQuery  = 2 // Max ClickHouse connections per query
+		bufferConnections    = 5 // Small buffer for concurrent queries
+	)
+
+	// Calculate required connection pool sizes
+	controllerIdleConns := maxConcurrentQueries * connectionsPerQuery
+	controllerMaxConns := controllerIdleConns + bufferConnections
+
+	// Configure pool sizes for controller database (minimal throughput)
+	controllerPoolConfig := clickhouse.PoolConfig{
+		MaxOpenConns:    controllerMaxConns,
+		MaxIdleConns:    controllerIdleConns,
+		ConnMaxLifetime: clickhouse.ParseConnMaxLifetime(utils.Env("CLICKHOUSE_CONN_MAX_LIFETIME", "1h")),
+		Component:       "controller",
+	}
+
+	logger.Info("Controller parallelism configuration",
+		zap.Int("max_concurrent_queries", maxConcurrentQueries),
+		zap.Int("connections_per_query", connectionsPerQuery),
+		zap.Int("idle_connections", controllerIdleConns),
+		zap.Int("max_connections", controllerMaxConns),
+	)
+
 	indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
-	indexerDb, err := adminstore.New(ctx, logger, indexerDbName)
+	indexerDb, err := adminstore.NewWithPoolConfig(ctx, logger, indexerDbName, controllerPoolConfig)
 	if err != nil {
 		logger.Fatal("unable to initialize indexer database", zap.Error(err))
 	}
@@ -305,7 +339,7 @@ func (a *App) loadDesired(ctx context.Context) ([]Chain, error) {
 	loadStart := time.Now()
 
 	// Pull chains using DB.ListChain (uses FINAL)
-	rows, err := a.IndexerDB.ListChain(ctx)
+	rows, err := a.IndexerDB.ListChain(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +377,104 @@ func (a *App) ReconcileOnce(ctx context.Context) {
 	if err := a.Reconcile(ctx); err != nil {
 		a.Logger.Error("reconcile once failed", zap.Error(err))
 	}
+	// Also reconcile reindex workers
+	if err := a.ReconcileReindexWorkers(ctx); err != nil {
+		a.Logger.Error("reconcile reindex workers failed", zap.Error(err))
+	}
+}
+
+// ReconcileReindexWorkers manages reindex worker deployments based on queue backlog.
+// Spawns workers when reindex queue has pending work, scales to zero when idle.
+func (a *App) ReconcileReindexWorkers(ctx context.Context) error {
+	chains, err := a.IndexerDB.ListChain(ctx, false)
+	if err != nil {
+		a.Logger.Error("failed to list chains for reindex reconciliation", zap.Error(err))
+		return err
+	}
+
+	for _, chain := range chains {
+		if chain.Deleted != 0 || chain.Paused != 0 {
+			// Delete reindex worker if chain is deleted or paused
+			_ = a.Provider.DeleteReindexWorker(ctx, strconv.FormatUint(chain.ChainID, 10))
+			continue
+		}
+
+		// Check reindex queue depth
+		reindexQueue := a.Temporal.GetIndexerReindexQueue(chain.ChainID)
+		pendingWorkflowTasks, pendingActivityTasks, _, _, err := a.Temporal.GetQueueStats(ctx, reindexQueue)
+		if err != nil {
+			a.Logger.Warn("failed to get reindex queue stats",
+				zap.Uint64("chain_id", chain.ChainID),
+				zap.String("queue", reindexQueue),
+				zap.Error(err))
+			continue
+		}
+
+		// Calculate total backlog (workflow + activity tasks)
+		backlog := pendingWorkflowTasks + pendingActivityTasks
+
+		// Get per-chain reindex settings with defaults
+		minReplicas := int32(chain.ReindexMinReplicas)
+		if minReplicas <= 0 {
+			minReplicas = 1 // Default: 1 replica minimum
+		}
+		maxReplicas := int32(chain.ReindexMaxReplicas)
+		if maxReplicas < minReplicas {
+			maxReplicas = 3 // Default: 3 replicas maximum
+		}
+		scaleThreshold := int64(chain.ReindexScaleThreshold)
+		if scaleThreshold <= 0 {
+			scaleThreshold = 5000 // Default: 5000 tasks threshold
+		}
+
+		if backlog > 0 {
+			// Calculate replicas based on backlog and per-chain configuration
+			replicas := minReplicas
+			if backlog > scaleThreshold*2 {
+				replicas = maxReplicas
+			} else if backlog > scaleThreshold {
+				// Scale up gradually between min and max
+				if minReplicas+1 <= maxReplicas {
+					replicas = minReplicas + 1
+				}
+			}
+
+			// Ensure reindex worker exists with calculated replicas
+			reindexChain := &Chain{
+				ID:          strconv.FormatUint(chain.ChainID, 10),
+				Image:       chain.Image,
+				Replicas:    replicas,
+				MinReplicas: minReplicas,
+				MaxReplicas: maxReplicas,
+			}
+
+			if err := a.Provider.EnsureReindexWorker(ctx, reindexChain); err != nil {
+				a.Logger.Error("failed to ensure reindex worker",
+					zap.Uint64("chain_id", chain.ChainID),
+					zap.Int64("backlog", backlog),
+					zap.Int32("replicas", replicas),
+					zap.Error(err))
+				continue
+			}
+
+			a.Logger.Info("reindex worker ensured",
+				zap.Uint64("chain_id", chain.ChainID),
+				zap.String("queue", reindexQueue),
+				zap.Int64("backlog", backlog),
+				zap.Int32("replicas", replicas))
+		} else {
+			// No backlog - scale to zero (delete deployment)
+			if err := a.Provider.DeleteReindexWorker(ctx, strconv.FormatUint(chain.ChainID, 10)); err != nil {
+				a.Logger.Warn("failed to delete idle reindex worker",
+					zap.Uint64("chain_id", chain.ChainID),
+					zap.Error(err))
+			} else {
+				a.Logger.Debug("idle reindex worker deleted", zap.Uint64("chain_id", chain.ChainID))
+			}
+		}
+	}
+
+	return nil
 }
 
 // TODO: expose a health probe in the right way (check db connection, cron, etc)

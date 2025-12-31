@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -98,6 +99,7 @@ func (c *Controller) IssueSession(w http.ResponseWriter, username string) {
 		Value:    ss,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   os.Getenv("ENVIRONMENT") == "production",
 		SameSite: http.SameSiteStrictMode,
 		// Persist across admin restarts:
 		MaxAge: int(ttl.Seconds()),

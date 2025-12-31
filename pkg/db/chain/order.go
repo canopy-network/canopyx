@@ -13,21 +13,25 @@ import (
 // The staging table has the same schema but no TTL (TTL only on production).
 func (db *DB) initOrders(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.OrderColumns)
-	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (order_id, height)
-	`
 
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.OrdersProductionTableName, schemaSQL)
+	// Production table: ORDER BY (order_id, height) for efficient order_id lookups
+	productionQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (order_id, height)
+	`, db.Name, indexermodels.OrdersProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.OrdersProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.OrdersProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.OrdersStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, order_id) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, order_id)
+	`, db.Name, indexermodels.OrdersStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.OrdersStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.OrdersStagingTableName, err)
 	}
@@ -41,7 +45,7 @@ func (db *DB) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.O
 		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s".orders_staging (order_id, height, height_time, committee, data, amount_for_sale, requested_amount, seller_receive_address, buyer_send_address, buyer_receive_address, buyer_chain_deadline, sellers_send_address, status) VALUES`, db.Name)
+	query := fmt.Sprintf(`INSERT INTO "%s"."orders_staging" (order_id, height, height_time, committee, data, amount_for_sale, requested_amount, seller_receive_address, buyer_send_address, buyer_receive_address, buyer_chain_deadline, sellers_send_address, status) VALUES`, db.Name)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err
@@ -84,15 +88,15 @@ func (db *DB) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.O
 // Query usage: SELECT order_id, created_height FROM order_created_height WHERE order_id = ?
 func (db *DB) initOrderCreatedHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."order_created_height"
-		ENGINE = AggregatingMergeTree()
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."order_created_height" %s
+		ENGINE = %s
 		ORDER BY order_id
 		AS SELECT
 			order_id,
 			min(height) as created_height
 		FROM "%s"."orders"
 		GROUP BY order_id
-	`, db.Name, db.Name)
+	`, db.Name, db.OnCluster(), db.Engine("order_created_height", "ReplacingMergeTree", "created_height"), db.Name)
 
 	return db.Exec(ctx, query)
 }

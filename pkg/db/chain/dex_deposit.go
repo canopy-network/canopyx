@@ -13,21 +13,25 @@ import (
 // The staging table has the same schema but no TTL (TTL only on production).
 func (db *DB) initDexDeposits(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.DexDepositColumns)
-	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (order_id, height)
-	`
 
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexDepositsProductionTableName, schemaSQL)
+	// Production table: ORDER BY (order_id, height) for efficient order_id lookups
+	productionQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (order_id, height)
+	`, db.Name, indexermodels.DexDepositsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.DexDepositsProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexDepositsProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.DexDepositsStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, order_id) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, order_id)
+	`, db.Name, indexermodels.DexDepositsStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.DexDepositsStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.DexDepositsStagingTableName, err)
 	}
@@ -41,7 +45,7 @@ func (db *DB) InsertDexDepositsStaging(ctx context.Context, deposits []*indexerm
 		return nil
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s".dex_deposits_staging (
+	query := fmt.Sprintf(`INSERT INTO "%s"."dex_deposits_staging" (
 		order_id, height, height_time, committee, address,
 		amount, state, local_origin, points_received
 	) VALUES`, db.Name)
@@ -84,15 +88,15 @@ func (db *DB) InsertDexDepositsStaging(ctx context.Context, deposits []*indexerm
 // Query usage: SELECT order_id, created_height FROM dex_deposit_created_height WHERE order_id = ?
 func (db *DB) initDexDepositCreatedHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."dex_deposit_created_height"
-		ENGINE = AggregatingMergeTree()
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."dex_deposit_created_height" %s
+		ENGINE = %s
 		ORDER BY order_id
 		AS SELECT
 			order_id,
 			min(height) as created_height
 		FROM "%s"."dex_deposits"
 		GROUP BY order_id
-	`, db.Name, db.Name)
+	`, db.Name, db.OnCluster(), db.Engine("dex_deposit_created_height", "ReplacingMergeTree", "created_height"), db.Name)
 
 	return db.Exec(ctx, query)
 }

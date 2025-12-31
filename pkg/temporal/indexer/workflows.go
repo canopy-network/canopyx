@@ -2,10 +2,13 @@ package indexer
 
 // Indexer Workflow names
 const (
-	IndexBlockWorkflowName     = "IndexBlockWorkflow"
-	HeadScanWorkflowName       = "HeadScanWorkflow"
-	GapScanWorkflowName        = "GapScanWorkflow"
-	SchedulerWorkflowName      = "SchedulerWorkflow"
-	CleanupStagingWorkflowName = "CleanupStagingWorkflow"
-	PollSnapshotWorkflowName   = "PollSnapshotWorkflow"
+	IndexBlockWorkflowName       = "IndexBlockWorkflow"
+	HeadScanWorkflowName         = "HeadScanWorkflow"
+	GapScanWorkflowName          = "GapScanWorkflow"
+	ReindexSchedulerWorkflowName = "ReindexSchedulerWorkflow"
+	SchedulerWorkflowName        = "SchedulerWorkflow"
+	CleanupStagingWorkflowName   = "CleanupStagingWorkflow"
+	PollSnapshotWorkflowName     = "PollSnapshotWorkflow"
+	ProposalSnapshotWorkflowName = "ProposalSnapshotWorkflow"
+	LPSnapshotWorkflowName       = "LPSnapshotWorkflow"
 )

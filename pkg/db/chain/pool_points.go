@@ -13,21 +13,25 @@ import (
 // Uses ReplacingMergeTree(height) to deduplicate and keep the latest state at each height.
 func (db *DB) initPoolPointsByHolder(ctx context.Context) error {
 	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PoolPointsByHolderColumns)
-	queryTemplate := `
-        CREATE TABLE IF NOT EXISTS "%s"."%s" (
-			%s
-		) ENGINE = ReplacingMergeTree(height)
-		ORDER BY (address, pool_id, height)
-	`
 
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolPointsByHolderProductionTableName, schemaSQL)
+	// Production table: ORDER BY (address, pool_id, height) for efficient address+pool_id lookups
+	productionQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (address, pool_id, height)
+	`, db.Name, indexermodels.PoolPointsByHolderProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.PoolPointsByHolderProductionTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, productionQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderProductionTableName, err)
 	}
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.PoolPointsByHolderStagingTableName, schemaSQL)
+	// Staging table: ORDER BY (height, address, pool_id) for efficient cleanup/promotion WHERE height = ?
+	stagingQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+			%s
+		) ENGINE = %s
+		ORDER BY (height, address, pool_id)
+	`, db.Name, indexermodels.PoolPointsByHolderStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.PoolPointsByHolderStagingTableName, "ReplacingMergeTree", "height"))
 	if err := db.Exec(ctx, stagingQuery); err != nil {
 		return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderStagingTableName, err)
 	}
@@ -43,8 +47,8 @@ func (db *DB) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*in
 	}
 
 	query := fmt.Sprintf(
-		`INSERT INTO %s (address, pool_id, height, height_time, committee, points, liquidity_pool_points, liquidity_pool_id) VALUES`,
-		indexermodels.PoolPointsByHolderStagingTableName,
+		`INSERT INTO "%s"."%s" (address, pool_id, height, height_time, committee, points, liquidity_pool_points, liquidity_pool_id) VALUES`,
+		db.Name, indexermodels.PoolPointsByHolderStagingTableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
@@ -82,8 +86,8 @@ func (db *DB) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*in
 // Query usage: SELECT address, pool_id, created_height FROM pool_points_created_height WHERE address = ? AND pool_id = ?
 func (db *DB) initPoolPointsCreatedHeightView(ctx context.Context) error {
 	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."pool_points_created_height"
-		ENGINE = AggregatingMergeTree()
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."pool_points_created_height" %s
+		ENGINE = %s
 		ORDER BY (address, pool_id)
 		AS SELECT
 			address,
@@ -91,7 +95,7 @@ func (db *DB) initPoolPointsCreatedHeightView(ctx context.Context) error {
 			min(height) as created_height
 		FROM "%s"."pool_points_by_holder"
 		GROUP BY address, pool_id
-	`, db.Name, db.Name)
+	`, db.Name, db.OnCluster(), db.Engine("pool_points_created_height", "AggregatingMergeTree", ""), db.Name)
 
 	return db.Exec(ctx, query)
 }

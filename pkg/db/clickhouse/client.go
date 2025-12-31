@@ -18,13 +18,29 @@ import (
 )
 
 type Client struct {
-	Logger *zap.Logger
-	Db     driver.Conn
+	Logger         *zap.Logger
+	Db             driver.Conn
+	TargetDatabase string // Target database name (may differ from the current connection)
 }
+
+// PoolConfig defines connection pool settings for a specific component
+type PoolConfig struct {
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	Component       string // For logging/debugging
+}
+
+const (
+	MergeTree            = "MergeTree"
+	AggregatingMergeTree = "AggregatingMergeTree"
+	ReplacingMergeTree   = "ReplacingMergeTree"
+)
 
 // New initializes and returns a new database client for ClickHouse with provided context and logger.
 // Includes connection pooling optimizations for high-throughput workloads.
-func New(ctx context.Context, logger *zap.Logger, dbName string) (client Client, e error) {
+// Accepts optional poolConfig parameter for component-specific pool sizing.
+func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*PoolConfig) (client Client, e error) {
 	// Add timeout to context for initial connection
 	connCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -32,50 +48,79 @@ func New(ctx context.Context, logger *zap.Logger, dbName string) (client Client,
 	client.Logger = logger
 	retryConfig := retry.DefaultConfig()
 
+	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000?sslmode=disable")
+	// Parse credentials and replica addresses from DSN
+	username, password := extractCredentials(dsn)
+	replicas := extractReplicas(dsn)
+
+	// First, connect without specifying a database to create it
+	debugEnabled := logger != nil && logger.Core().Enabled(zap.DebugLevel)
+
+	// Connection pool settings - use provided config or fallback to legacy defaults
+	var config PoolConfig
+	if len(poolConfig) > 0 && poolConfig[0] != nil {
+		config = *poolConfig[0]
+	} else {
+		// Fallback to legacy defaults for backward compatibility
+		config = PoolConfig{
+			MaxOpenConns:    utils.EnvInt("CLICKHOUSE_MAX_OPEN_CONNS", 75),
+			MaxIdleConns:    utils.EnvInt("CLICKHOUSE_MAX_IDLE_CONNS", 75),
+			ConnMaxLifetime: ParseConnMaxLifetime(""),
+			Component:       "unknown",
+		}
+	}
+
+	maxOpenConns := config.MaxOpenConns
+	maxIdleConns := config.MaxIdleConns
+	connMaxLifetime := config.ConnMaxLifetime
+
+	// Parse connection strategy from environment
+	// Strategies:
+	//   - in_order: Always use first replica, fallback to others on failure
+	//               Use for: Indexer (read-after-write consistency)
+	//   - round_robin: Distribute connections evenly across all replicas
+	//               Use for: SuperApp/API (read distribution, high throughput)
+	//   - random: Random replica selection
+	//               Use for: SuperApp/API (load balancing)
+	connStrategy := parseConnOpenStrategy(utils.Env("CLICKHOUSE_CONN_STRATEGY", "in_order"))
+
+	options := &clickhouse.Options{
+		// Use array of replica addresses for failover
+		Addr: replicas,
+
+		// Connection strategy (configurable via CLICKHOUSE_CONN_STRATEGY)
+		// Default: in_order for backward compatibility and indexer read-after-write consistency
+		ConnOpenStrategy: connStrategy,
+
+		Auth: clickhouse.Auth{
+			Database: "default", // Connect to default database first
+			Username: username,
+			Password: password,
+		},
+		DialTimeout:     30 * time.Second, // Increased for high-concurrency scenarios with parallel cleanup
+		MaxOpenConns:    maxOpenConns,     // Configurable for testing
+		MaxIdleConns:    maxIdleConns,     // Configurable for testing
+		ConnMaxLifetime: connMaxLifetime,  // Configurable for testing
+		Compression: &clickhouse.Compression{
+			Method: clickhouse.CompressionLZ4,
+		},
+		Settings: clickhouse.Settings{
+			"prefer_column_name_to_alias":    1,
+			"allow_experimental_object_type": 1,
+			// Replication consistency: NOT NEEDED with ConnOpenInOrder
+			// ConnOpenInOrder ensures same-replica routing for read-after-write consistency
+			// Only use WithSequentialConsistency() for rare edge cases where you cannot
+			// guarantee same-replica routing (e.g., cross-service reads)
+		},
+		Debug: false,
+	}
+
+	if debugEnabled {
+		sugar := logger.Named("clickhouse.driver").Sugar()
+		options.Debugf = sugar.Debugf
+	}
+
 	err := retry.WithBackoff(connCtx, retryConfig, logger, "clickhouse_connection", func() error {
-		dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000?sslmode=disable")
-
-		// First, connect without specifying a database to create it
-		debugEnabled := logger != nil && logger.Core().Enabled(zap.DebugLevel)
-
-		// Connection pool settings (configurable via environment variables for testing)
-		maxOpenConns := utils.EnvInt("CLICKHOUSE_MAX_OPEN_CONNS", 75)
-		maxIdleConns := utils.EnvInt("CLICKHOUSE_MAX_IDLE_CONNS", 75)
-
-		// Parse ConnMaxLifetime from environment variable
-		connMaxLifetime := time.Duration(0)
-		if lifetimeStr := os.Getenv("CLICKHOUSE_CONN_MAX_LIFETIME"); lifetimeStr != "" {
-			if d, err := time.ParseDuration(lifetimeStr); err == nil {
-				connMaxLifetime = d
-			}
-		}
-
-		options := &clickhouse.Options{
-			Addr: []string{extractHost(dsn)},
-			Auth: clickhouse.Auth{
-				Database: "default", // Connect to default database first
-				Username: "default",
-				Password: "",
-			},
-			DialTimeout:     5 * time.Second,
-			MaxOpenConns:    maxOpenConns,    // Configurable for testing
-			MaxIdleConns:    maxIdleConns,    // Configurable for testing
-			ConnMaxLifetime: connMaxLifetime, // Configurable for testing
-			Compression: &clickhouse.Compression{
-				Method: clickhouse.CompressionLZ4,
-			},
-			Settings: clickhouse.Settings{
-				"prefer_column_name_to_alias":    1,
-				"allow_experimental_object_type": 1,
-			},
-			Debug: debugEnabled,
-		}
-
-		if debugEnabled {
-			sugar := logger.Named("clickhouse.driver").Sugar()
-			options.Debugf = sugar.Debugf
-		}
-
 		// Open connection to a default database
 		conn, err := clickhouse.Open(options)
 		if err != nil {
@@ -90,37 +135,21 @@ func New(ctx context.Context, logger *zap.Logger, dbName string) (client Client,
 			return fmt.Errorf("failed to ping clickhouse: %w", err)
 		}
 
-		// Create a database if it doesn't exist
-		createDbQuery := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", dbName)
-		client.Logger.Debug("Creating database if not exists", zap.String("database", dbName))
-		err = client.Db.Exec(connCtx, createDbQuery)
-		if err != nil {
-			return fmt.Errorf("failed to create database %s: %w", dbName, err)
-		}
-
-		// Close the default connection
-		err = conn.Close()
-		if err != nil {
-			client.Logger.Error("Failed to close default connection", zap.Error(err))
-			return err
-		}
-
-		// Now reconnect to the specific database
-		options.Auth.Database = dbName
-		conn, err = clickhouse.Open(options)
-		if err != nil {
-			return fmt.Errorf("failed to open clickhouse connection to %s: %w", dbName, err)
-		}
-
+		// NOTE: Keep connection to 'default' database for now
+		// The wrapper's InitializeDB() will create the target database, then switch to it
+		// This avoids the chicken-and-egg problem where we can't connect to a non-existent database
 		client.Db = conn
+		client.TargetDatabase = dbName // Store target database name for later use
 
-		// Verify connection to the new database
-		err = client.Db.Ping(connCtx)
-		if err != nil {
-			return fmt.Errorf("failed to ping database %s: %w", dbName, err)
-		}
-
-		client.Logger.Debug("ClickHouse connection ready to work", zap.String("database", dbName))
+		client.Logger.Info("ClickHouse connection pool configured",
+			zap.String("database", dbName),
+			zap.String("component", config.Component),
+			zap.Strings("replicas", replicas),
+			zap.String("conn_strategy", formatConnOpenStrategy(connStrategy)),
+			zap.Int("max_open_conns", maxOpenConns),
+			zap.Int("max_idle_conns", maxIdleConns),
+			zap.Duration("conn_max_lifetime", connMaxLifetime),
+		)
 		return nil
 	})
 
@@ -131,6 +160,81 @@ func New(ctx context.Context, logger *zap.Logger, dbName string) (client Client,
 	return client, nil
 }
 
+// ParseConnMaxLifetime parses a connection max lifetime duration string.
+// If lifetimeStr is empty, falls back to CLICKHOUSE_CONN_MAX_LIFETIME environment variable.
+// If neither exists, returns default of 1 hour.
+func ParseConnMaxLifetime(lifetimeStr string) time.Duration {
+	// Try parsing the provided string first
+	if lifetimeStr != "" {
+		if d, err := time.ParseDuration(lifetimeStr); err == nil {
+			return d
+		}
+	}
+
+	// Fall back to environment variable
+	if envStr := os.Getenv("CLICKHOUSE_CONN_MAX_LIFETIME"); envStr != "" {
+		if d, err := time.ParseDuration(envStr); err == nil {
+			return d
+		}
+	}
+
+	// Default to 1 hour
+	return 1 * time.Hour
+}
+
+// parseConnOpenStrategy converts a string to clickhouse.ConnOpenStrategy
+// Supported values: "in_order", "round_robin", "random"
+// Defaults to in_order if invalid value provided
+func parseConnOpenStrategy(strategy string) clickhouse.ConnOpenStrategy {
+	switch strings.ToLower(strings.TrimSpace(strategy)) {
+	case "round_robin", "roundrobin":
+		return clickhouse.ConnOpenRoundRobin
+	case "random":
+		return clickhouse.ConnOpenRandom
+	case "in_order", "inorder", "":
+		return clickhouse.ConnOpenInOrder
+	default:
+		// Default to in_order for safety (read-after-write consistency)
+		return clickhouse.ConnOpenInOrder
+	}
+}
+
+// formatConnOpenStrategy converts clickhouse.ConnOpenStrategy to human-readable string
+func formatConnOpenStrategy(strategy clickhouse.ConnOpenStrategy) string {
+	switch strategy {
+	case clickhouse.ConnOpenRoundRobin:
+		return "round_robin"
+	case clickhouse.ConnOpenRandom:
+		return "random"
+	case clickhouse.ConnOpenInOrder:
+		return "in_order"
+	default:
+		return "unknown"
+	}
+}
+
+// WithSequentialConsistency wraps a context to enable select_sequential_consistency for the next query.
+// This ensures the query sees all data that was previously written, preventing read-after-write inconsistencies
+// in replicated ClickHouse clusters.
+//
+// Usage:
+//
+//	ctx = clickhouse.WithSequentialConsistency(ctx)
+//	row := db.QueryRowContext(ctx, "SELECT * FROM table WHERE id = ?", id)
+//
+// Performance Note:
+// This setting adds ClickHouse Keeper coordination overhead to the query.
+// Only use when read-after-write consistency is critical (e.g., PromoteData reading staging, RecordIndexed reading production).
+func WithSequentialConsistency(ctx context.Context) context.Context {
+	return clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"select_sequential_consistency": 1,
+	}))
+}
+
+// WithInsertQuorum is REMOVED - not needed with ConnOpenInOrder connection strategy.
+// ConnOpenInOrder ensures we read from the same replica we wrote to, providing
+// read-after-write consistency without the overhead and timeout issues of quorum.
+
 // SanitizeName sanitizes the provided database name to be compatible with ClickHouse.
 func SanitizeName(id string) string {
 	s := strings.ToLower(id)
@@ -139,28 +243,100 @@ func SanitizeName(id string) string {
 	return s
 }
 
-// extractHost extracts the host from a DSN string
-func extractHost(dsn string) string {
+// ReplicatedEngine returns the appropriate engine string for replicated ClickHouse clusters.
+// Uses automatic UUID-based ZooKeeper paths to avoid REPLICA_ALREADY_EXISTS errors.
+//
+// For ReplacingMergeTree with version column:
+//   - engine: "ReplacingMergeTree", versionCol: "updated_at"
+//   - Returns: ReplicatedReplacingMergeTree(updated_at)
+//
+// For AggregatingMergeTree:
+//   - engine: "AggregatingMergeTree", versionCol: ""
+//   - Returns: ReplicatedAggregatingMergeTree
+//
+// IMPORTANT: Omitting ZK paths lets ClickHouse auto-generate unique UUID-based paths.
+// This prevents conflicts when tables are dropped/recreated.
+// See: https://github.com/ClickHouse/ClickHouse/issues/47920
+//
+//	https://github.com/ClickHouse/ClickHouse/issues/20243
+func ReplicatedEngine(engine, versionCol string) string {
+	replicatedEngine := "Replicated" + engine
+
+	// Let ClickHouse auto-generate UUID-based ZK paths (ClickHouse 20.4+)
+	// This avoids REPLICA_ALREADY_EXISTS errors from static paths
+	if versionCol != "" {
+		return fmt.Sprintf("%s(%s)", replicatedEngine, versionCol)
+	}
+	return replicatedEngine
+}
+
+// extractReplicas parses comma-separated replica addresses from DSN
+// Supports formats:
+//   - Single host: clickhouse://user:pass@host:9000/db
+//   - Multiple hosts: clickhouse://user:pass@host1:9000,host2:9000/db
+//   - With query params: clickhouse://user:pass@host1:9000,host2:9000/db?sslmode=disable
+func extractReplicas(dsn string) []string {
+	// Remove protocol prefix
+	cleaned := strings.TrimPrefix(dsn, "clickhouse://")
+	cleaned = strings.TrimPrefix(cleaned, "tcp://")
+
+	// Extract host portion (between @ and / or ?)
+	hostPart := cleaned
+	if idx := strings.Index(cleaned, "@"); idx != -1 {
+		hostPart = cleaned[idx+1:]
+	}
+	if idx := strings.IndexAny(hostPart, "/?"); idx != -1 {
+		hostPart = hostPart[:idx]
+	}
+
+	// Split on comma for multiple replicas
+	replicas := strings.Split(hostPart, ",")
+
+	// Clean up and validate
+	result := make([]string, 0, len(replicas))
+	for _, r := range replicas {
+		r = strings.TrimSpace(r)
+		if r != "" {
+			result = append(result, r)
+		}
+	}
+
+	if len(result) == 0 {
+		return []string{"localhost:9000"}
+	}
+
+	return result
+}
+
+// extractCredentials extracts username and password from a DSN string
+// Format: clickhouse://username:password@host:port/...
+// Returns: username, password (defaults to "default" and "" if not found)
+func extractCredentials(dsn string) (string, string) {
 	// Remove protocol prefix
 	dsn = strings.TrimPrefix(dsn, "clickhouse://")
 	dsn = strings.TrimPrefix(dsn, "tcp://")
 
-	// Find the end of host (either / or ?)
-	if idx := strings.IndexAny(dsn, "/?"); idx != -1 {
-		dsn = dsn[:idx]
+	// Check if credentials are present (format: username:password@...)
+	atIdx := strings.Index(dsn, "@")
+	if atIdx == -1 {
+		// No credentials in DSN, use defaults
+		return "default", ""
 	}
 
-	// Remove any credentials
-	if idx := strings.Index(dsn, "@"); idx != -1 {
-		dsn = dsn[idx+1:]
+	// Extract credentials part (everything before @)
+	credentials := dsn[:atIdx]
+
+	// Split username:password
+	colonIdx := strings.Index(credentials, ":")
+	if colonIdx == -1 {
+		// Only username provided, no password
+		return credentials, ""
 	}
 
-	// Default to localhost:9000 if empty
-	if dsn == "" {
-		return "localhost:9000"
-	}
+	username := credentials[:colonIdx]
+	password := credentials[colonIdx+1:]
 
-	return dsn
+	return username, password
 }
 
 // Exec Helper method to execute raw SQL queries
@@ -193,12 +369,32 @@ func (c *Client) Close() error {
 	return c.Db.Close()
 }
 
+// OnCluster returns ON CLUSTER statement
+// This is required to force the replicas sync on some operations: https://clickhouse.com/docs/sql-reference/distributed-ddl
+func (c *Client) OnCluster() string {
+	return "ON CLUSTER canopyx"
+}
+
+// DbEngine returns the database engine type as a string.
+func (c *Client) DbEngine() string {
+	return "ENGINE = Atomic"
+}
+
+// CreateDbIfNotExists ensures that the specified database exists by creating it if it does not already exist.
+func (c *Client) CreateDbIfNotExists(ctx context.Context, dbName string) error {
+	// The expected result will be:
+	// CREATE DATABASE IF NOT EXISTS canopyx_indexer ON CLUSTER canopyx ENGINE = Atomic
+	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s %s %s", dbName, c.OnCluster(), c.DbEngine())
+	c.Logger.Info("Creating admin database", zap.String("database", dbName), zap.String("query", query))
+	return c.Exec(ctx, query)
+}
+
 // IsNoRows Helper to check if the error is no rows
 func IsNoRows(err error) bool {
 	return errors.Is(err, sql.ErrNoRows)
 }
 
-// QueryWithFinal executes a query with FINAL modifier for ReplacingMergeTree tables.
+// QueryWithFinal verify than a query contains a FINAL statement.
 // The FINAL modifier ensures you get the most recent version of deduplicated rows,
 // which is essential for correctness when reading from ReplacingMergeTree tables.
 //
@@ -213,15 +409,14 @@ func IsNoRows(err error) bool {
 //	    WHERE height = ?
 //	`, height)
 func (c *Client) QueryWithFinal(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-	// Check if query already has FINAL keyword
-	queryUpper := strings.ToUpper(query)
-	if !strings.Contains(queryUpper, "FINAL") {
-		c.Logger.Warn("QueryWithFinal called but query doesn't contain FINAL keyword - ensure FINAL is placed after table name")
+	// Check if a query already has a FINAL keyword
+	if !strings.Contains(query, "FINAL") {
+		return nil, fmt.Errorf("QueryWithFinal called but query doesn't contain FINAL keyword - ensure FINAL is placed after table name")
 	}
 	return c.Db.Query(ctx, query, args...)
 }
 
-// SelectWithFinal executes a Select query with FINAL modifier for ReplacingMergeTree tables.
+// SelectWithFinal verify than a Select query contains a FINAL statement.
 // This is a convenience wrapper around Select that enforces FINAL usage for correctness.
 //
 // Example usage:
@@ -232,10 +427,10 @@ func (c *Client) QueryWithFinal(ctx context.Context, query string, args ...inter
 //	    WHERE height = ?
 //	`, height)
 func (c *Client) SelectWithFinal(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	// Check if query already has FINAL keyword
-	queryUpper := strings.ToUpper(query)
-	if !strings.Contains(queryUpper, "FINAL") {
-		c.Logger.Warn("SelectWithFinal called but query doesn't contain FINAL keyword - ensure FINAL is placed after table name")
+	// Check if a query already has a FINAL keyword
+	// TODO: add caller information
+	if !strings.Contains(query, "FINAL") {
+		return fmt.Errorf("SelectWithFinal called but query doesn't contain FINAL keyword - ensure FINAL is placed after table name")
 	}
 	return c.Db.Select(ctx, dest, query, args...)
 }
@@ -319,7 +514,10 @@ func (c *Client) DropOldPartitions(ctx context.Context, database, table string, 
 	for _, p := range partitions {
 		// Check if partition's max_date is older than retention period
 		if p.MaxDate.Before(cutoffTime) {
-			dropQuery := fmt.Sprintf(`ALTER TABLE "%s"."%s" DROP PARTITION '%s'`, database, table, p.Partition)
+			// CRITICAL: Uses ON CLUSTER with replication_alter_partitions_sync setting
+			// replication_alter_partitions_sync=2 ensures partition drop completes on all replicas before returning
+			// Possible values: 0=async, 1=wait for local only (default), 2=wait for all replicas
+			dropQuery := fmt.Sprintf(`ALTER TABLE "%s"."%s" ON CLUSTER canopyx DROP PARTITION '%s' SETTINGS replication_alter_partitions_sync = 2`, database, table, p.Partition)
 			c.Logger.Info("Dropping old partition",
 				zap.String("database", database),
 				zap.String("table", table),
@@ -441,10 +639,13 @@ func (c *Client) TableExists(ctx context.Context, database, table string) (bool,
 //
 //	err := client.OptimizeTable(ctx, "mydb", "events", false)
 func (c *Client) OptimizeTable(ctx context.Context, database, table string, final bool) error {
-	query := fmt.Sprintf(`OPTIMIZE TABLE "%s"."%s"`, database, table)
+	// CRITICAL: Uses ON CLUSTER with alter_sync setting to ensure optimization completes on all replicas
+	// alter_sync=2 waits for completion on all replicas (0=async, 1=local only, 2=all replicas)
+	query := fmt.Sprintf(`OPTIMIZE TABLE "%s"."%s" %s`, database, table, c.OnCluster())
 	if final {
 		query += " FINAL"
 	}
+	query += " SETTINGS alter_sync = 2"
 
 	c.Logger.Info("Optimizing table",
 		zap.String("database", database),
@@ -456,4 +657,70 @@ func (c *Client) OptimizeTable(ctx context.Context, database, table string, fina
 	}
 
 	return nil
+}
+
+// GetPoolConfigForComponent returns deterministic pool settings for each component.
+// No environment variable overrides - fixed values for predictable behavior.
+func GetPoolConfigForComponent(component string) *PoolConfig {
+	var maxOpen, maxIdle int
+	connMaxLifetime := 5 * time.Minute // Fixed 5 minute lifetime for all components
+
+	// Component-specific fixed values (no env overrides)
+	switch component {
+	case "indexer_admin":
+		maxOpen = 15
+		maxIdle = 5
+	case "indexer_chain":
+		maxOpen = 40
+		maxIdle = 15
+	case "admin":
+		maxOpen = 10
+		maxIdle = 3
+	case "admin_chain":
+		maxOpen = 5
+		maxIdle = 2
+	case "controller":
+		maxOpen = 10
+		maxIdle = 3
+	case "crosschain":
+		maxOpen = 10
+		maxIdle = 3
+	default:
+		// Unknown component - use legacy defaults with env overrides for backward compatibility
+		maxOpen = utils.EnvInt("CLICKHOUSE_MAX_OPEN_CONNS", 75)
+		maxIdle = utils.EnvInt("CLICKHOUSE_MAX_IDLE_CONNS", 75)
+		// Parse connection lifetime from env for legacy components only
+		lifetime := parseConnMaxLifetimeFromEnv()
+		if lifetime > 0 {
+			connMaxLifetime = lifetime
+		}
+	}
+
+	// Enforce MaxIdleConns <= MaxOpenConns
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+
+	return &PoolConfig{
+		MaxOpenConns:    maxOpen,
+		MaxIdleConns:    maxIdle,
+		ConnMaxLifetime: connMaxLifetime,
+		Component:       component,
+	}
+}
+
+// parseConnMaxLifetimeFromEnv parses CLICKHOUSE_CONN_MAX_LIFETIME environment variable.
+// Returns 0 if not set or invalid.
+func parseConnMaxLifetimeFromEnv() time.Duration {
+	val := os.Getenv("CLICKHOUSE_CONN_MAX_LIFETIME")
+	if val == "" {
+		return 0
+	}
+
+	duration, err := time.ParseDuration(val)
+	if err != nil {
+		return 0
+	}
+
+	return duration
 }

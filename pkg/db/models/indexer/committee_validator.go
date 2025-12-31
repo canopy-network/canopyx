@@ -8,15 +8,19 @@ const CommitteeValidatorProductionTableName = "committee_validators"
 const CommitteeValidatorStagingTableName = "committee_validators_staging"
 
 // CommitteeValidatorColumns defines the schema for the committee_validators table.
+// Codecs are optimized for 15x compression ratio:
+// - DoubleDelta,LZ4 for sequential/monotonic values (height, timestamps)
+// - ZSTD(1) for strings and booleans
+// - Delta,ZSTD(3) for gradually changing amounts
 var CommitteeValidatorColumns = []ColumnDef{
 	{Name: "committee_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "validator_address", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "staked_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
-	{Name: "status", Type: "LowCardinality(String)"},
-	{Name: "delegate", Type: "Bool"},
-	{Name: "compound", Type: "Bool"},
-	{Name: "height", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
-	{Name: "height_time", Type: "DateTime64(3)", Codec: "DoubleDelta, ZSTD(1)"},
+	{Name: "status", Type: "LowCardinality(String)", Codec: "ZSTD(1)"},
+	{Name: "delegate", Type: "Bool", Codec: "ZSTD(1)"},
+	{Name: "compound", Type: "Bool", Codec: "ZSTD(1)"},
+	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
+	{Name: "height_time", Type: "DateTime64(3)", Codec: "DoubleDelta, LZ4"},
 }
 
 // CommitteeValidator represents the junction table between committees and validators.

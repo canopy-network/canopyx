@@ -25,13 +25,14 @@ const (
 )
 
 // HandleEntityQuery handles generic entity queries with pagination support.
-// GET /api/chains/{id}/entity/{entity}?limit=50&cursor=123&sort=desc&use_staging=false
+// GET /api/chains/{id}/entity/{entity}?limit=50&cursor=123&sort=desc&use_staging=false&deleted=true
 //
 // Query Parameters:
 //   - limit: Number of records to return (default: 50, max: 1000)
 //   - cursor: Pagination cursor (height value to start from)
 //   - sort: Sort order - "asc" or "desc" (default: "desc")
 //   - use_staging: Query staging table instead of production (default: false)
+//   - deleted: Indicate this is a deleted chain (for logging/debugging) (default: false)
 //
 // Response:
 //
@@ -45,6 +46,9 @@ func (c *Controller) HandleEntityQuery(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	chainID := vars["id"]
 	entityName := vars["entity"]
+
+	// Check if this is a deleted chain query
+	isDeleted := r.URL.Query().Get("deleted") == "true"
 
 	// Parse and validate request parameters
 	req, err := c.parseEntityQueryRequest(r)
@@ -63,6 +67,10 @@ func (c *Controller) HandleEntityQuery(w http.ResponseWriter, r *http.Request) {
 	// Load chain store
 	store, ok := c.App.LoadChainStore(ctx, chainID)
 	if !ok {
+		c.App.Logger.Error("Failed to load chain store for entity query",
+			zap.String("chain_id", chainID),
+			zap.String("entity", entityName),
+			zap.Bool("is_deleted", isDeleted))
 		c.writeError(w, http.StatusNotFound, "chain not found")
 		return
 	}
@@ -97,7 +105,7 @@ func (c *Controller) HandleEntityQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleEntityGet handles single entity lookups with explicit property/value query parameters.
-// GET /api/chains/{id}/entity/{entity}?property=hash&value=73529c...&height=123&use_staging=false
+// GET /api/chains/{id}/entity/{entity}?property=hash&value=73529c...&height=123&use_staging=false&deleted=true
 //
 // Path Parameters:
 //   - id: Chain ID
@@ -108,6 +116,7 @@ func (c *Controller) HandleEntityQuery(w http.ResponseWriter, r *http.Request) {
 //   - value: Value to search for - REQUIRED
 //   - height: Optional - if 0 or omitted, get latest (ORDER BY height DESC LIMIT 1); if specified, get at that exact height
 //   - use_staging: Query staging table instead of production (default: false)
+//   - deleted: Indicate this is a deleted chain (for logging/debugging) (default: false)
 //
 // Response: Single entity object or 404 if not found
 func (c *Controller) HandleEntityGet(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +124,9 @@ func (c *Controller) HandleEntityGet(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	chainID := vars["id"]
 	entityName := vars["entity"]
+
+	// Check if this is a deleted chain query
+	isDeleted := r.URL.Query().Get("deleted") == "true"
 
 	// Parse request parameters (includes property and value)
 	req, err := c.parseEntityGetRequest(r)
@@ -133,6 +145,10 @@ func (c *Controller) HandleEntityGet(w http.ResponseWriter, r *http.Request) {
 	// Load chain store
 	store, ok := c.App.LoadChainStore(ctx, chainID)
 	if !ok {
+		c.App.Logger.Error("Failed to load chain store for entity get",
+			zap.String("chain_id", chainID),
+			zap.String("entity", entityName),
+			zap.Bool("is_deleted", isDeleted))
 		c.writeError(w, http.StatusNotFound, "chain not found")
 		return
 	}
@@ -405,6 +421,11 @@ func (c *Controller) queryEntityData(
 				case int64:
 					u := uint64(v)
 					nextCursor = &u
+				default:
+					// Defensive: log unexpected type but don't fail
+					c.App.Logger.Warn("unexpected height type in pagination cursor",
+						zap.String("type", fmt.Sprintf("%T", v)),
+						zap.Any("value", v))
 				}
 			}
 		}

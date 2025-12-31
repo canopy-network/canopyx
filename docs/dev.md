@@ -40,7 +40,7 @@ Tilt deploys to Kubernetes using Helm charts and Kustomize manifests:
 - Controller (manages indexer deployments)
 
 **Optional (configure in `tilt-config.yaml`):**
-- Canopy node(s) - local blockchain for testing
+- Canopy RPC Mock - lightweight mock blockchain for testing
 - Monitoring - Prometheus + Grafana
 
 **Auto-spawned by controller:**
@@ -56,14 +56,24 @@ Copy `tilt-config.default.yaml` → `tilt-config.yaml` and customize:
 ```yaml
 components:
   monitoring: false        # Prometheus + Grafana
-  canopy: "off"           # "off" | "single" | "dual"
+  canopy: true            # true = mock RPC, false = use external endpoints
   admin_web: true         # Next.js UI
 ```
 
-**Canopy modes:**
-- `off` - Use remote RPC endpoints
-- `single` - Single local node (Chain ID 1)
-- `dual` - Two nodes for DEX testing (Chain ID 1 + 2)
+**Canopy RPC Mock configuration:**
+```yaml
+paths:
+  mock_chains: 2          # Number of mock chains (default: 2)
+  mock_blocks: 25         # Blocks per chain (default: 25)
+  mock_start_port: 60000  # Starting port (default: 60000)
+  mock_start_chain_id: 5  # Starting chain ID (default: 5)
+```
+
+Benefits of mock RPC:
+- Fast startup (~5 seconds vs minutes for real nodes)
+- Lightweight (~100MB RAM vs 2-4GB for real nodes)
+- Deterministic (no timing issues)
+- Multi-chain support in single pod
 
 ## Common Commands
 
@@ -194,8 +204,8 @@ go clean -cache
 make build
 ```
 
-**Canopy node not deploying:**
-Check `paths.canopy_source` in `tilt-config.yaml` points to Canopy repo.
+**Canopy RPC mock not deploying:**
+Check `paths.canopy_rpc_mock_source` in `tilt-config.yaml` points to `../canopy-rpc-mock`.
 
 **Out of disk space:**
 ```bash

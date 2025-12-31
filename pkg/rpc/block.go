@@ -5,72 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/canopy-network/canopy/lib"
 )
 
 // HeadBlock represents the response from the /v1/query/height endpoint.
 type HeadBlock struct {
 	Height uint64 `json:"height"`
-}
-
-// BlockByHeight represents the response from the /v1/query/block-by-height endpoint.
-// NOTE: we can reduce the struct fields once we have a better understanding of the response and the indexing needs.
-type BlockByHeight struct {
-	BlockHeader struct {
-		Height             uint64 `json:"height"`
-		Hash               string `json:"hash"`
-		NetworkID          int    `json:"networkID"`
-		Time               int64  `json:"time"`
-		NumTxs             uint64 `json:"numTxs"`
-		TotalTxs           uint64 `json:"totalTxs"`
-		TotalVDFIterations int    `json:"totalVDFIterations"`
-		LastBlockHash      string `json:"lastBlockHash"`
-		StateRoot          string `json:"stateRoot"`
-		TransactionRoot    string `json:"transactionRoot"`
-		ValidatorRoot      string `json:"validatorRoot"`
-		NextValidatorRoot  string `json:"nextValidatorRoot"`
-		ProposerAddress    string `json:"proposerAddress"`
-		Vdf                struct {
-			Proof      string `json:"proof"`
-			Output     string `json:"output"`
-			Iterations int    `json:"iterations"`
-		} `json:"vdf"`
-		LastQuorumCertificate struct {
-			Header struct {
-				Height          int    `json:"height"`
-				CommitteeHeight int    `json:"committeeHeight"`
-				Round           int    `json:"round"`
-				Phase           string `json:"phase"`
-				NetworkID       int    `json:"networkID"`
-				ChainId         int    `json:"chainId"`
-			} `json:"header"`
-			BlockHash   string `json:"blockHash"`
-			ResultsHash string `json:"resultsHash"`
-			Results     struct {
-				RewardRecipients struct {
-					PaymentPercents []struct {
-						Address  string `json:"address"`
-						Percents int    `json:"percents"`
-						ChainId  int    `json:"chainId"`
-					} `json:"paymentPercents"`
-				} `json:"rewardRecipients"`
-				SlashRecipients struct {
-				} `json:"slashRecipients"`
-				Orders struct {
-					LockOrders  interface{} `json:"lockOrders"`
-					ResetOrders interface{} `json:"resetOrders"`
-					CloseOrders interface{} `json:"closeOrders"`
-				} `json:"orders"`
-			} `json:"results"`
-			ProposerKey string `json:"proposerKey"`
-			Signature   struct {
-				Signature string `json:"signature"`
-				Bitmap    string `json:"bitmap"`
-			} `json:"signature"`
-		} `json:"lastQuorumCertificate"`
-	} `json:"blockHeader"`
-	Meta struct {
-		Size int `json:"size"`
-	} `json:"meta"`
 }
 
 // ChainHead returns the height of the chain head.
@@ -83,10 +24,11 @@ func (c *HTTPClient) ChainHead(ctx context.Context) (uint64, error) {
 	return uint64(0), fmt.Errorf("cannot probe head %v", err)
 }
 
-// BlockByHeight returns the raw RPC block at the given height.
-// Callers should convert to indexer models using ToBlockModel() if needed.
-func (c *HTTPClient) BlockByHeight(ctx context.Context, h uint64) (*BlockByHeight, error) {
-	var out BlockByHeight
+// BlockByHeight returns the Canopy BlockResult at the given height.
+// JSON from RPC is unmarshaled directly into lib.BlockResult (protobuf types support JSON).
+// Callers should convert to indexer models using transform.Block() if needed.
+func (c *HTTPClient) BlockByHeight(ctx context.Context, h uint64) (*lib.BlockResult, error) {
+	var out lib.BlockResult
 	if err := c.doJSON(ctx, http.MethodPost, blockByHeightPath, QueryByHeightRequest{Height: h}, &out); err != nil {
 		return nil, err
 	}

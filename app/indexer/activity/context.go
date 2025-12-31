@@ -11,6 +11,7 @@ import (
 
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
 	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
+	crosschainstore "github.com/canopy-network/canopyx/pkg/db/crosschain"
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	temporalclient "github.com/canopy-network/canopyx/pkg/temporal"
@@ -20,8 +21,9 @@ type Context struct {
 	ChainID uint64
 	Logger  *zap.Logger
 	// Admin and per Chain DBs
-	AdminDB adminstore.Store
-	ChainDB chainstore.Store
+	AdminDB      adminstore.Store
+	ChainDB      chainstore.Store
+	CrossChainDB crosschainstore.Store
 	// For RPC calls to the blockchain
 	RPCFactory rpc.Factory
 	RPCOpts    rpc.Opts
@@ -36,20 +38,11 @@ type Context struct {
 	workerPoolSize       int
 }
 
-// GetChainDb return chain db or create it to return
+// GetChainDb returns the chain database (must be initialized at startup).
 func (ac *Context) GetChainDb(ctx context.Context, chainID uint64) (chainstore.Store, error) {
-	if ac.ChainDB != nil {
-		return ac.ChainDB, nil
-
+	if ac.ChainDB == nil {
+		return nil, fmt.Errorf("ChainDB not initialized - this is a programming error")
 	}
-
-	chainDB, chainDBErr := chainstore.New(ctx, ac.Logger, chainID)
-	if chainDBErr != nil {
-		return nil, chainDBErr
-	}
-
-	ac.ChainDB = chainDB
-
 	return ac.ChainDB, nil
 }
 

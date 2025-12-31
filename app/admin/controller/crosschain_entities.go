@@ -38,13 +38,6 @@ func (c *Controller) HandleCrossChainEntities(w http.ResponseWriter, r *http.Req
 	vars := mux.Vars(r)
 	entityName := vars["entity"]
 
-	// Check if cross-chain DB is available
-	store, ok := c.App.CrossChainDB.(*crosschain.Store)
-	if !ok || store == nil {
-		c.writeError(w, http.StatusServiceUnavailable, "cross-chain database not available")
-		return
-	}
-
 	// Parse query options from request
 	opts, err := c.parseCrossChainQueryOptions(r)
 	if err != nil {
@@ -53,7 +46,7 @@ func (c *Controller) HandleCrossChainEntities(w http.ResponseWriter, r *http.Req
 	}
 
 	// Execute the query using the crosschain store API
-	results, metadata, err := store.QueryLatestEntity(ctx, entityName, opts)
+	results, metadata, err := c.App.CrossChainDB.QueryLatestEntity(ctx, entityName, opts)
 	if err != nil {
 		c.App.Logger.Error("Failed to query cross-chain entity data",
 			zap.String("entity", entityName),
@@ -94,13 +87,6 @@ func (c *Controller) HandleCrossChainEntitySchema(w http.ResponseWriter, r *http
 	vars := mux.Vars(r)
 	entityName := vars["entity"]
 
-	// Get entity configuration from a crosschain store
-	store, ok := c.App.CrossChainDB.(*crosschain.Store)
-	if !ok || store == nil {
-		c.writeError(w, http.StatusServiceUnavailable, "cross-chain database not available")
-		return
-	}
-
 	// Validate entity and get configuration
 	config, err := c.getCrossChainEntityConfig(entityName)
 	if err != nil {
@@ -133,12 +119,6 @@ func (c *Controller) HandleCrossChainEntitySchema(w http.ResponseWriter, r *http
 //	  ]
 //	}
 func (c *Controller) HandleCrossChainEntitiesList(w http.ResponseWriter, _ *http.Request) {
-	store, ok := c.App.CrossChainDB.(*crosschain.Store)
-	if !ok || store == nil {
-		c.writeError(w, http.StatusServiceUnavailable, "cross-chain database not available")
-		return
-	}
-
 	// Get all table configs
 	configs := crosschain.GetTableConfigs()
 

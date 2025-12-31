@@ -1,0 +1,20 @@
+- committees table fields whith wrong values base on rpc mocks subsidized=1 -> subsidized=2, retired=0 -> retired=1
+- dex_deposits - is repeating the data for pending and locked even when they are not changed.
+- dex_orders - is repeating the data for pending and locked even when they are not changed.
+- dex_prices - is repeating the data for pending and locked even when they are not changed.
+- dex_withdrawals - is repeating the data for pending and locked even when they are not changed.
+- events - remove block_hash
+- params - is repeating the data for pending and locked even when they are not changed.
+- poll snapshot is not working, but we have mock data - unable to find workflow type: PollSnapshotWorkflow. Supported types: [HeadScanWorkflow, GapScanWorkflow, SchedulerWorkflow, ReindexSchedulerWorkflow, CleanupStagingWorkflow]
+- proposal snapshot is not working, but we have mock data - unable to find workflow type: ProposalSnapshotWorkflow. Supported types: [HeadScanWorkflow, GapScanWorkflow, SchedulerWorkflow, ReindexSchedulerWorkflow, CleanupStagingWorkflow]
+- pool points by holder:
+  - liquidity pool points is - right now that is the amount of token in the pools and should be totalPoints
+  - when liquidity pool point became totalPoints that field should be evaluate to understand if the entry change to save the snapshot, basically it will force us to save every holder when the totalPoints change.
+- txs:
+  - signer should be always there - we have a lot of types that are not handling them. Every single tx has a signer.
+  - stake type has counterparty with the publickey which is wrong should have the address.
+  - dexLiquidityWithdraw type has `liquidity_amount` with a value, but is wrong, we need a new column called `liquidity_percent` and that should handle the value it handle right now
+  - createOrder type has missing the order_id which is first 20 bytes of the tx_hash
+  - editOrder and deleteOrder SHOULD have chain_id
+  - changeParam has missing the param_value
+  - rename counterparty to recipient, anyone that use that one like daoTransfer should keep using, and anyone with counterparty should change to recipient.

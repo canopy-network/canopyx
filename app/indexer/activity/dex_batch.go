@@ -2,14 +2,15 @@ package activity
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/alitto/pond/v2"
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
 )
@@ -62,9 +63,9 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 	// Parallel RPC fetch: ALL DexBatches(H) and ALL NextDexBatches(H) in a single call each
 	// Using committee=0 returns all committees' batches
 	var (
-		currentBatchesH1 []*rpc.RpcDexBatch
-		currentBatches   []*rpc.RpcDexBatch
-		nextBatches      []*rpc.RpcDexBatch
+		currentBatchesH1 []*lib.DexBatch
+		currentBatches   []*lib.DexBatch
+		nextBatches      []*lib.DexBatch
 		currentH1Err     error
 		currentErr       error
 		nextErr          error
@@ -97,7 +98,7 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 			return
 		}
 		if in.Height <= 1 {
-			currentBatchesH1 = make([]*rpc.RpcDexBatch, 0)
+			currentBatchesH1 = make([]*lib.DexBatch, 0)
 			return
 		}
 		currentBatchesH1, currentH1Err = cli.AllDexBatchesByHeight(groupCtx, in.Height-1)
@@ -126,9 +127,9 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 	// Query events from the staging table
 	events, err := chainDb.GetEventsByTypeAndHeight(
 		ctx, in.Height, true,
-		rpc.EventTypeAsStr(rpc.EventTypeDexSwap),
-		rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit),
-		rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw),
+		string(lib.EventTypeDexSwap),
+		string(lib.EventTypeDexLiquidityDeposit),
+		string(lib.EventTypeDexLiquidityWithdraw),
 	)
 	if err != nil {
 		return types.ActivityIndexDexBatchOutput{}, fmt.Errorf("query events at height %d: %w", in.Height, err)
@@ -147,12 +148,24 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		orderID := *event.OrderID
 
 		switch event.EventType {
-		case rpc.EventTypeAsStr(rpc.EventTypeDexSwap):
+		case string(lib.EventTypeDexSwap):
 			swapEvents[orderID] = event
-		case rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityDeposit):
+		case string(lib.EventTypeDexLiquidityDeposit):
 			depositEvents[orderID] = event
-		case rpc.EventTypeAsStr(rpc.EventTypeDexLiquidityWithdraw):
+		case string(lib.EventTypeDexLiquidityWithdraw):
 			withdrawalEvents[orderID] = event
+		}
+	}
+
+	// Diagnostic: Log withdrawal event details for debugging OrderID matching
+	if len(withdrawalEvents) > 0 {
+		ac.Logger.Info("Loaded DEX withdrawal events",
+			zap.Uint64("height", in.Height),
+			zap.Int("count", len(withdrawalEvents)))
+		for orderID := range withdrawalEvents {
+			ac.Logger.Debug("Event OrderID",
+				zap.String("orderId", orderID),
+				zap.Int("length", len(orderID)))
 		}
 	}
 
@@ -174,14 +187,18 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 	// Process Dex event related against H-1 orders, deposits and withdrawals
 	for _, currentBatchH1 := range currentBatchesH1 {
 		for _, rpcOrder := range currentBatchH1.Orders {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcOrder.OrderId)
+			address := hex.EncodeToString(rpcOrder.Address)
+
 			// Check if this order has a completion event
-			if swapEvent, exists := swapEvents[rpcOrder.OrderID]; exists {
+			if swapEvent, exists := swapEvents[orderID]; exists {
 				order := &indexer.DexOrder{
-					OrderID:         rpcOrder.OrderID,
+					OrderID:         orderID,
 					Height:          in.Height, // complete at the height of the event
 					HeightTime:      in.BlockTime,
 					Committee:       currentBatchH1.Committee, // Use committee from batch
-					Address:         rpcOrder.Address,
+					Address:         address,
 					AmountForSale:   rpcOrder.AmountForSale,
 					RequestedAmount: rpcOrder.RequestedAmount,
 					State:           indexer.DexCompleteState,
@@ -214,14 +231,18 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		}
 
 		for _, rpcDeposit := range currentBatchH1.Deposits {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcDeposit.OrderId)
+			address := hex.EncodeToString(rpcDeposit.Address)
+
 			// Check if this deposit has a completion event
-			if depositEvent, exists := depositEvents[rpcDeposit.OrderID]; exists {
+			if depositEvent, exists := depositEvents[orderID]; exists {
 				deposit := &indexer.DexDeposit{
-					OrderID:    rpcDeposit.OrderID,
+					OrderID:    orderID,
 					Height:     in.Height,
 					HeightTime: in.BlockTime,
 					Committee:  currentBatchH1.Committee, // Use committee from batch
-					Address:    rpcDeposit.Address,
+					Address:    address,
 					Amount:     rpcDeposit.Amount,
 					State:      indexer.DexCompleteState,
 				}
@@ -240,14 +261,26 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		}
 
 		for _, rpcWithdrawal := range currentBatchH1.Withdrawals {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcWithdrawal.OrderId)
+			address := hex.EncodeToString(rpcWithdrawal.Address)
+
+			// Diagnostic: Log withdrawal matching attempt
+			ac.Logger.Debug("Checking H-1 batch withdrawal for completion",
+				zap.String("orderID_batch", orderID),
+				zap.Int("length", len(orderID)),
+				zap.Int("available_events", len(withdrawalEvents)))
+
 			// Check if this withdrawal has a completion event
-			if withdrawalEvent, exists := withdrawalEvents[rpcWithdrawal.OrderID]; exists {
+			if withdrawalEvent, exists := withdrawalEvents[orderID]; exists {
+				ac.Logger.Info("MATCHED: Withdrawal completed",
+					zap.String("orderID", orderID))
 				withdrawal := &indexer.DexWithdrawal{
-					OrderID:    rpcWithdrawal.OrderID,
+					OrderID:    orderID,
 					Height:     in.Height,
 					HeightTime: in.BlockTime,
 					Committee:  currentBatchH1.Committee, // Use committee from batch
-					Address:    rpcWithdrawal.Address,
+					Address:    address,
 					Percent:    rpcWithdrawal.Percent,
 					State:      indexer.DexCompleteState,
 				}
@@ -265,6 +298,11 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 
 				numWithdrawalsComplete++
 				withdrawals = append(withdrawals, withdrawal)
+			} else {
+				// Diagnostic: Log when withdrawal event not found
+				ac.Logger.Warn("NO MATCH: Withdrawal event not found",
+					zap.String("orderID_batch", orderID),
+					zap.Int("available_events", len(withdrawalEvents)))
 			}
 		}
 	}
@@ -272,12 +310,16 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 	// Process current batch orders, deposits and withdrawals
 	for _, currentBatch := range currentBatches {
 		for _, rpcOrder := range currentBatch.Orders {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcOrder.OrderId)
+			address := hex.EncodeToString(rpcOrder.Address)
+
 			order := &indexer.DexOrder{
-				OrderID:         rpcOrder.OrderID,
+				OrderID:         orderID,
 				Height:          in.Height,
 				HeightTime:      in.BlockTime,
 				Committee:       currentBatch.Committee, // Use committee from batch
-				Address:         rpcOrder.Address,
+				Address:         address,
 				AmountForSale:   rpcOrder.AmountForSale,
 				RequestedAmount: rpcOrder.RequestedAmount,
 				State:           indexer.DexLockedState,
@@ -289,12 +331,16 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		}
 
 		for _, rpcDeposit := range currentBatch.Deposits {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcDeposit.OrderId)
+			address := hex.EncodeToString(rpcDeposit.Address)
+
 			deposit := &indexer.DexDeposit{
-				OrderID:    rpcDeposit.OrderID,
+				OrderID:    orderID,
 				Height:     in.Height,
 				HeightTime: in.BlockTime,
 				Committee:  currentBatch.Committee, // Use committee from batch
-				Address:    rpcDeposit.Address,
+				Address:    address,
 				Amount:     rpcDeposit.Amount,
 				State:      indexer.DexLockedState,
 			}
@@ -304,12 +350,16 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		}
 
 		for _, rpcWithdrawal := range currentBatch.Withdrawals {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcWithdrawal.OrderId)
+			address := hex.EncodeToString(rpcWithdrawal.Address)
+
 			withdrawal := &indexer.DexWithdrawal{
-				OrderID:    rpcWithdrawal.OrderID,
+				OrderID:    orderID,
 				Height:     in.Height,
 				HeightTime: in.BlockTime,
 				Committee:  currentBatch.Committee, // Use committee from batch
-				Address:    rpcWithdrawal.Address,
+				Address:    address,
 				Percent:    rpcWithdrawal.Percent,
 				State:      indexer.DexLockedState,
 			}
@@ -322,12 +372,16 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 	// Process next batch orders (state=future)
 	for _, nextBatch := range nextBatches {
 		for _, rpcOrder := range nextBatch.Orders {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcOrder.OrderId)
+			address := hex.EncodeToString(rpcOrder.Address)
+
 			order := &indexer.DexOrder{
-				OrderID:         rpcOrder.OrderID,
+				OrderID:         orderID,
 				Height:          in.Height,
 				HeightTime:      in.BlockTime,
 				Committee:       nextBatch.Committee, // Use committee from batch
-				Address:         rpcOrder.Address,
+				Address:         address,
 				AmountForSale:   rpcOrder.AmountForSale,
 				RequestedAmount: rpcOrder.RequestedAmount,
 				State:           indexer.DexPendingState,
@@ -338,12 +392,16 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		}
 
 		for _, rpcDeposit := range nextBatch.Deposits {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcDeposit.OrderId)
+			address := hex.EncodeToString(rpcDeposit.Address)
+
 			deposit := &indexer.DexDeposit{
-				OrderID:    rpcDeposit.OrderID,
+				OrderID:    orderID,
 				Height:     in.Height,
 				HeightTime: in.BlockTime,
 				Committee:  nextBatch.Committee, // Use committee from batch
-				Address:    rpcDeposit.Address,
+				Address:    address,
 				Amount:     rpcDeposit.Amount,
 				State:      indexer.DexPendingState,
 			}
@@ -352,12 +410,16 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		}
 
 		for _, rpcWithdrawal := range nextBatch.Withdrawals {
+			// Convert protobuf []byte fields to hex strings for database storage
+			orderID := hex.EncodeToString(rpcWithdrawal.OrderId)
+			address := hex.EncodeToString(rpcWithdrawal.Address)
+
 			withdrawal := &indexer.DexWithdrawal{
-				OrderID:    rpcWithdrawal.OrderID,
+				OrderID:    orderID,
 				Height:     in.Height,
 				HeightTime: in.BlockTime,
 				Committee:  nextBatch.Committee, // Use committee from batch
-				Address:    rpcWithdrawal.Address,
+				Address:    address,
 				Percent:    rpcWithdrawal.Percent,
 				State:      indexer.DexPendingState,
 			}

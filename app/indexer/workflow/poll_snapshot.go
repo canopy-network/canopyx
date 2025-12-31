@@ -9,12 +9,12 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-// PollSnapshotWorkflow captures governance poll data snapshots every 20 seconds.
+// PollSnapshotWorkflow captures governance poll data snapshots every 5 minutes.
 // This workflow:
 // 1. Executes IndexPoll activity to fetch current poll state from RPC
 // 2. Inserts snapshots directly to production poll_snapshots table
 //
-// Runs on a 20-second schedule via Temporal schedule (configured at startup).
+// Runs on a 5-minute schedule via Temporal schedule (configured at startup).
 //
 // ARCHITECTURAL NOTE: Unlike other indexing workflows, this is NOT height-based.
 // The /v1/gov/poll RPC endpoint does not support historical queries, so we capture

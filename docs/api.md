@@ -45,6 +45,14 @@
 - [POST /api/crosschain/resync/{chainID}/{table}](#resync-table-crosschain) - Resync specific table
 - [GET /api/crosschain/sync-status/{chainID}/{table}](#get-sync-status) - Get sync status for table
 
+### LP Position Snapshots
+- [POST /api/chains/{id}/lp-schedule](#create-lp-snapshot-schedule) - Create LP snapshot schedule
+- [POST /api/chains/{id}/lp-schedule/pause](#pause-lp-snapshot-schedule) - Pause LP snapshot schedule
+- [POST /api/chains/{id}/lp-schedule/unpause](#unpause-lp-snapshot-schedule) - Unpause LP snapshot schedule
+- [DELETE /api/chains/{id}/lp-schedule](#delete-lp-snapshot-schedule) - Delete LP snapshot schedule
+- [POST /api/chains/{id}/lp-snapshots/backfill](#trigger-lp-snapshot-backfill) - Trigger LP snapshot backfill
+- [GET /api/lp-snapshots](#query-lp-snapshots) - Query LP position snapshots
+
 <hr/>
 
 # System Endpoints
@@ -1166,6 +1174,384 @@ curl -X POST http://localhost:3000/api/crosschain/resync/1/accounts \
 ```bash
 curl -H "Authorization: Bearer devtoken" \
   http://localhost:3000/api/crosschain/sync-status/1/accounts
+```
+
+<hr/>
+
+# LP Position Snapshots
+
+LP Position Snapshots capture daily snapshots of liquidity provider positions across all chains. These snapshots are computed via scheduled Temporal workflows that run hourly per chain.
+
+## Create LP Snapshot Schedule
+
+**Route**: `POST /api/chains/{id}/lp-schedule`
+
+**Description**: Create an hourly LP snapshot schedule for a specific chain. Optionally trigger a backfill for historical data.
+
+**Authentication**: Required (Bearer token)
+
+**Path Parameters**:
+- **id**: Chain ID
+
+**Request**:
+```json
+{
+  "backfill": {
+    "start": "2024-01-01",
+    "end": "2024-12-31"
+  }
+}
+```
+
+**Request Fields**:
+- **backfill**: (Optional) Backfill configuration
+  - **start**: Start date (UTC, format: YYYY-MM-DD)
+  - **end**: End date (UTC, format: YYYY-MM-DD)
+  - If omitted, automatically calculates from block 1 to current indexed height
+
+**Response** (200 OK):
+```json
+{
+  "message": "LP snapshot schedule created successfully",
+  "chain_id": 1,
+  "schedule_id": "chain:1:lpsnapshot",
+  "backfill_triggered": true,
+  "backfill_start": "2024-01-01T00:00:00Z",
+  "backfill_end": "2024-12-31T00:00:00Z"
+}
+```
+
+**Response** (without backfill):
+```json
+{
+  "message": "LP snapshot schedule created successfully",
+  "chain_id": 1,
+  "schedule_id": "chain:1:lpsnapshot",
+  "backfill_triggered": false
+}
+```
+
+**Error Response** (400 Bad Request):
+```json
+{
+  "error": "schedule already exists"
+}
+```
+
+**Example**:
+```bash
+# Create schedule with automatic backfill range
+curl -X POST http://localhost:3000/api/chains/1/lp-schedule \
+  -H "Authorization: Bearer devtoken" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Create schedule with specific backfill dates
+curl -X POST http://localhost:3000/api/chains/1/lp-schedule \
+  -H "Authorization: Bearer devtoken" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backfill": {
+      "start": "2024-01-01",
+      "end": "2024-12-31"
+    }
+  }'
+```
+
+## Pause LP Snapshot Schedule
+
+**Route**: `POST /api/chains/{id}/lp-schedule/pause`
+
+**Description**: Pause an existing LP snapshot schedule for a chain
+
+**Authentication**: Required (Bearer token)
+
+**Path Parameters**:
+- **id**: Chain ID
+
+**Request**: None
+
+**Response**:
+```json
+{
+  "message": "LP snapshot schedule paused successfully",
+  "chain_id": 1,
+  "schedule_id": "chain:1:lpsnapshot"
+}
+```
+
+**Error Response** (404 Not Found):
+```json
+{
+  "error": "schedule not found"
+}
+```
+
+**Example**:
+```bash
+curl -X POST http://localhost:3000/api/chains/1/lp-schedule/pause \
+  -H "Authorization: Bearer devtoken"
+```
+
+## Unpause LP Snapshot Schedule
+
+**Route**: `POST /api/chains/{id}/lp-schedule/unpause`
+
+**Description**: Unpause a paused LP snapshot schedule. Optionally trigger a backfill to catch up on missed snapshots.
+
+**Authentication**: Required (Bearer token)
+
+**Path Parameters**:
+- **id**: Chain ID
+
+**Request**:
+```json
+{
+  "backfill": {
+    "start": "2024-06-01",
+    "end": "2024-12-31"
+  }
+}
+```
+
+**Request Fields**:
+- **backfill**: (Optional) Backfill configuration
+  - **start**: Start date (UTC, format: YYYY-MM-DD)
+  - **end**: End date (UTC, format: YYYY-MM-DD)
+  - If omitted, automatically calculates from block 1 to current indexed height
+
+**Response** (with backfill):
+```json
+{
+  "message": "LP snapshot schedule unpaused successfully",
+  "chain_id": 1,
+  "schedule_id": "chain:1:lpsnapshot",
+  "backfill_triggered": true,
+  "backfill_start": "2024-06-01T00:00:00Z",
+  "backfill_end": "2024-12-31T00:00:00Z"
+}
+```
+
+**Response** (without backfill):
+```json
+{
+  "message": "LP snapshot schedule unpaused successfully",
+  "chain_id": 1,
+  "schedule_id": "chain:1:lpsnapshot",
+  "backfill_triggered": false
+}
+```
+
+**Example**:
+```bash
+# Unpause without backfill
+curl -X POST http://localhost:3000/api/chains/1/lp-schedule/unpause \
+  -H "Authorization: Bearer devtoken"
+
+# Unpause with backfill
+curl -X POST http://localhost:3000/api/chains/1/lp-schedule/unpause \
+  -H "Authorization: Bearer devtoken" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backfill": {
+      "start": "2024-06-01",
+      "end": "2024-12-31"
+    }
+  }'
+```
+
+## Delete LP Snapshot Schedule
+
+**Route**: `DELETE /api/chains/{id}/lp-schedule`
+
+**Description**: Delete an LP snapshot schedule for a chain. Stops future snapshot computation.
+
+**Authentication**: Required (Bearer token)
+
+**Path Parameters**:
+- **id**: Chain ID
+
+**Request**: None
+
+**Response**:
+```json
+{
+  "message": "LP snapshot schedule deleted successfully",
+  "chain_id": 1,
+  "schedule_id": "chain:1:lpsnapshot"
+}
+```
+
+**Error Response** (404 Not Found):
+```json
+{
+  "error": "schedule not found"
+}
+```
+
+**Example**:
+```bash
+curl -X DELETE http://localhost:3000/api/chains/1/lp-schedule \
+  -H "Authorization: Bearer devtoken"
+```
+
+## Trigger LP Snapshot Backfill
+
+**Route**: `POST /api/chains/{id}/lp-snapshots/backfill`
+
+**Description**: Trigger a backfill for LP position snapshots for a specific date range. This endpoint can be used independently of schedule creation.
+
+**Authentication**: Required (Bearer token)
+
+**Path Parameters**:
+- **id**: Chain ID
+
+**Request**:
+```json
+{
+  "start": "2024-01-01",
+  "end": "2024-12-31"
+}
+```
+
+**Request Fields**:
+- **start**: (Optional) Start date (UTC, format: YYYY-MM-DD). If omitted, uses block 1 timestamp
+- **end**: (Optional) End date (UTC, format: YYYY-MM-DD). If omitted, uses current indexed height timestamp
+
+**Response**:
+```json
+{
+  "message": "LP snapshot backfill triggered successfully",
+  "chain_id": 1,
+  "schedule_id": "chain:1:lpsnapshot",
+  "start_date": "2024-01-01T00:00:00Z",
+  "end_date": "2024-12-31T00:00:00Z",
+  "estimated_days": 365
+}
+```
+
+**Error Response** (400 Bad Request):
+```json
+{
+  "error": "invalid date format, use YYYY-MM-DD"
+}
+```
+
+**Error Response** (404 Not Found):
+```json
+{
+  "error": "schedule not found, create schedule first"
+}
+```
+
+**Example**:
+```bash
+# Backfill with specific dates
+curl -X POST http://localhost:3000/api/chains/1/lp-snapshots/backfill \
+  -H "Authorization: Bearer devtoken" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start": "2024-01-01",
+    "end": "2024-12-31"
+  }'
+
+# Backfill with automatic range calculation
+curl -X POST http://localhost:3000/api/chains/1/lp-snapshots/backfill \
+  -H "Authorization: Bearer devtoken" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+## Query LP Snapshots
+
+**Route**: `GET /api/lp-snapshots`
+
+**Description**: Query LP position snapshots with filtering and pagination. Returns snapshots across all chains.
+
+**Authentication**: Required (Bearer token)
+
+**Query Parameters**:
+- **source_chain_id**: Filter by source chain ID
+- **address**: Filter by LP holder address
+- **pool_id**: Filter by pool ID
+- **start_date**: Filter snapshots >= this date (format: YYYY-MM-DD)
+- **end_date**: Filter snapshots <= this date (format: YYYY-MM-DD)
+- **active_only**: Only return active positions (true/false)
+- **limit**: Maximum number of results (default: 100, max: 1000)
+- **offset**: Pagination offset (default: 0)
+
+**Response**:
+```json
+{
+  "snapshots": [
+    {
+      "source_chain_id": 1,
+      "address": "851e90eaef1fa27debaee2c2591503bdeec1d123",
+      "pool_id": 42,
+      "snapshot_date": "2024-12-01",
+      "snapshot_height": 123456,
+      "snapshot_balance": 15000000,
+      "pool_share_percentage": 25464210,
+      "position_created_date": "2024-11-15",
+      "position_closed_date": null,
+      "is_position_active": 1,
+      "computed_at": "2024-12-01T01:05:23.456789Z",
+      "updated_at": "2024-12-01T01:05:23.456789Z"
+    },
+    {
+      "source_chain_id": 1,
+      "address": "851e90eaef1fa27debaee2c2591503bdeec1d123",
+      "pool_id": 42,
+      "snapshot_date": "2024-11-30",
+      "snapshot_height": 123000,
+      "snapshot_balance": 14800000,
+      "pool_share_percentage": 24832105,
+      "position_created_date": "2024-11-15",
+      "position_closed_date": null,
+      "is_position_active": 1,
+      "computed_at": "2024-11-30T01:03:12.123456Z",
+      "updated_at": "2024-11-30T01:03:12.123456Z"
+    }
+  ],
+  "total": 2,
+  "limit": 100,
+  "offset": 0
+}
+```
+
+**Response Fields**:
+- **source_chain_id**: Chain where LP position exists
+- **address**: LP holder address
+- **pool_id**: Liquidity pool identifier
+- **snapshot_date**: Calendar date of snapshot (UTC)
+- **snapshot_height**: Block height at snapshot time (highest block <= 23:59:59 UTC)
+- **snapshot_balance**: LP position balance at snapshot time (pre-calculated)
+- **pool_share_percentage**: Percentage of pool owned (6 decimal precision)
+  - Example: 25464210 = 25.464210%
+  - Formula: (points / total_points) * 100 * 1000000
+- **position_created_date**: Date when position was first created
+- **position_closed_date**: Date when position was closed (null if active)
+- **is_position_active**: 1 if position has points > 0, 0 if closed
+- **computed_at**: When this snapshot was computed
+- **updated_at**: When this snapshot was last updated (for deduplication)
+
+**Example**:
+```bash
+# Query specific address on specific chain
+curl -H "Authorization: Bearer devtoken" \
+  "http://localhost:3000/api/lp-snapshots?source_chain_id=1&address=851e90eaef1fa27debaee2c2591503bdeec1d123"
+
+# Query specific pool with date range
+curl -H "Authorization: Bearer devtoken" \
+  "http://localhost:3000/api/lp-snapshots?pool_id=42&start_date=2024-11-01&end_date=2024-12-31"
+
+# Query only active positions
+curl -H "Authorization: Bearer devtoken" \
+  "http://localhost:3000/api/lp-snapshots?active_only=true&limit=50"
+
+# Query with pagination
+curl -H "Authorization: Bearer devtoken" \
+  "http://localhost:3000/api/lp-snapshots?limit=100&offset=100"
 ```
 
 <hr/>

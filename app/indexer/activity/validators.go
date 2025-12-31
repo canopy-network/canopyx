@@ -2,14 +2,16 @@ package activity
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/alitto/pond/v2"
+	"github.com/canopy-network/canopy/fsm"
+	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
 	"go.uber.org/zap"
 )
 
@@ -45,12 +47,12 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 
 	// Parallel RPC fetch using shared worker pool for performance
 	var (
-		currentValidators     []*rpc.RpcValidator
-		previousValidators    []*rpc.RpcValidator
-		currentNonSigners     []*rpc.RpcNonSigner
-		previousNonSigners    []*rpc.RpcNonSigner
-		currentDoubleSigners  []*rpc.RpcDoubleSigner
-		previousDoubleSigners []*rpc.RpcDoubleSigner
+		currentValidators     []*fsm.Validator
+		previousValidators    []*fsm.Validator
+		currentNonSigners     []*fsm.NonSigner
+		previousNonSigners    []*fsm.NonSigner
+		currentDoubleSigners  []*lib.DoubleSigner
+		previousDoubleSigners []*lib.DoubleSigner
 		currentErr            error
 		previousErr           error
 		nonSignersErr         error
@@ -81,7 +83,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		}
 		if input.Height == 1 {
 			// Genesis case: whatever comes at height 1 is the genesis state
-			previousValidators = make([]*rpc.RpcValidator, 0)
+			previousValidators = make([]*fsm.Validator, 0)
 		} else if input.Height > 1 {
 			// Normal case: fetch from RPC at height-1
 			// This queries the validator state as it existed at the previous block
@@ -103,7 +105,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 			return
 		}
 		if input.Height == 1 {
-			previousNonSigners = make([]*rpc.RpcNonSigner, 0)
+			previousNonSigners = make([]*fsm.NonSigner, 0)
 		} else if input.Height > 1 {
 			previousNonSigners, prevNonSignersErr = cli.NonSignersByHeight(groupCtx, input.Height-1)
 		}
@@ -123,7 +125,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 			return
 		}
 		if input.Height == 1 {
-			previousDoubleSigners = make([]*rpc.RpcDoubleSigner, 0)
+			previousDoubleSigners = make([]*lib.DoubleSigner, 0)
 		} else if input.Height > 1 {
 			previousDoubleSigners, prevDoubleSignersErr = cli.DoubleSignersByHeight(groupCtx, input.Height-1)
 		}
@@ -159,20 +161,22 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 	}
 
 	// Build previous state maps for O(1) lookups
-	prevValidatorMap := make(map[string]*rpc.RpcValidator, len(previousValidators))
+	prevValidatorMap := make(map[string]*fsm.Validator, len(previousValidators))
 	for _, val := range previousValidators {
-		prevValidatorMap[val.Address] = val
+		prevValidatorMap[hex.EncodeToString(val.Address)] = val
 	}
 
-	prevNonSignerMap := make(map[string]*rpc.RpcNonSigner, len(previousNonSigners))
+	prevNonSignerMap := make(map[string]*fsm.NonSigner, len(previousNonSigners))
 	for _, ns := range previousNonSigners {
-		prevNonSignerMap[ns.Address] = ns
+		addrHex := hex.EncodeToString(ns.Address)
+		prevNonSignerMap[addrHex] = ns
 	}
 
 	// Build current non-signer map for joining with validators
-	currentNonSignerMap := make(map[string]*rpc.RpcNonSigner, len(currentNonSigners))
+	currentNonSignerMap := make(map[string]*fsm.NonSigner, len(currentNonSigners))
 	for _, ns := range currentNonSigners {
-		currentNonSignerMap[ns.Address] = ns
+		addrHex := hex.EncodeToString(ns.Address)
+		currentNonSignerMap[addrHex] = ns
 	}
 
 	// Query validator lifecycle events from staging table (event-driven state tracking)
@@ -184,11 +188,11 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 	// - EventTypeReward: validator rewarded (informational, doesn't change state)
 	validatorEvents, err := chainDb.GetEventsByTypeAndHeight(
 		ctx, input.Height, true,
-		rpc.EventTypeAsStr(rpc.EventTypeReward),
-		rpc.EventTypeAsStr(rpc.EventTypeSlash),
-		rpc.EventTypeAsStr(rpc.EventTypeAutomaticPause),
-		rpc.EventTypeAsStr(rpc.EventTypeAutomaticBeginUnstaking),
-		rpc.EventTypeAsStr(rpc.EventTypeAutomaticFinishUnstaking),
+		string(lib.EventTypeReward),
+		string(lib.EventTypeSlash),
+		string(lib.EventTypeAutoPause),
+		string(lib.EventTypeAutoBeginUnstaking),
+		string(lib.EventTypeFinishUnstaking),
 	)
 	if err != nil {
 		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("query validator events at height %d: %w", input.Height, err)
@@ -225,26 +229,27 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 	var numValidatorsNew, numValidatorsActive, numValidatorsPaused, numValidatorsUnstaking uint32
 
 	for _, curr := range currentValidators {
-		prev := prevValidatorMap[curr.Address]
+		addrHex := hex.EncodeToString(curr.Address)
+		prev := prevValidatorMap[addrHex]
 
 		// Check if validator state changed
 		changed := false
 		hasEvent := false
 
 		// Check for lifecycle events (state transitions)
-		if _, hasPause := pauseEvents[curr.Address]; hasPause {
+		if _, hasPause := pauseEvents[addrHex]; hasPause {
 			changed = true
 			hasEvent = true
 		}
-		if _, hasBeginUnstake := beginUnstakingEvents[curr.Address]; hasBeginUnstake {
+		if _, hasBeginUnstake := beginUnstakingEvents[addrHex]; hasBeginUnstake {
 			changed = true
 			hasEvent = true
 		}
-		if _, hasSlash := slashEvents[curr.Address]; hasSlash {
+		if _, hasSlash := slashEvents[addrHex]; hasSlash {
 			changed = true
 			hasEvent = true
 		}
-		if _, hasReward := rewardEvents[curr.Address]; hasReward {
+		if _, hasReward := rewardEvents[addrHex]; hasReward {
 			changed = true
 			hasEvent = true
 		}
@@ -259,11 +264,11 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 			// Compare all fields that affect validator state
 			// Note: Status is derived from MaxPausedHeight/UnstakingHeight, not compared directly
 			if curr.StakedAmount != prev.StakedAmount ||
-				curr.PublicKey != prev.PublicKey ||
+				hex.EncodeToString(curr.PublicKey) != hex.EncodeToString(prev.PublicKey) ||
 				curr.NetAddress != prev.NetAddress ||
 				curr.MaxPausedHeight != prev.MaxPausedHeight ||
 				curr.UnstakingHeight != prev.UnstakingHeight ||
-				curr.Output != prev.Output ||
+				hex.EncodeToString(curr.Output) != hex.EncodeToString(prev.Output) ||
 				curr.Delegate != prev.Delegate ||
 				curr.Compound != prev.Compound ||
 				!equalCommittees(curr.Committees, prev.Committees) {
@@ -275,11 +280,11 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		if changed {
 			// Create validator snapshot with all fields from RPC
 			val := &indexer.Validator{
-				Address:         curr.Address,
-				PublicKey:       curr.PublicKey,
+				Address:         addrHex,
+				PublicKey:       hex.EncodeToString(curr.PublicKey),
 				NetAddress:      curr.NetAddress,
 				StakedAmount:    curr.StakedAmount,
-				Output:          curr.Output,
+				Output:          hex.EncodeToString(curr.Output),
 				Committees:      curr.Committees,
 				MaxPausedHeight: curr.MaxPausedHeight,
 				UnstakingHeight: curr.UnstakingHeight,
@@ -309,7 +314,8 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 	var numSigningInfosNew uint32
 
 	for _, curr := range currentNonSigners {
-		prev := prevNonSignerMap[curr.Address]
+		addrHex := hex.EncodeToString(curr.Address)
+		prev := prevNonSignerMap[addrHex]
 
 		// Check if signing info changed
 		changed := false
@@ -338,7 +344,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 			}
 
 			signingInfo := &indexer.ValidatorSigningInfo{
-				Address:            curr.Address,
+				Address:            addrHex,
 				MissedBlocksCount:  curr.Counter, // Maps from RpcNonSigner.Counter
 				MissedBlocksWindow: missedBlocksWindow,
 				LastSignedHeight:   input.Height, // Current height as last signed
@@ -353,25 +359,27 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 	// Build previous double-signers map for O(1) lookups
 	prevDoubleSignersMap := make(map[string]uint64, len(previousDoubleSigners))
 	for _, ds := range previousDoubleSigners {
-		prevDoubleSignersMap[ds.Address] = uint64(len(ds.InfractionHeights))
+		addrHex := hex.EncodeToString(ds.Id)
+		prevDoubleSignersMap[addrHex] = uint64(len(ds.Heights))
 	}
 
 	// Compare and collect changed double-signing info
 	changedDoubleSigningInfos := make([]*indexer.ValidatorDoubleSigningInfo, 0)
 	for _, curr := range currentDoubleSigners {
-		currentCount := uint64(len(curr.InfractionHeights))
-		prevCount := prevDoubleSignersMap[curr.Address]
+		addrHex := hex.EncodeToString(curr.Id)
+		currentCount := uint64(len(curr.Heights))
+		prevCount := prevDoubleSignersMap[addrHex]
 
 		// Snapshot-on-change: only insert if evidence count changed
 		if currentCount != prevCount {
 			var firstHeight, lastHeight uint64
-			if len(curr.InfractionHeights) > 0 {
-				firstHeight = curr.InfractionHeights[0]
-				lastHeight = curr.InfractionHeights[len(curr.InfractionHeights)-1]
+			if len(curr.Heights) > 0 {
+				firstHeight = curr.Heights[0]
+				lastHeight = curr.Heights[len(curr.Heights)-1]
 			}
 
 			info := &indexer.ValidatorDoubleSigningInfo{
-				Address:             curr.Address,
+				Address:             addrHex,
 				EvidenceCount:       currentCount,
 				FirstEvidenceHeight: firstHeight,
 				LastEvidenceHeight:  lastHeight,
