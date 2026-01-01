@@ -48,10 +48,23 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 	client.Logger = logger
 	retryConfig := retry.DefaultConfig()
 
-	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000?sslmode=disable")
-	// Parse credentials and replica addresses from DSN
-	username, password := extractCredentials(dsn)
-	replicas := extractReplicas(dsn)
+	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000")
+
+	// Parse DSN using the official clickhouse-go parser
+	// This properly handles TLS configuration via ?secure=true/false parameter
+	options, err := clickhouse.ParseDSN(dsn)
+	if err != nil {
+		return Client{}, fmt.Errorf("failed to parse CLICKHOUSE_ADDR DSN: %w", err)
+	}
+
+	// Log TLS state for debugging
+	if logger != nil {
+		logger.Debug("Parsed ClickHouse DSN",
+			zap.String("dsn", dsn),
+			zap.Bool("tls_enabled", options.TLS != nil),
+			zap.Strings("addrs", options.Addr),
+		)
+	}
 
 	// First, connect without specifying a database to create it
 	debugEnabled := logger != nil && logger.Core().Enabled(zap.DebugLevel)
@@ -74,7 +87,7 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 	maxIdleConns := config.MaxIdleConns
 	connMaxLifetime := config.ConnMaxLifetime
 
-	// Parse connection strategy from environment
+	// Parse connection strategy from environment (override DSN if set)
 	// Strategies:
 	//   - in_order: Always use first replica, fallback to others on failure
 	//               Use for: Indexer (read-after-write consistency)
@@ -82,57 +95,57 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 	//               Use for: SuperApp/API (read distribution, high throughput)
 	//   - random: Random replica selection
 	//               Use for: SuperApp/API (load balancing)
-	connStrategy := parseConnOpenStrategy(utils.Env("CLICKHOUSE_CONN_STRATEGY", "in_order"))
-
-	options := &clickhouse.Options{
-		// Use array of replica addresses for failover
-		Addr: replicas,
-
-		// Connection strategy (configurable via CLICKHOUSE_CONN_STRATEGY)
-		// Default: in_order for backward compatibility and indexer read-after-write consistency
-		ConnOpenStrategy: connStrategy,
-
-		Auth: clickhouse.Auth{
-			Database: "default", // Connect to default database first
-			Username: username,
-			Password: password,
-		},
-		DialTimeout:     30 * time.Second, // Increased for high-concurrency scenarios with parallel cleanup
-		MaxOpenConns:    maxOpenConns,     // Configurable for testing
-		MaxIdleConns:    maxIdleConns,     // Configurable for testing
-		ConnMaxLifetime: connMaxLifetime,  // Configurable for testing
-		Compression: &clickhouse.Compression{
-			Method: clickhouse.CompressionLZ4,
-		},
-		Settings: clickhouse.Settings{
-			"prefer_column_name_to_alias":    1,
-			"allow_experimental_object_type": 1,
-			// Replication consistency: NOT NEEDED with ConnOpenInOrder
-			// ConnOpenInOrder ensures same-replica routing for read-after-write consistency
-			// Only use WithSequentialConsistency() for rare edge cases where you cannot
-			// guarantee same-replica routing (e.g., cross-service reads)
-		},
-		Debug: false,
+	connStrategyEnv := utils.Env("CLICKHOUSE_CONN_STRATEGY", "")
+	if connStrategyEnv != "" {
+		options.ConnOpenStrategy = parseConnOpenStrategy(connStrategyEnv)
+	} else if options.ConnOpenStrategy == 0 {
+		// Default to in_order if not set in DSN or env
+		options.ConnOpenStrategy = clickhouse.ConnOpenInOrder
 	}
+
+	// Override pool settings from config (takes precedence over DSN)
+	options.Auth.Database = "default" // Connect to default database first
+	options.DialTimeout = 30 * time.Second
+	options.MaxOpenConns = maxOpenConns
+	options.MaxIdleConns = maxIdleConns
+	options.ConnMaxLifetime = connMaxLifetime
+	options.Debug = false
+
+	// Set compression if not already set
+	if options.Compression == nil {
+		options.Compression = &clickhouse.Compression{
+			Method: clickhouse.CompressionLZ4,
+		}
+	}
+
+	// Merge settings
+	if options.Settings == nil {
+		options.Settings = make(clickhouse.Settings)
+	}
+	options.Settings["prefer_column_name_to_alias"] = 1
+	options.Settings["allow_experimental_object_type"] = 1
 
 	if debugEnabled {
 		sugar := logger.Named("clickhouse.driver").Sugar()
 		options.Debugf = sugar.Debugf
 	}
 
-	err := retry.WithBackoff(connCtx, retryConfig, logger, "clickhouse_connection", func() error {
+	retryErr := retry.WithBackoff(connCtx, retryConfig, logger, "clickhouse_connection", func() error {
 		// Open connection to a default database
-		conn, err := clickhouse.Open(options)
-		if err != nil {
-			return fmt.Errorf("failed to open clickhouse connection: %w", err)
+		conn, openErr := clickhouse.Open(options)
+		if openErr != nil {
+			return fmt.Errorf("failed to open clickhouse connection: %w", openErr)
 		}
 
 		client.Db = conn
 
-		client.Logger.Debug("Pinging ClickHouse connection")
-		err = client.Db.Ping(connCtx)
-		if err != nil {
-			return fmt.Errorf("failed to ping clickhouse: %w", err)
+		client.Logger.Debug("Pinging ClickHouse connection",
+			zap.String("db", dbName),
+			zap.String("component", config.Component),
+		)
+		pingErr := client.Db.Ping(connCtx)
+		if pingErr != nil {
+			return fmt.Errorf("failed to ping clickhouse: %w", pingErr)
 		}
 
 		// NOTE: Keep connection to 'default' database for now
@@ -144,8 +157,9 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 		client.Logger.Info("ClickHouse connection pool configured",
 			zap.String("database", dbName),
 			zap.String("component", config.Component),
-			zap.Strings("replicas", replicas),
-			zap.String("conn_strategy", formatConnOpenStrategy(connStrategy)),
+			zap.Strings("replicas", options.Addr),
+			zap.String("conn_strategy", formatConnOpenStrategy(options.ConnOpenStrategy)),
+			zap.Bool("tls_enabled", options.TLS != nil),
 			zap.Int("max_open_conns", maxOpenConns),
 			zap.Int("max_idle_conns", maxIdleConns),
 			zap.Duration("conn_max_lifetime", connMaxLifetime),
@@ -153,8 +167,8 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 		return nil
 	})
 
-	if err != nil {
-		return Client{}, err
+	if retryErr != nil {
+		return Client{}, retryErr
 	}
 
 	return client, nil
@@ -367,6 +381,55 @@ func (c *Client) PrepareBatch(ctx context.Context, query string) (driver.Batch, 
 // Close Helper method to close the connection
 func (c *Client) Close() error {
 	return c.Db.Close()
+}
+
+// SwitchToTargetDatabase closes the current connection and reconnects to the TargetDatabase.
+// This is useful when New() connected to 'default' database and you want to switch to
+// the actual target database without calling InitializeDB().
+// Returns an error if TargetDatabase is not set or if reconnection fails.
+func (c *Client) SwitchToTargetDatabase(ctx context.Context) error {
+	if c.TargetDatabase == "" {
+		return errors.New("TargetDatabase is not set")
+	}
+
+	// Re-parse the DSN to get connection options
+	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000")
+	options, err := clickhouse.ParseDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("failed to parse CLICKHOUSE_ADDR DSN: %w", err)
+	}
+
+	// Close the current connection
+	if err := c.Db.Close(); err != nil {
+		c.Logger.Warn("Failed to close existing connection during database switch", zap.Error(err))
+	}
+
+	// Set the target database and reconnect
+	options.Auth.Database = c.TargetDatabase
+	options.DialTimeout = 30 * time.Second
+
+	// Set compression if not already set
+	if options.Compression == nil {
+		options.Compression = &clickhouse.Compression{
+			Method: clickhouse.CompressionLZ4,
+		}
+	}
+
+	conn, err := clickhouse.Open(options)
+	if err != nil {
+		return fmt.Errorf("failed to open connection to database %s: %w", c.TargetDatabase, err)
+	}
+
+	// Verify connection
+	if err := conn.Ping(ctx); err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to ping database %s: %w", c.TargetDatabase, err)
+	}
+
+	c.Db = conn
+	c.Logger.Info("Switched to target database", zap.String("database", c.TargetDatabase))
+
+	return nil
 }
 
 // OnCluster returns ON CLUSTER statement

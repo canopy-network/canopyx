@@ -75,7 +75,8 @@ func (ac *Context) RecordIndexed(ctx context.Context, in types.ActivityRecordInd
 	return nil
 }
 
-// publishBlockIndexedEvent queries block and summary data, then publishes to Redis.
+// publishBlockIndexedEvent publishes to both Redis Pub/Sub (for real-time WebSocket)
+// and Redis Streams (for reliable, resumable consumption).
 func (ac *Context) publishBlockIndexedEvent(ctx context.Context, event *types.BlockIndexedEvent) error {
 	// Marshal to JSON
 	payload, err := json.Marshal(event)
@@ -83,21 +84,30 @@ func (ac *Context) publishBlockIndexedEvent(ctx context.Context, event *types.Bl
 		return err
 	}
 
-	// Publish to a Redis channel (if Redis is available)
-	// The Publish method handles errors internally and logs them
-	if ac.RedisClient != nil {
-		channel := utils.GetBlockIndexedChannel(ac.ChainID)
-		ac.RedisClient.Publish(ctx, channel, payload)
-
-		ac.Logger.Debug("Published block.indexed event",
-			zap.Uint64("chainId", ac.ChainID),
-			zap.Uint64("height", event.Height),
-			zap.String("channel", channel))
-	} else {
+	if ac.RedisClient == nil {
 		ac.Logger.Debug("Redis client not available, skipping event publication",
 			zap.Uint64("chainId", ac.ChainID),
 			zap.Uint64("height", event.Height))
+		return nil
 	}
+
+	// 1. Publish to Pub/Sub channel (real-time, fire-and-forget)
+	channel := utils.GetBlockIndexedChannel(ac.ChainID)
+	ac.RedisClient.Publish(ctx, channel, payload)
+
+	// 2. Add to Redis Stream (durable, resumable)
+	// Stream entries include chainId for filtering and the full payload
+	streamID := ac.RedisClient.XAdd(ctx, utils.StreamBlockIndexed, map[string]interface{}{
+		"chainId": ac.ChainID,
+		"height":  event.Height,
+		"data":    string(payload),
+	})
+
+	ac.Logger.Debug("Published block.indexed event",
+		zap.Uint64("chainId", ac.ChainID),
+		zap.Uint64("height", event.Height),
+		zap.String("channel", channel),
+		zap.String("streamId", streamID))
 
 	return nil
 }

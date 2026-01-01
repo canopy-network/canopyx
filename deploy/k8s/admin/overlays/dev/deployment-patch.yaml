@@ -7,10 +7,12 @@ metadata:
 spec:
   template:
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
       containers:
         - name: admin
-          image: canopyx-admin:latest
-          imagePullPolicy: IfNotPresent
+          image: docker.io/canopynetwork/canopyx-admin:latest
+          imagePullPolicy: Never
           env:
             # Logging - debug for dev
             - { name: LOG_LEVEL, value: "debug" }
@@ -21,19 +23,19 @@ spec:
             - { name: ADMIN_PASSWORD, value: "admin" }
             - { name: ADMIN_USERS, value: "" }
             - { name: SESSION_SECRET, value: "change-me-please" }
-            # ClickHouse connection - canopy-dev namespace
-            - { name: CLICKHOUSE_ADDR, value: "clickhouse://default:@clickhouse-hdx-oss-v2-clickhouse.canopy-dev.svc.cluster.local:9000?sslmode=disable" }
+            # ClickHouse connection - dev namespace
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://canopyx:canopyx@chi-canopyx-canopyx-0-0.dev.svc.cluster.local:9000" }
             - { name: CLICKHOUSE_CONN_STRATEGY, value: "in_order" }
             - { name: CLICKHOUSE_CONN_MAX_LIFETIME, value: "1h" }
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
             - { name: CROSSCHAIN_DB, value: "canopyx_cross_chain" }
-            # Temporal Connection - canopy-dev namespace
-            - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.canopy-dev.svc.cluster.local:7233" }
+            # Temporal Connection - dev namespace
+            - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.dev.svc.cluster.local:7233" }
             - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
-            # Redis Connection - canopy-dev namespace (OT Redis Operator)
+            # Redis Connection - dev namespace
             - { name: REDIS_ENABLED, value: "true" }
-            - { name: REDIS_HOST, value: "redis.canopy-dev.svc.cluster.local" }
+            - { name: REDIS_HOST, value: "redis.dev.svc.cluster.local" }
             - { name: REDIS_PORT, value: "6379" }
             - { name: REDIS_PASSWORD, value: "" }
           resources:

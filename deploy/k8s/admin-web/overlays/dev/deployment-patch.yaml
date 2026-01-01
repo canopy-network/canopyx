@@ -7,14 +7,16 @@ metadata:
 spec:
   template:
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
       containers:
         - name: admin-web
-          image: canopyx-admin-web:latest
-          imagePullPolicy: IfNotPresent
+          image: docker.io/canopynetwork/canopyx-admin-web:latest
+          imagePullPolicy: Never
           env:
-            # Backend API endpoint - canopy-dev namespace
+            # Backend API endpoint - dev namespace
             - name: ADMIN_API_BASE
-              value: "http://canopyx-admin.canopy-dev.svc.cluster.local:3000"
+              value: "http://canopyx-admin.dev.svc.cluster.local:3000"
             - name: NODE_ENV
               value: "production"
             - name: PORT
