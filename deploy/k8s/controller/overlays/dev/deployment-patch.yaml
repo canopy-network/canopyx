@@ -7,18 +7,22 @@ metadata:
 spec:
   template:
     spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
       containers:
         - name: controller
-          image: canopyx-controller:latest
-          imagePullPolicy: IfNotPresent
+          image: docker.io/canopynetwork/canopyx-controller:latest
+          imagePullPolicy: Never
           env:
             # Logging - debug for dev
             - { name: LOG_LEVEL, value: "debug" }
             # Controller server
             - { name: ADDR, value: ":3002" }
-            - { name: K8S_NAMESPACE, value: "canopy-dev" }
-            - { name: INDEXER_IMAGE, value: "canopyx-indexer" }
+            - { name: K8S_NAMESPACE, value: "dev" }
+            - { name: INDEXER_IMAGE, value: "docker.io/canopynetwork/canopyx-indexer" }
             - { name: INDEXER_TAG, value: "latest" }
+            - { name: INDEXER_PULL_POLICY, value: "Never" }
+            - { name: INDEXER_NODE_SELECTOR, value: "node-role.kubernetes.io/control-plane=true" }
             - { name: INDEXER_REPLICAS, value: "1" }
             - { name: INDEXER_ENABLE_HPA, value: "true" }
             - { name: INDEXER_HPA_MIN, value: "1" }
@@ -27,11 +31,11 @@ spec:
             - { name: INDEXER_CPU, value: "2000m" }
             - { name: INDEXER_MEM, value: "2Gi" }
             - { name: TEMPORAL_TASK_QUEUE_PREFIX, value: "index:" }
-            # Temporal Connection - canopy-dev namespace
-            - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.canopy-dev.svc.cluster.local:7233" }
+            # Temporal Connection - dev namespace
+            - { name: TEMPORAL_HOSTPORT, value: "temporal-frontend.dev.svc.cluster.local:7233" }
             - { name: TEMPORAL_NAMESPACE, value: "canopyx" }
-            # ClickHouse connection - canopy-dev namespace
-            - { name: CLICKHOUSE_ADDR, value: "clickhouse://default:@clickhouse-hdx-oss-v2-clickhouse.canopy-dev.svc.cluster.local:9000?sslmode=disable" }
+            # ClickHouse connection - dev namespace
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://canopyx:canopyx@chi-canopyx-canopyx-0-0.dev.svc.cluster.local:9000" }
             - { name: CLICKHOUSE_CONN_STRATEGY, value: "in_order" }
             - { name: CLICKHOUSE_CONN_MAX_LIFETIME, value: "1h" }
             # Parallelism configuration
@@ -40,8 +44,8 @@ spec:
             - { name: REINDEX_PARALLEL_BLOCKS, value: "10" }
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
-            # Redis - canopy-dev namespace (OT Redis Operator)
-            - { name: REDIS_HOST, value: "redis.canopy-dev.svc.cluster.local" }
+            # Redis - dev namespace
+            - { name: REDIS_HOST, value: "redis.dev.svc.cluster.local" }
             - { name: REDIS_PORT, value: "6379" }
             - { name: REDIS_PASSWORD, value: "" }
             - { name: REDIS_DB, value: "0" }
