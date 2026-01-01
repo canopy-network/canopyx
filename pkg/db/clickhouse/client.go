@@ -383,6 +383,55 @@ func (c *Client) Close() error {
 	return c.Db.Close()
 }
 
+// SwitchToTargetDatabase closes the current connection and reconnects to the TargetDatabase.
+// This is useful when New() connected to 'default' database and you want to switch to
+// the actual target database without calling InitializeDB().
+// Returns an error if TargetDatabase is not set or if reconnection fails.
+func (c *Client) SwitchToTargetDatabase(ctx context.Context) error {
+	if c.TargetDatabase == "" {
+		return errors.New("TargetDatabase is not set")
+	}
+
+	// Re-parse the DSN to get connection options
+	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000")
+	options, err := clickhouse.ParseDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("failed to parse CLICKHOUSE_ADDR DSN: %w", err)
+	}
+
+	// Close the current connection
+	if err := c.Db.Close(); err != nil {
+		c.Logger.Warn("Failed to close existing connection during database switch", zap.Error(err))
+	}
+
+	// Set the target database and reconnect
+	options.Auth.Database = c.TargetDatabase
+	options.DialTimeout = 30 * time.Second
+
+	// Set compression if not already set
+	if options.Compression == nil {
+		options.Compression = &clickhouse.Compression{
+			Method: clickhouse.CompressionLZ4,
+		}
+	}
+
+	conn, err := clickhouse.Open(options)
+	if err != nil {
+		return fmt.Errorf("failed to open connection to database %s: %w", c.TargetDatabase, err)
+	}
+
+	// Verify connection
+	if err := conn.Ping(ctx); err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to ping database %s: %w", c.TargetDatabase, err)
+	}
+
+	c.Db = conn
+	c.Logger.Info("Switched to target database", zap.String("database", c.TargetDatabase))
+
+	return nil
+}
+
 // OnCluster returns ON CLUSTER statement
 // This is required to force the replicas sync on some operations: https://clickhouse.com/docs/sql-reference/distributed-ddl
 func (c *Client) OnCluster() string {
