@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -386,12 +387,14 @@ func (c *Client) Close() error {
 // OnCluster returns ON CLUSTER statement
 // This is required to force the replicas sync on some operations: https://clickhouse.com/docs/sql-reference/distributed-ddl
 func (c *Client) OnCluster() string {
-	return "ON CLUSTER canopyx"
+	//return "ON CLUSTER canopyx"
+	return ""
 }
 
 // DbEngine returns the database engine type as a string.
 func (c *Client) DbEngine() string {
-	return "ENGINE = Atomic"
+	//return "ENGINE = Atomic"
+	return ""
 }
 
 // CreateDbIfNotExists ensures that the specified database exists by creating it if it does not already exist.
