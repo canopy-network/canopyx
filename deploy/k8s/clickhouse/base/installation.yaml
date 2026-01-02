@@ -61,12 +61,13 @@ spec:
 
     # Custom configuration files
     files:
-      # HOSTALIAS FIX: Add namespace macro for FQDN hostnames
-      # Used by remote_servers_fqdn.xml to construct proper hostnames
+      # HOSTALIAS FIX: Add cluster and namespace macros
+      # Note: from_env with default value requires replace="1" attribute
       config.d/macros.xml: |
         <clickhouse>
           <macros>
-            <namespace from_env="KUBERNETES_NAMESPACE">default</namespace>
+            <cluster>canopyx</cluster>
+            <namespace from_env="KUBERNETES_NAMESPACE" replace="1">dev</namespace>
           </macros>
         </clickhouse>
 
@@ -92,28 +93,34 @@ spec:
             <default_replica_name>{replica}</default_replica_name>
         </clickhouse>
 
+      # HOSTALIAS FIX: interserver_http_host left at default
+      # The FQDN remote_servers config is sufficient for DDL coordination
+      config.d/interserver-host.xml: |
+        <clickhouse>
+            <!-- interserver_http_host intentionally left at default -->
+        </clickhouse>
+
       # HOSTALIAS FIX: Override remote_servers with FQDN hostnames
       # The ClickHouse Operator adds HostAliases that map short hostnames to 127.0.0.1
       # This breaks distributed DDL because nodes can't coordinate via localhost
       # Using FQDN hostnames (.svc.cluster.local) bypasses the HostAlias and resolves correctly
-      # See doc/HOSTALIAS.md in deploy repo for full details
-      config.d/remote_servers_fqdn.xml: |
+      config.d/remote_servers_override.xml: |
         <clickhouse>
-            <remote_servers replace="true">
-                <canopyx>
-                    <shard>
-                        <internal_replication>true</internal_replication>
-                        <replica>
-                            <host>chi-canopyx-canopyx-0-0.{namespace}.svc.cluster.local</host>
-                            <port>9000</port>
-                        </replica>
-                        <replica>
-                            <host>chi-canopyx-canopyx-0-1.{namespace}.svc.cluster.local</host>
-                            <port>9000</port>
-                        </replica>
-                    </shard>
-                </canopyx>
-            </remote_servers>
+          <remote_servers replace="true">
+            <canopyx>
+              <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                  <host>chi-canopyx-canopyx-0-0.dev.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+                <replica>
+                  <host>chi-canopyx-canopyx-0-1.dev.svc.cluster.local</host>
+                  <port>9000</port>
+                </replica>
+              </shard>
+            </canopyx>
+          </remote_servers>
         </clickhouse>
 
       config.d/storage-policy.xml: |
