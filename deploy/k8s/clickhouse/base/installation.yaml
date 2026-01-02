@@ -113,10 +113,14 @@ spec:
                 <replica>
                   <host>chi-canopyx-canopyx-0-0.dev.svc.cluster.local</host>
                   <port>9000</port>
+                  <user>canopyx</user>
+                  <password>canopyx</password>
                 </replica>
                 <replica>
                   <host>chi-canopyx-canopyx-0-1.dev.svc.cluster.local</host>
                   <port>9000</port>
+                  <user>canopyx</user>
+                  <password>canopyx</password>
                 </replica>
               </shard>
             </canopyx>
