@@ -34,21 +34,14 @@ spec:
       session_timeout_ms: 30000     # 30s - Allow time for distributed DDL operations
       operation_timeout_ms: 10000   # 10s - DDL operations need more time than data operations
 
-    # Global settings (server-level configuration)
+    # Profile settings (user-level configuration)
+    # NOTE: max_connections and max_concurrent_queries are SERVER settings,
+    # not profile settings. They must be in configuration.files (see server-limits.xml below).
     settings:
       compression/case/method: "zstd"
       compression/case/level: "3"
       compression/case/min_part_size: "10485760"  # 10MB
       compression/case/min_part_size_ratio: "0.01"
-
-      # Connection pool optimization - Scaled for 100+ chains
-      # Calculation: 100 chains × 270 conns/chain = 27k connections
-      # Formula per chain: (25 parallel blocks × 10 activities × 1 conn) + 20 buffer = 270
-      # Plus admin (30) + controller (15) = minimal overhead
-      max_connections: "50000"  # 27k needed + buffer (was 20000)
-      # Concurrent queries: Each INSERT/SELECT counts as 1 query
-      # 100 chains × 25 parallel blocks × 10 concurrent activities = 25k peak writes
-      max_concurrent_queries: "30000"  # 25k peak + buffer for reads (was 5000)
 
       background_pool_size: "32"
       background_merges_mutations_concurrency_ratio: "4"
@@ -61,6 +54,20 @@ spec:
 
     # Custom configuration files
     files:
+      # Server-level limits (NOT profile settings)
+      # These control total connections and queries across ALL users
+      # Required for high-throughput indexing with multiple chains
+      config.d/server-limits.xml: |
+        <clickhouse>
+          <!-- Connection pool optimization - Scaled for 100+ chains -->
+          <!-- Calculation: 100 chains × 270 conns/chain = 27k connections -->
+          <!-- Formula per chain: (25 parallel blocks × 10 activities × 1 conn) + 20 buffer = 270 -->
+          <max_connections>50000</max_connections>
+          <!-- Concurrent queries: Each INSERT/SELECT counts as 1 query -->
+          <!-- 100 chains × 25 parallel blocks × 10 concurrent activities = 25k peak writes -->
+          <max_concurrent_queries>30000</max_concurrent_queries>
+        </clickhouse>
+
       # HOSTALIAS FIX: Add cluster and namespace macros
       # Note: from_env with default value requires replace="1" attribute
       config.d/macros.xml: |
