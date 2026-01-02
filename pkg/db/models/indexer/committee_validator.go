@@ -14,7 +14,7 @@ const CommitteeValidatorStagingTableName = "committee_validators_staging"
 // - Delta,ZSTD(3) for gradually changing amounts
 var CommitteeValidatorColumns = []ColumnDef{
 	{Name: "committee_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
-	{Name: "validator_address", Type: "String", Codec: "ZSTD(1)"},
+	{Name: "validator_address", Type: "String", Codec: "ZSTD(1)", CrossChainRename: "address"},
 	{Name: "staked_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "status", Type: "LowCardinality(String)", Codec: "ZSTD(1)"},
 	{Name: "delegate", Type: "Bool", Codec: "ZSTD(1)"},

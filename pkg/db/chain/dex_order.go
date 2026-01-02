@@ -1,86 +1,88 @@
 package chain
 
 import (
-	"context"
-	"fmt"
+    "context"
+    "fmt"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+    "github.com/canopy-network/canopyx/pkg/db/clickhouse"
+
+    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+    indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // initDexOrders initializes the dex_orders table and its staging table.
 // The production table uses aggressive compression for storage optimization.
 // The staging table has the same schema but no TTL (TTL only on production).
 func (db *DB) initDexOrders(ctx context.Context) error {
-	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.DexOrderColumns)
+    schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.DexOrderColumns)
 
-	// Production table: ORDER BY (order_id, height) for efficient order_id lookups
-	productionQuery := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    // Production table: ORDER BY (order_id, height) for efficient order_id lookups
+    productionQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (order_id, height)
-	`, db.Name, indexermodels.DexOrdersProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.DexOrdersProductionTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, productionQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.DexOrdersProductionTableName, err)
-	}
+	`, db.Name, indexermodels.DexOrdersProductionTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, productionQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.DexOrdersProductionTableName, err)
+    }
 
-	// Staging table: ORDER BY (height, order_id) for efficient cleanup/promotion WHERE height = ?
-	stagingQuery := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    // Staging table: ORDER BY (height, order_id) for efficient cleanup/promotion WHERE height = ?
+    stagingQuery := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (height, order_id)
-	`, db.Name, indexermodels.DexOrdersStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.DexOrdersStagingTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, stagingQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.DexOrdersStagingTableName, err)
-	}
+	`, db.Name, indexermodels.DexOrdersStagingTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, stagingQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.DexOrdersStagingTableName, err)
+    }
 
-	return nil
+    return nil
 }
 
 // InsertDexOrdersStaging persists staged DEX order snapshots for the chain.
 func (db *DB) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodels.DexOrder) error {
-	if len(orders) == 0 {
-		return nil
-	}
+    if len(orders) == 0 {
+        return nil
+    }
 
-	query := fmt.Sprintf(`INSERT INTO "%s"."dex_orders_staging" (
+    query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		order_id, height, height_time, committee, address,
 		amount_for_sale, requested_amount, state, success,
 		sold_amount, bought_amount, local_origin, locked_height
-	) VALUES`, db.Name)
+	) VALUES`, db.Name, indexermodels.DexOrdersStagingTableName)
 
-	batch, err := db.PrepareBatch(ctx, query)
-	if err != nil {
-		return err
-	}
-	defer func(batch driver.Batch) {
-		_ = batch.Abort()
-	}(batch)
+    batch, err := db.PrepareBatch(ctx, query)
+    if err != nil {
+        return err
+    }
+    defer func(batch driver.Batch) {
+        _ = batch.Abort()
+    }(batch)
 
-	for _, order := range orders {
-		err = batch.Append(
-			order.OrderID,
-			order.Height,
-			order.HeightTime,
-			order.Committee,
-			order.Address,
-			order.AmountForSale,
-			order.RequestedAmount,
-			order.State,
-			order.Success,
-			order.SoldAmount,
-			order.BoughtAmount,
-			order.LocalOrigin,
-			order.LockedHeight,
-		)
-		if err != nil {
-			return err
-		}
-	}
+    for _, order := range orders {
+        err = batch.Append(
+            order.OrderID,
+            order.Height,
+            order.HeightTime,
+            order.Committee,
+            order.Address,
+            order.AmountForSale,
+            order.RequestedAmount,
+            order.State,
+            order.Success,
+            order.SoldAmount,
+            order.BoughtAmount,
+            order.LocalOrigin,
+            order.LockedHeight,
+        )
+        if err != nil {
+            return err
+        }
+    }
 
-	return batch.Send()
+    return batch.Send()
 }
 
 // initDexOrderCreatedHeightView creates a materialized view to calculate the minimum height
@@ -92,8 +94,8 @@ func (db *DB) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodel
 //
 // Query usage: SELECT order_id, created_height FROM dex_order_created_height WHERE order_id = ?
 func (db *DB) initDexOrderCreatedHeightView(ctx context.Context) error {
-	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."dex_order_created_height" %s
+    query := fmt.Sprintf(`
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."dex_order_created_height"
 		ENGINE = %s
 		ORDER BY order_id
 		AS SELECT
@@ -101,7 +103,7 @@ func (db *DB) initDexOrderCreatedHeightView(ctx context.Context) error {
 			min(height) as created_height
 		FROM "%s"."dex_orders"
 		GROUP BY order_id
-	`, db.Name, db.OnCluster(), db.Engine("dex_order_created_height", "ReplacingMergeTree", "created_height"), db.Name)
+	`, db.Name, clickhouse.ReplicatedEngine(clickhouse.AggregatingMergeTree, ""), db.Name)
 
-	return db.Exec(ctx, query)
+    return db.Exec(ctx, query)
 }

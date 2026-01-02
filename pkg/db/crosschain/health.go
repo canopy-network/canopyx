@@ -2,10 +2,11 @@ package crosschain
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
-	"time"
 )
 
 // HealthStatus represents the overall health of the cross-chain sync system.

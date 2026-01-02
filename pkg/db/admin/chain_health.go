@@ -3,8 +3,9 @@ package admin
 import (
 	"context"
 	"fmt"
-	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"time"
+
+	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
 )
 
 // UpdateRPCHealth updates the RPC health status for a chain.

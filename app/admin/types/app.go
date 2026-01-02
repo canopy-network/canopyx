@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/canopy-network/canopyx/pkg/db/crosschain"
-	"go.temporal.io/sdk/worker"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/canopy-network/canopyx/pkg/db/crosschain"
+	"go.temporal.io/sdk/worker"
 
 	"github.com/canopy-network/canopyx/pkg/temporal/indexer"
 
@@ -135,9 +136,10 @@ func (a *App) ReconcileSchedules(ctx context.Context) error {
 	}
 
 	// Ensure a cross-chain compaction schedule
-	if err := a.EnsureCrossChainCompactionSchedule(ctx); err != nil {
-		return fmt.Errorf("failed to ensure cross-chain compaction schedule: %w", err)
-	}
+	// TODO: enable again once debugged to see why explodes.
+	//if err := a.EnsureCrossChainCompactionSchedule(ctx); err != nil {
+	//	return fmt.Errorf("failed to ensure cross-chain compaction schedule: %w", err)
+	//}
 
 	return nil
 }

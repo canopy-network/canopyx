@@ -243,7 +243,7 @@ func (c *Client) EnsureNamespace(ctx context.Context, retention time.Duration) e
 		return nil
 	}
 
-	// Check if error is "namespace not found" using type checking instead of string comparison
+	// Check if the error is "namespace not found" using type checking instead of string comparison
 	// This is more reliable across Temporal versions and error message format changes
 	var notFound *serviceerror.NamespaceNotFound
 	if !errors.As(err, &notFound) {
@@ -260,7 +260,9 @@ func (c *Client) EnsureNamespace(ctx context.Context, retention time.Duration) e
 		return fmt.Errorf("failed to register namespace: %w", err)
 	}
 
-	return nil
+	// let's call us again; it should detect we have the namespace now
+	time.Sleep(2 * time.Second) // give sometime to temporal server get the ns created.
+	return c.EnsureNamespace(ctx, retention)
 }
 
 // GetQueueStats fetches queue statistics using the DescribeTaskQueueEnhanced API.

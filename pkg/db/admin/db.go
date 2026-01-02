@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/canopy-network/canopyx/pkg/db/clickhouse"

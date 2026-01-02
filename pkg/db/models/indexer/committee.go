@@ -16,7 +16,7 @@ const (
 // - Delta,ZSTD(3) for gradually changing counts and chain_id
 // - ZSTD(1) for boolean flags
 var CommitteeColumns = []ColumnDef{
-	{Name: "chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)", CrossChainRename: "committee_chain_id"},
 	{Name: "last_root_height_updated", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "last_chain_height_updated", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "number_of_samples", Type: "UInt64", Codec: "Delta, ZSTD(3)"},

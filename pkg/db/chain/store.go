@@ -2,8 +2,9 @@ package chain
 
 import (
 	"context"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/canopy-network/canopyx/pkg/db/entities"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
@@ -40,9 +41,7 @@ type Store interface {
 	InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error
 	InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error
 	InsertCommitteePaymentsStaging(ctx context.Context, payments []*indexermodels.CommitteePayment) error
-	InsertPollSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
 	InsertPollSnapshots(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
-	InsertProposalSnapshotsStaging(ctx context.Context, snapshots []*indexermodels.ProposalSnapshot) error
 	InsertProposalSnapshots(ctx context.Context, snapshots []*indexermodels.ProposalSnapshot) error
 	InsertSupplyStaging(ctx context.Context, supplies []*indexermodels.Supply) error
 

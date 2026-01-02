@@ -113,6 +113,41 @@ func GetTableConfigs() []TableConfig {
 			SchemaSQL:        indexer.ColumnsToCrossChainSchemaSQL(indexer.TransactionColumns),
 			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.TransactionColumns),
 		},
+		{
+			TableName:        indexer.CommitteeProductionTableName,
+			PrimaryKey:       []string{"chain_id", "committee_chain_id", "height"},
+			HasAddressColumn: false,
+			SchemaSQL:        indexer.ColumnsToCrossChainSchemaSQL(indexer.CommitteeColumns),
+			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.CommitteeColumns),
+		},
+		{
+			TableName:        indexer.CommitteeValidatorProductionTableName,
+			PrimaryKey:       []string{"chain_id", "committee_id", "address", "height"},
+			HasAddressColumn: true,
+			SchemaSQL:        indexer.ColumnsToCrossChainSchemaSQL(indexer.CommitteeValidatorColumns),
+			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.CommitteeValidatorColumns),
+		},
+		{
+			TableName:        indexer.DexPricesProductionTableName,
+			PrimaryKey:       []string{"chain_id", "local_chain_id", "remote_chain_id", "height"},
+			HasAddressColumn: false,
+			SchemaSQL:        indexer.ColumnsToSchemaSQL(indexer.FilterCrossChainColumns(indexer.DexPriceColumns)),
+			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.DexPriceColumns),
+		},
+		{
+			TableName:        indexer.ParamsProductionTableName,
+			PrimaryKey:       []string{"chain_id", "height"},
+			HasAddressColumn: false,
+			SchemaSQL:        indexer.ColumnsToSchemaSQL(indexer.FilterCrossChainColumns(indexer.ParamsColumns)),
+			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.ParamsColumns),
+		},
+		{
+			TableName:        indexer.SupplyProductionTableName,
+			PrimaryKey:       []string{"chain_id", "height"},
+			HasAddressColumn: false,
+			SchemaSQL:        indexer.ColumnsToSchemaSQL(indexer.FilterCrossChainColumns(indexer.SupplyColumns)),
+			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.SupplyColumns),
+		},
 	}
 }
 
@@ -148,6 +183,16 @@ func GetColumnsForTable(tableName string) []indexer.ColumnDef {
 		return indexer.EventColumns
 	case indexer.TxsProductionTableName:
 		return indexer.TransactionColumns
+	case indexer.CommitteeProductionTableName:
+		return indexer.CommitteeColumns
+	case indexer.CommitteeValidatorProductionTableName:
+		return indexer.CommitteeValidatorColumns
+	case indexer.DexPricesProductionTableName:
+		return indexer.DexPriceColumns
+	case indexer.ParamsProductionTableName:
+		return indexer.ParamsColumns
+	case indexer.SupplyProductionTableName:
+		return indexer.SupplyColumns
 	default:
 		// Return empty slice for unknown tables (should never happen if validateTableName is used)
 		return []indexer.ColumnDef{}

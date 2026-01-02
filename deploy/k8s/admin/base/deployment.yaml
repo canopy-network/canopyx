@@ -36,7 +36,7 @@ spec:
             # ClickHouse connection - Multiple replicas for failover with ConnOpenInOrder strategy
             # Connects to replica-0 by default, falls back to replica-1 on failure
             # Provides read-after-write consistency without Keeper overhead
-            - { name: CLICKHOUSE_ADDR, value: "clickhouse://canopyx:canopyx@chi-canopyx-canopyx-0-0.default.svc.cluster.local:9000,chi-canopyx-canopyx-0-1.default.svc.cluster.local:9000?sslmode=disable" }
+            - { name: CLICKHOUSE_ADDR, value: "clickhouse://canopyx:canopyx@chi-canopyx-canopyx-0-0.default.svc.cluster.local:9000,chi-canopyx-canopyx-0-1.default.svc.cluster.local:9000?secure=false" }
             # ClickHouse connection strategy: in_order (default), round_robin, or random
             # in_order provides read-after-write consistency for admin operations
             - { name: CLICKHOUSE_CONN_STRATEGY, value: "in_order" }

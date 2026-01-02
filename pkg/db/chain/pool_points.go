@@ -1,80 +1,82 @@
 package chain
 
 import (
-	"context"
-	"fmt"
+    "context"
+    "fmt"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+    "github.com/canopy-network/canopyx/pkg/db/clickhouse"
+
+    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+    indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // initPoolPointsByHolder initializes the pool_points_by_holder table and its staging table.
 // This table stores versioned snapshots of liquidity provider pool points using the snapshot-on-change pattern.
 // Uses ReplacingMergeTree(height) to deduplicate and keep the latest state at each height.
 func (db *DB) initPoolPointsByHolder(ctx context.Context) error {
-	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PoolPointsByHolderColumns)
+    schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.PoolPointsByHolderColumns)
 
-	// Production table: ORDER BY (address, pool_id, height) for efficient address+pool_id lookups
-	productionQuery := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    // Production table: ORDER BY (address, pool_id, height) for efficient address+pool_id lookups
+    productionQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (address, pool_id, height)
-	`, db.Name, indexermodels.PoolPointsByHolderProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.PoolPointsByHolderProductionTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, productionQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderProductionTableName, err)
-	}
+	`, db.Name, indexermodels.PoolPointsByHolderProductionTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, productionQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderProductionTableName, err)
+    }
 
-	// Staging table: ORDER BY (height, address, pool_id) for efficient cleanup/promotion WHERE height = ?
-	stagingQuery := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    // Staging table: ORDER BY (height, address, pool_id) for efficient cleanup/promotion WHERE height = ?
+    stagingQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (height, address, pool_id)
-	`, db.Name, indexermodels.PoolPointsByHolderStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.PoolPointsByHolderStagingTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, stagingQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderStagingTableName, err)
-	}
+	`, db.Name, indexermodels.PoolPointsByHolderStagingTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, stagingQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.PoolPointsByHolderStagingTableName, err)
+    }
 
-	return nil
+    return nil
 }
 
 // InsertPoolPointsByHolderStaging inserts pool points snapshots to the staging table.
 // This follows the two-phase commit pattern for data consistency.
 func (db *DB) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error {
-	if len(holders) == 0 {
-		return nil
-	}
+    if len(holders) == 0 {
+        return nil
+    }
 
-	query := fmt.Sprintf(
-		`INSERT INTO "%s"."%s" (address, pool_id, height, height_time, committee, points, liquidity_pool_points, liquidity_pool_id) VALUES`,
-		db.Name, indexermodels.PoolPointsByHolderStagingTableName,
-	)
-	batch, err := db.PrepareBatch(ctx, query)
-	if err != nil {
-		return err
-	}
-	defer func(batch driver.Batch) {
-		_ = batch.Abort()
-	}(batch)
+    query := fmt.Sprintf(
+        `INSERT INTO "%s"."%s" (address, pool_id, height, height_time, committee, points, liquidity_pool_points, liquidity_pool_id) VALUES`,
+        db.Name, indexermodels.PoolPointsByHolderStagingTableName,
+    )
+    batch, err := db.PrepareBatch(ctx, query)
+    if err != nil {
+        return err
+    }
+    defer func(batch driver.Batch) {
+        _ = batch.Abort()
+    }(batch)
 
-	for _, holder := range holders {
-		err = batch.Append(
-			holder.Address,
-			holder.PoolID,
-			holder.Height,
-			holder.HeightTime,
-			holder.Committee,
-			holder.Points,
-			holder.LiquidityPoolPoints,
-			holder.LiquidityPoolID,
-		)
-		if err != nil {
-			return err
-		}
-	}
+    for _, holder := range holders {
+        err = batch.Append(
+            holder.Address,
+            holder.PoolID,
+            holder.Height,
+            holder.HeightTime,
+            holder.Committee,
+            holder.Points,
+            holder.LiquidityPoolPoints,
+            holder.LiquidityPoolID,
+        )
+        if err != nil {
+            return err
+        }
+    }
 
-	return batch.Send()
+    return batch.Send()
 }
 
 // initPoolPointsCreatedHeightView creates a materialized view to calculate the minimum height
@@ -85,8 +87,8 @@ func (db *DB) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*in
 //
 // Query usage: SELECT address, pool_id, created_height FROM pool_points_created_height WHERE address = ? AND pool_id = ?
 func (db *DB) initPoolPointsCreatedHeightView(ctx context.Context) error {
-	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."pool_points_created_height" %s
+    query := fmt.Sprintf(`
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."pool_points_created_height"
 		ENGINE = %s
 		ORDER BY (address, pool_id)
 		AS SELECT
@@ -95,7 +97,7 @@ func (db *DB) initPoolPointsCreatedHeightView(ctx context.Context) error {
 			min(height) as created_height
 		FROM "%s"."pool_points_by_holder"
 		GROUP BY address, pool_id
-	`, db.Name, db.OnCluster(), db.Engine("pool_points_created_height", "AggregatingMergeTree", ""), db.Name)
+	`, db.Name, clickhouse.ReplicatedEngine(clickhouse.AggregatingMergeTree, ""), db.Name)
 
-	return db.Exec(ctx, query)
+    return db.Exec(ctx, query)
 }

@@ -2,8 +2,9 @@ package admin
 
 import (
 	"context"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/admin"
 )

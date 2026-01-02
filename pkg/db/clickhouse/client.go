@@ -21,6 +21,7 @@ type Client struct {
 	Logger         *zap.Logger
 	Db             driver.Conn
 	TargetDatabase string // Target database name (may differ from the current connection)
+	IsCloud        bool   // True for ClickHouse Cloud (no ON CLUSTER needed), false for self-hosted
 }
 
 // PoolConfig defines connection pool settings for a specific component
@@ -46,12 +47,25 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 	defer cancel()
 
 	client.Logger = logger
+	client.IsCloud = strings.ToLower(os.Getenv("CLICKHOUSE_CLOUD")) == "true"
 	retryConfig := retry.DefaultConfig()
 
-	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000?sslmode=disable")
-	// Parse credentials and replica addresses from DSN
-	username, password := extractCredentials(dsn)
-	replicas := extractReplicas(dsn)
+	dsn := utils.Env("CLICKHOUSE_ADDR", "clickhouse://localhost:9000")
+	// Parse DSN using the official clickhouse-go parser
+	// This properly handles TLS configuration via ?secure=true/false parameter
+	options, err := clickhouse.ParseDSN(dsn)
+	if err != nil {
+		return Client{}, fmt.Errorf("failed to parse CLICKHOUSE_ADDR DSN: %w", err)
+	}
+
+	// Log TLS state for debugging
+	if logger != nil {
+		logger.Debug("Parsed ClickHouse DSN",
+			zap.String("dsn", dsn),
+			zap.Bool("tls_enabled", options.TLS != nil),
+			zap.Strings("addrs", options.Addr),
+		)
+	}
 
 	// First, connect without specifying a database to create it
 	debugEnabled := logger != nil && logger.Core().Enabled(zap.DebugLevel)
@@ -74,7 +88,7 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 	maxIdleConns := config.MaxIdleConns
 	connMaxLifetime := config.ConnMaxLifetime
 
-	// Parse connection strategy from environment
+	// Parse connection strategy from environment(override DSN if set)
 	// Strategies:
 	//   - in_order: Always use first replica, fallback to others on failure
 	//               Use for: Indexer (read-after-write consistency)
@@ -82,57 +96,58 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 	//               Use for: SuperApp/API (read distribution, high throughput)
 	//   - random: Random replica selection
 	//               Use for: SuperApp/API (load balancing)
-	connStrategy := parseConnOpenStrategy(utils.Env("CLICKHOUSE_CONN_STRATEGY", "in_order"))
-
-	options := &clickhouse.Options{
-		// Use array of replica addresses for failover
-		Addr: replicas,
-
-		// Connection strategy (configurable via CLICKHOUSE_CONN_STRATEGY)
-		// Default: in_order for backward compatibility and indexer read-after-write consistency
-		ConnOpenStrategy: connStrategy,
-
-		Auth: clickhouse.Auth{
-			Database: "default", // Connect to default database first
-			Username: username,
-			Password: password,
-		},
-		DialTimeout:     30 * time.Second, // Increased for high-concurrency scenarios with parallel cleanup
-		MaxOpenConns:    maxOpenConns,     // Configurable for testing
-		MaxIdleConns:    maxIdleConns,     // Configurable for testing
-		ConnMaxLifetime: connMaxLifetime,  // Configurable for testing
-		Compression: &clickhouse.Compression{
-			Method: clickhouse.CompressionLZ4,
-		},
-		Settings: clickhouse.Settings{
-			"prefer_column_name_to_alias":    1,
-			"allow_experimental_object_type": 1,
-			// Replication consistency: NOT NEEDED with ConnOpenInOrder
-			// ConnOpenInOrder ensures same-replica routing for read-after-write consistency
-			// Only use WithSequentialConsistency() for rare edge cases where you cannot
-			// guarantee same-replica routing (e.g., cross-service reads)
-		},
-		Debug: false,
+	connStrategyEnv := utils.Env("CLICKHOUSE_CONN_STRATEGY", "")
+	if connStrategyEnv != "" {
+		options.ConnOpenStrategy = parseConnOpenStrategy(connStrategyEnv)
+	} else if options.ConnOpenStrategy == 0 {
+		// Default to in_order if not set in DSN or env
+		options.ConnOpenStrategy = clickhouse.ConnOpenInOrder
 	}
+
+	// Override pool settings from config (takes precedence over DSN)
+	options.Auth.Database = "default" // Connect to default database first
+	options.DialTimeout = 30 * time.Second
+	options.MaxOpenConns = maxOpenConns
+	options.MaxIdleConns = maxIdleConns
+	options.ConnMaxLifetime = connMaxLifetime
+	options.Debug = false
+
+	// Set compression if not already set
+	if options.Compression == nil {
+		options.Compression = &clickhouse.Compression{
+			Method: clickhouse.CompressionLZ4,
+		}
+	}
+
+	// Merge settings
+	if options.Settings == nil {
+		options.Settings = make(clickhouse.Settings)
+	}
+
+	options.Settings["prefer_column_name_to_alias"] = 1
+	//options.Settings["allow_experimental_object_type"] = 1
 
 	if debugEnabled {
 		sugar := logger.Named("clickhouse.driver").Sugar()
 		options.Debugf = sugar.Debugf
 	}
 
-	err := retry.WithBackoff(connCtx, retryConfig, logger, "clickhouse_connection", func() error {
+	retryErr := retry.WithBackoff(connCtx, retryConfig, logger, "clickhouse_connection", func() error {
 		// Open connection to a default database
-		conn, err := clickhouse.Open(options)
-		if err != nil {
-			return fmt.Errorf("failed to open clickhouse connection: %w", err)
+		conn, openErr := clickhouse.Open(options)
+		if openErr != nil {
+			return fmt.Errorf("failed to open clickhouse connection: %w", openErr)
 		}
 
 		client.Db = conn
 
-		client.Logger.Debug("Pinging ClickHouse connection")
-		err = client.Db.Ping(connCtx)
-		if err != nil {
-			return fmt.Errorf("failed to ping clickhouse: %w", err)
+		client.Logger.Debug("Pinging ClickHouse connection",
+			zap.String("db", dbName),
+			zap.String("component", config.Component),
+		)
+		pingErr := client.Db.Ping(connCtx)
+		if pingErr != nil {
+			return fmt.Errorf("failed to ping clickhouse: %w", pingErr)
 		}
 
 		// NOTE: Keep connection to 'default' database for now
@@ -144,8 +159,9 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 		client.Logger.Info("ClickHouse connection pool configured",
 			zap.String("database", dbName),
 			zap.String("component", config.Component),
-			zap.Strings("replicas", replicas),
-			zap.String("conn_strategy", formatConnOpenStrategy(connStrategy)),
+			zap.Strings("replicas", options.Addr),
+			zap.String("conn_strategy", formatConnOpenStrategy(options.ConnOpenStrategy)),
+			zap.Bool("tls_enabled", options.TLS != nil),
 			zap.Int("max_open_conns", maxOpenConns),
 			zap.Int("max_idle_conns", maxIdleConns),
 			zap.Duration("conn_max_lifetime", connMaxLifetime),
@@ -153,8 +169,8 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 		return nil
 	})
 
-	if err != nil {
-		return Client{}, err
+	if retryErr != nil {
+		return Client{}, retryErr
 	}
 
 	return client, nil
@@ -369,23 +385,37 @@ func (c *Client) Close() error {
 	return c.Db.Close()
 }
 
-// OnCluster returns ON CLUSTER statement
-// This is required to force the replicas sync on some operations: https://clickhouse.com/docs/sql-reference/distributed-ddl
+// OnCluster returns ON CLUSTER statement for distributed DDL operations.
+// - ClickHouse Cloud (IsCloud=true): Returns "" (Cloud handles replication automatically)
+// - Self-hosted (IsCloud=false): Returns "ON CLUSTER canopyx"
+// See: https://clickhouse.com/docs/sql-reference/distributed-ddl
 func (c *Client) OnCluster() string {
+	if c.IsCloud {
+		return ""
+	}
 	return "ON CLUSTER canopyx"
 }
 
-// DbEngine returns the database engine type as a string.
+// DbEngine returns the database engine string based on deployment mode.
+// - ClickHouse Cloud (IsCloud=true): Returns "" (uses default Atomic engine, Cloud handles replication)
+// - Self-hosted (IsCloud=false): Returns Replicated engine for automatic DDL replication
+//
+// The Replicated database engine automatically replicates DDL (CREATE TABLE, etc.) across nodes
+// after the database is created with ON CLUSTER. Uses {uuid} macro which is resolved identically
+// across all replicas when used with ON CLUSTER.
 func (c *Client) DbEngine() string {
-	return "ENGINE = Atomic"
+	if c.IsCloud {
+		return "" // Cloud uses default Atomic, handles replication automatically
+	}
+	return "ENGINE = Replicated('/clickhouse/databases/{uuid}', '{shard}', '{replica}')"
 }
 
 // CreateDbIfNotExists ensures that the specified database exists by creating it if it does not already exist.
+// - Self-hosted: Uses ON CLUSTER + Replicated engine for DDL replication
+// - ClickHouse Cloud: No ON CLUSTER, default engine (Cloud handles replication)
 func (c *Client) CreateDbIfNotExists(ctx context.Context, dbName string) error {
-	// The expected result will be:
-	// CREATE DATABASE IF NOT EXISTS canopyx_indexer ON CLUSTER canopyx ENGINE = Atomic
 	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s %s %s", dbName, c.OnCluster(), c.DbEngine())
-	c.Logger.Info("Creating admin database", zap.String("database", dbName), zap.String("query", query))
+	c.Logger.Info("Creating database", zap.String("database", dbName), zap.String("query", query))
 	return c.Exec(ctx, query)
 }
 
@@ -433,107 +463,6 @@ func (c *Client) SelectWithFinal(ctx context.Context, dest interface{}, query st
 		return fmt.Errorf("SelectWithFinal called but query doesn't contain FINAL keyword - ensure FINAL is placed after table name")
 	}
 	return c.Db.Select(ctx, dest, query, args...)
-}
-
-// PartitionInfo represents metadata about a ClickHouse table partition
-type PartitionInfo struct {
-	Database       string    `ch:"database"`
-	Table          string    `ch:"table"`
-	Partition      string    `ch:"partition"`
-	PartitionID    string    `ch:"partition_id"`
-	Rows           uint64    `ch:"rows"`
-	Bytes          uint64    `ch:"bytes"`
-	MinDate        time.Time `ch:"min_date"`
-	MaxDate        time.Time `ch:"max_date"`
-	ModifyTime     time.Time `ch:"modification_time"`
-	RemoveTime     time.Time `ch:"remove_time"`
-	Active         uint8     `ch:"active"`
-	MinBlockNumber uint64    `ch:"min_block_number"`
-	MaxBlockNumber uint64    `ch:"max_block_number"`
-}
-
-// GetPartitions retrieves partition metadata for a given table.
-// This is useful for monitoring partition sizes, planning partition drops, and debugging.
-//
-// Example usage:
-//
-//	partitions, err := client.GetPartitions(ctx, "mydb", "events")
-//	for _, p := range partitions {
-//	    fmt.Printf("Partition %s: %d rows, %d bytes\n", p.Partition, p.Rows, p.Bytes)
-//	}
-func (c *Client) GetPartitions(ctx context.Context, database, table string) ([]PartitionInfo, error) {
-	query := `
-		SELECT
-			database,
-			table,
-			partition,
-			partition_id,
-			rows,
-			bytes,
-			min_date,
-			max_date,
-			modification_time,
-			remove_time,
-			active,
-			min_block_number,
-			max_block_number
-		FROM system.parts
-		WHERE database = ? AND table = ? AND active = 1
-		ORDER BY partition
-	`
-
-	var partitions []PartitionInfo
-	err := c.Select(ctx, &partitions, query, database, table)
-	if err != nil {
-		return nil, fmt.Errorf("get partitions for %s.%s: %w", database, table, err)
-	}
-
-	return partitions, nil
-}
-
-// DropOldPartitions drops partitions older than the specified retention period.
-// This is essential for managing disk space in time-series data.
-//
-// WARNING: This operation is irreversible. Ensure you have backups or understand
-// your retention requirements before calling this.
-//
-// Example usage:
-//
-//	// Drop partitions older than 90 days
-//	dropped, err := client.DropOldPartitions(ctx, "mydb", "events", 90*24*time.Hour)
-func (c *Client) DropOldPartitions(ctx context.Context, database, table string, retention time.Duration) ([]string, error) {
-	// Get all partitions
-	partitions, err := c.GetPartitions(ctx, database, table)
-	if err != nil {
-		return nil, err
-	}
-
-	cutoffTime := time.Now().Add(-retention)
-	droppedPartitions := make([]string, 0)
-
-	for _, p := range partitions {
-		// Check if partition's max_date is older than retention period
-		if p.MaxDate.Before(cutoffTime) {
-			// CRITICAL: Uses ON CLUSTER with replication_alter_partitions_sync setting
-			// replication_alter_partitions_sync=2 ensures partition drop completes on all replicas before returning
-			// Possible values: 0=async, 1=wait for local only (default), 2=wait for all replicas
-			dropQuery := fmt.Sprintf(`ALTER TABLE "%s"."%s" ON CLUSTER canopyx DROP PARTITION '%s' SETTINGS replication_alter_partitions_sync = 2`, database, table, p.Partition)
-			c.Logger.Info("Dropping old partition",
-				zap.String("database", database),
-				zap.String("table", table),
-				zap.String("partition", p.Partition),
-				zap.Time("max_date", p.MaxDate),
-				zap.Uint64("rows", p.Rows))
-
-			if err := c.Exec(ctx, dropQuery); err != nil {
-				return droppedPartitions, fmt.Errorf("drop partition %s: %w", p.Partition, err)
-			}
-
-			droppedPartitions = append(droppedPartitions, p.Partition)
-		}
-	}
-
-	return droppedPartitions, nil
 }
 
 // TableHealthStatus represents the health status of a table
@@ -639,13 +568,10 @@ func (c *Client) TableExists(ctx context.Context, database, table string) (bool,
 //
 //	err := client.OptimizeTable(ctx, "mydb", "events", false)
 func (c *Client) OptimizeTable(ctx context.Context, database, table string, final bool) error {
-	// CRITICAL: Uses ON CLUSTER with alter_sync setting to ensure optimization completes on all replicas
-	// alter_sync=2 waits for completion on all replicas (0=async, 1=local only, 2=all replicas)
 	query := fmt.Sprintf(`OPTIMIZE TABLE "%s"."%s" %s`, database, table, c.OnCluster())
 	if final {
 		query += " FINAL"
 	}
-	query += " SETTINGS alter_sync = 2"
 
 	c.Logger.Info("Optimizing table",
 		zap.String("database", database),
@@ -663,7 +589,7 @@ func (c *Client) OptimizeTable(ctx context.Context, database, table string, fina
 // No environment variable overrides - fixed values for predictable behavior.
 func GetPoolConfigForComponent(component string) *PoolConfig {
 	var maxOpen, maxIdle int
-	connMaxLifetime := 5 * time.Minute // Fixed 5 minute lifetime for all components
+	connMaxLifetime := 5 * time.Minute // Fixed 5-minute lifetime for all components
 
 	// Component-specific fixed values (no env overrides)
 	switch component {

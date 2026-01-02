@@ -1,11 +1,13 @@
 package chain
 
 import (
-	"context"
-	"fmt"
+    "context"
+    "fmt"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+    "github.com/canopy-network/canopyx/pkg/db/clickhouse"
+
+    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+    indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // initValidatorNonSigningInfo initializes the validator_non_signing_info table and its staging table.
@@ -17,33 +19,33 @@ import (
 // - ORDER BY (address, height): Enables efficient temporal queries
 // - Delta codec for monotonically increasing counters and heights
 func (db *DB) initValidatorNonSigningInfo(ctx context.Context) error {
-	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorNonSigningInfoColumns)
+    schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorNonSigningInfoColumns)
 
-	// Production table: ORDER BY (address, height) for efficient address lookups
-	productionQuery := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    // Production table: ORDER BY (address, height) for efficient address lookups
+    productionQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (address, height)
 		SETTINGS index_granularity = 8192
-	`, db.Name, indexermodels.ValidatorNonSigningInfoProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorNonSigningInfoProductionTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, productionQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.ValidatorNonSigningInfoProductionTableName, err)
-	}
+	`, db.Name, indexermodels.ValidatorNonSigningInfoProductionTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, productionQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.ValidatorNonSigningInfoProductionTableName, err)
+    }
 
-	// Staging table: ORDER BY (height, address) for efficient cleanup/promotion WHERE height = ?
-	stagingQuery := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    // Staging table: ORDER BY (height, address) for efficient cleanup/promotion WHERE height = ?
+    stagingQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (height, address)
 		SETTINGS index_granularity = 8192
-	`, db.Name, indexermodels.ValidatorNonSigningInfoStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorNonSigningInfoStagingTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, stagingQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.ValidatorNonSigningInfoStagingTableName, err)
-	}
+	`, db.Name, indexermodels.ValidatorNonSigningInfoStagingTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, stagingQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.ValidatorNonSigningInfoStagingTableName, err)
+    }
 
-	return nil
+    return nil
 }
 
 // InsertValidatorNonSigningInfoStaging inserts validator non-signing info snapshots to the staging table.
@@ -51,34 +53,34 @@ func (db *DB) initValidatorNonSigningInfo(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // Removed trash properties: missed_blocks_window, start_height (per issues.md)
 func (db *DB) InsertValidatorNonSigningInfoStaging(ctx context.Context, nonSigningInfos []*indexermodels.ValidatorNonSigningInfo) error {
-	if len(nonSigningInfos) == 0 {
-		return nil
-	}
+    if len(nonSigningInfos) == 0 {
+        return nil
+    }
 
-	query := fmt.Sprintf(
-		`INSERT INTO "%s"."%s" (address, missed_blocks_count, last_signed_height, height, height_time) VALUES`,
-		db.Name, indexermodels.ValidatorNonSigningInfoStagingTableName,
-	)
-	batch, err := db.PrepareBatch(ctx, query)
-	if err != nil {
-		return err
-	}
-	defer func(batch driver.Batch) {
-		_ = batch.Abort()
-	}(batch)
+    query := fmt.Sprintf(
+        `INSERT INTO "%s"."%s" (address, missed_blocks_count, last_signed_height, height, height_time) VALUES`,
+        db.Name, indexermodels.ValidatorNonSigningInfoStagingTableName,
+    )
+    batch, err := db.PrepareBatch(ctx, query)
+    if err != nil {
+        return err
+    }
+    defer func(batch driver.Batch) {
+        _ = batch.Abort()
+    }(batch)
 
-	for _, info := range nonSigningInfos {
-		err = batch.Append(
-			info.Address,
-			info.MissedBlocksCount,
-			info.LastSignedHeight,
-			info.Height,
-			info.HeightTime,
-		)
-		if err != nil {
-			return err
-		}
-	}
+    for _, info := range nonSigningInfos {
+        err = batch.Append(
+            info.Address,
+            info.MissedBlocksCount,
+            info.LastSignedHeight,
+            info.Height,
+            info.HeightTime,
+        )
+        if err != nil {
+            return err
+        }
+    }
 
-	return batch.Send()
+    return batch.Send()
 }

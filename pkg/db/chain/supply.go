@@ -1,75 +1,77 @@
 package chain
 
 import (
-	"context"
-	"fmt"
+    "context"
+    "fmt"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+    "github.com/canopy-network/canopyx/pkg/db/clickhouse"
+
+    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+    indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // initSupply initializes the supply table and its staging table.
 // Uses ReplacingMergeTree with height as the deduplication key.
 // Optimized for temporal queries (ORDER BY height).
 func (db *DB) initSupply(ctx context.Context) error {
-	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.SupplyColumns)
+    schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.SupplyColumns)
 
-	queryTemplate := `
-		CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    queryTemplate := `
+		CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY height
 		SETTINGS index_granularity = 8192
 	`
 
-	// Create production table
-	productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.SupplyProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.SupplyProductionTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, productionQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.SupplyProductionTableName, err)
-	}
+    // Create production table
+    productionQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.SupplyProductionTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, productionQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.SupplyProductionTableName, err)
+    }
 
-	// Create staging table
-	stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.SupplyStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.SupplyStagingTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, stagingQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.SupplyStagingTableName, err)
-	}
+    // Create staging table
+    stagingQuery := fmt.Sprintf(queryTemplate, db.Name, indexermodels.SupplyStagingTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, stagingQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.SupplyStagingTableName, err)
+    }
 
-	return nil
+    return nil
 }
 
 // InsertSupplyStaging inserts supply snapshots to the staging table.
 // This follows the two-phase commit pattern for data consistency.
 // Only changed supply metrics are inserted (snapshot-on-change pattern).
 func (db *DB) InsertSupplyStaging(ctx context.Context, supplies []*indexermodels.Supply) error {
-	if len(supplies) == 0 {
-		return nil
-	}
+    if len(supplies) == 0 {
+        return nil
+    }
 
-	query := fmt.Sprintf(
-		`INSERT INTO "%s"."supply_staging" (total, staked, delegated_only, height, height_time) VALUES`,
-		db.Name,
-	)
+    query := fmt.Sprintf(
+        `INSERT INTO "%s"."%s" (total, staked, delegated_only, height, height_time) VALUES`,
+        db.Name, indexermodels.SupplyStagingTableName,
+    )
 
-	batch, err := db.PrepareBatch(ctx, query)
-	if err != nil {
-		return err
-	}
-	defer func(batch driver.Batch) {
-		_ = batch.Abort()
-	}(batch)
+    batch, err := db.PrepareBatch(ctx, query)
+    if err != nil {
+        return err
+    }
+    defer func(batch driver.Batch) {
+        _ = batch.Abort()
+    }(batch)
 
-	for _, supply := range supplies {
-		err = batch.Append(
-			supply.Total,
-			supply.Staked,
-			supply.DelegatedOnly,
-			supply.Height,
-			supply.HeightTime,
-		)
-		if err != nil {
-			return err
-		}
-	}
+    for _, supply := range supplies {
+        err = batch.Append(
+            supply.Total,
+            supply.Staked,
+            supply.DelegatedOnly,
+            supply.Height,
+            supply.HeightTime,
+        )
+        if err != nil {
+            return err
+        }
+    }
 
-	return batch.Send()
+    return batch.Send()
 }

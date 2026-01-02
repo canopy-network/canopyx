@@ -3,6 +3,7 @@ package indexer
 import "time"
 
 const CommitteePaymentsProductionTableName = "committee_payments"
+const CommitteePaymentsStagingTableName = CommitteePaymentsProductionTableName + "_staging"
 
 // CommitteePaymentColumns defines the schema for the committee_payments table.
 var CommitteePaymentColumns = []ColumnDef{

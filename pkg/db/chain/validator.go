@@ -1,11 +1,13 @@
 package chain
 
 import (
-	"context"
-	"fmt"
+    "context"
+    "fmt"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+    "github.com/canopy-network/canopyx/pkg/db/clickhouse"
+
+    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+    indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // initValidators initializes the validators table and its staging table.
@@ -18,76 +20,76 @@ import (
 // - UInt8 for boolean fields (delegate, compound): ClickHouse doesn't have native bool
 // - Committee membership is tracked in committee_validators junction table instead
 func (db *DB) initValidators(ctx context.Context) error {
-	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorColumns)
+    schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ValidatorColumns)
 
-	// Production table: ORDER BY (address, height) for efficient address lookups
-	productionQuery := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    // Production table: ORDER BY (address, height) for efficient address lookups
+    productionQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (address, height)
 		SETTINGS index_granularity = 8192
-	`, db.Name, indexermodels.ValidatorsProductionTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorsProductionTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, productionQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.ValidatorsProductionTableName, err)
-	}
+	`, db.Name, indexermodels.ValidatorsProductionTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, productionQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.ValidatorsProductionTableName, err)
+    }
 
-	// Staging table: ORDER BY (height, address) for efficient cleanup/promotion WHERE height = ?
-	stagingQuery := fmt.Sprintf(`
-        CREATE TABLE IF NOT EXISTS "%s"."%s" %s (
+    // Staging table: ORDER BY (height, address) for efficient cleanup/promotion WHERE height = ?
+    stagingQuery := fmt.Sprintf(`
+        CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (height, address)
 		SETTINGS index_granularity = 8192
-	`, db.Name, indexermodels.ValidatorsStagingTableName, db.OnCluster(), schemaSQL, db.Engine(indexermodels.ValidatorsStagingTableName, "ReplacingMergeTree", "height"))
-	if err := db.Exec(ctx, stagingQuery); err != nil {
-		return fmt.Errorf("create %s: %w", indexermodels.ValidatorsStagingTableName, err)
-	}
+	`, db.Name, indexermodels.ValidatorsStagingTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "height"))
+    if err := db.Exec(ctx, stagingQuery); err != nil {
+        return fmt.Errorf("create %s: %w", indexermodels.ValidatorsStagingTableName, err)
+    }
 
-	return nil
+    return nil
 }
 
 // InsertValidatorsStaging inserts validator snapshots to the staging table.
 // Staging tables are used for new data before promotion to production.
 // This follows the two-phase commit pattern for data consistency.
 func (db *DB) InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error {
-	if len(validators) == 0 {
-		return nil
-	}
+    if len(validators) == 0 {
+        return nil
+    }
 
-	query := fmt.Sprintf(
-		`INSERT INTO "%s"."%s" (address, public_key, net_address, staked_amount, max_paused_height, unstaking_height, output, delegate, compound, status, height, height_time) VALUES`,
-		db.Name, indexermodels.ValidatorsStagingTableName,
-	)
-	batch, err := db.PrepareBatch(ctx, query)
-	if err != nil {
-		return err
-	}
-	defer func(batch driver.Batch) {
-		_ = batch.Abort()
-	}(batch)
+    query := fmt.Sprintf(
+        `INSERT INTO "%s"."%s" (address, public_key, net_address, staked_amount, max_paused_height, unstaking_height, output, delegate, compound, status, height, height_time) VALUES`,
+        db.Name, indexermodels.ValidatorsStagingTableName,
+    )
+    batch, err := db.PrepareBatch(ctx, query)
+    if err != nil {
+        return err
+    }
+    defer func(batch driver.Batch) {
+        _ = batch.Abort()
+    }(batch)
 
-	for _, validator := range validators {
-		err = batch.Append(
-			validator.Address,
-			validator.PublicKey,
-			validator.NetAddress,
-			validator.StakedAmount,
-			validator.MaxPausedHeight,
-			validator.UnstakingHeight,
-			validator.Output,
-			validator.Delegate,
-			validator.Compound,
-			validator.Status,
-			validator.Height,
-			validator.HeightTime,
-		)
-		if err != nil {
-			return err
-		}
-	}
+    for _, validator := range validators {
+        err = batch.Append(
+            validator.Address,
+            validator.PublicKey,
+            validator.NetAddress,
+            validator.StakedAmount,
+            validator.MaxPausedHeight,
+            validator.UnstakingHeight,
+            validator.Output,
+            validator.Delegate,
+            validator.Compound,
+            validator.Status,
+            validator.Height,
+            validator.HeightTime,
+        )
+        if err != nil {
+            return err
+        }
+    }
 
-	return batch.Send()
+    return batch.Send()
 }
 
 // initValidatorCreatedHeightView creates a materialized view to calculate the minimum height
@@ -99,8 +101,8 @@ func (db *DB) InsertValidatorsStaging(ctx context.Context, validators []*indexer
 //
 // Query usage: SELECT address, created_height FROM validator_created_height WHERE address = ?
 func (db *DB) initValidatorCreatedHeightView(ctx context.Context) error {
-	query := fmt.Sprintf(`
-		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."validator_created_height" %s
+    query := fmt.Sprintf(`
+		CREATE MATERIALIZED VIEW IF NOT EXISTS "%s"."validator_created_height"
 		ENGINE = %s
 		ORDER BY address
 		AS SELECT
@@ -108,7 +110,7 @@ func (db *DB) initValidatorCreatedHeightView(ctx context.Context) error {
 			min(height) as created_height
 		FROM "%s"."validators"
 		GROUP BY address
-	`, db.Name, db.OnCluster(), db.Engine("validator_created_height", "AggregatingMergeTree", ""), db.Name)
+	`, db.Name, clickhouse.ReplicatedEngine(clickhouse.AggregatingMergeTree, ""), db.Name)
 
-	return db.Exec(ctx, query)
+    return db.Exec(ctx, query)
 }
