@@ -64,10 +64,14 @@ spec:
             # Indexer image pull configuration (passed to indexer pods)
             # - { name: INDEXER_PULL_POLICY, value: "Always" }  # Always, IfNotPresent, Never
             # - { name: INDEXER_PULL_SECRET, value: "" }  # Name of imagePullSecret if needed
-            # Scheduler configuration (passed to indexer pods) - Customizable for different chain block times
+            # Scheduler configuration (passed to indexer pods)
+            # SCHEDULER_BATCH_SIZE: Limits blocks queued per gapscan run to prevent workflow storms
+            # Without this, gapscan queues ALL missing blocks at once, overwhelming ClickHouse
+            # Recommended: 100 blocks per batch with 5-minute gapscan interval
+            - { name: SCHEDULER_BATCH_SIZE, value: "100" }
+            # Other scheduler options (customize for different chain block times):
             # - { name: SCHEDULER_CATCHUP_THRESHOLD, value: "" }
             # - { name: DIRECT_SCHEDULE_BATCH_SIZE, value: "" }
-            # - { name: SCHEDULER_BATCH_SIZE, value: "" }
             # - { name: BLOCK_TIME_SECONDS, value: "" }
             # - { name: SCHEDULER_BATCH_MAX_PARALLELISM, value: "" }
             # Databases

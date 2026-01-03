@@ -38,6 +38,9 @@ spec:
             - { name: LIVE_PARALLEL_BLOCKS, value: "5" }
             - { name: HISTORICAL_PARALLEL_BLOCKS, value: "10" }
             - { name: REINDEX_PARALLEL_BLOCKS, value: "10" }
+            # Scheduler configuration - prevent workflow storms
+            # Limits blocks queued per gapscan run (default is unlimited)
+            - { name: SCHEDULER_BATCH_SIZE, value: "100" }
             # Databases
             - { name: INDEXER_DB, value: "canopyx_indexer" }
             # Redis - canopy-dev namespace (OT Redis Operator)
