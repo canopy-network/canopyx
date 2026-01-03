@@ -149,3 +149,26 @@ prometheus:
   enabled: false
 grafana:
   enabled: false
+
+# Dynamic config for runtime behavior
+# These settings control task queue rate limiting to prevent overload
+dynamicConfig:
+  # Rate limit task queues to prevent ClickHouse connection exhaustion
+  # Historical indexing spawns many workflows; without limits, all run concurrently
+  matching.taskQueueLimitPerBuildIdRatePerSecond:
+    # Historical indexing - slow and steady (5 blocks/sec = 18k blocks/hour)
+    # Regex matches any chain:*:index:historical queue
+    - value: 5
+      constraints:
+        taskQueueName: "{{regex:chain:[0-9]+:index:historical}}"
+    # Live indexing - faster to keep up with chain tip
+    - value: 10
+      constraints:
+        taskQueueName: "{{regex:chain:[0-9]+:index:live}}"
+    # Ops queues - moderate rate
+    - value: 15
+      constraints:
+        taskQueueName: "{{regex:chain:[0-9]+:ops}}"
+    # Default fallback
+    - value: 20
+      constraints: {}
