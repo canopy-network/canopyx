@@ -153,17 +153,7 @@ func (c *Controller) HandleCrossChainHealth(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Type assert to get the GetHealthStatus method
-	ccStore, ok := c.App.CrossChainDB.(interface {
-		GetHealthStatus(context.Context) (interface{}, error)
-	})
-	if !ok {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cross-chain store method not available"})
-		return
-	}
-
-	health, err := ccStore.GetHealthStatus(ctx)
+	health, err := c.App.CrossChainDB.GetHealthStatus(ctx)
 	if err != nil {
 		c.App.Logger.Error("Failed to get cross-chain health status", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
@@ -203,17 +193,7 @@ func (c *Controller) HandleCrossChainSyncStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Type assert to get the GetSyncStatus method
-	ccStore, ok := c.App.CrossChainDB.(interface {
-		GetSyncStatus(context.Context, uint64, string) (interface{}, error)
-	})
-	if !ok {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cross-chain store method not available"})
-		return
-	}
-
-	status, err := ccStore.GetSyncStatus(ctx, chainID, tableName)
+	status, err := c.App.CrossChainDB.GetSyncStatus(ctx, chainID, tableName)
 	if err != nil {
 		c.App.Logger.Error("Failed to get sync status",
 			zap.Uint64("chain_id", chainID),

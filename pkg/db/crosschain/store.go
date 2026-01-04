@@ -1,9 +1,10 @@
 package crosschain
 
 import (
+	"context"
+
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"golang.org/x/net/context"
 )
 
 type Store interface {

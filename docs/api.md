@@ -280,7 +280,79 @@ curl -X PATCH http://localhost:3000/api/chains/1 \
 
 **Route**: `DELETE /api/chains/{id}`
 
-**Description**: Delete a chain and stop indexing it
+**Description**: Delete a chain. Supports two modes:
+- **Soft delete** (default): Marks chain as deleted, pauses schedules, terminates running workflows. Data is preserved for recovery.
+- **Hard delete** (`?hard=true`): Permanently removes all chain data via async workflow. Cannot be undone.
+
+**Authentication**: Required (Bearer token)
+
+**Path Parameters**:
+- **id**: Chain ID
+
+**Query Parameters**:
+- **hard**: Set to `true` for permanent deletion (default: `false`)
+
+### Soft Delete (default)
+
+Performs the following operations synchronously:
+1. Pauses all Temporal schedules (headscan, gapscan, snapshots, etc.)
+2. Terminates all running workflows (batch operation)
+3. Marks chain as `deleted=1` in database
+4. Clears health status to "unknown"
+5. Clears in-memory caches
+
+**Response** (Soft Delete):
+```json
+{
+  "ok": "1"
+}
+```
+
+### Hard Delete (?hard=true)
+
+Performs the following operations:
+1. Deletes the chain's Temporal namespace (removes all workflows and schedules instantly)
+2. Clears in-memory caches
+3. Starts async `DeleteChainWorkflow` in admin namespace to clean all data
+
+The workflow runs 3 parallel activities:
+- **CleanCrossChainData**: Removes data from global cross-chain tables
+- **DropChainDatabase**: Drops the `chain_X` database
+- **CleanAdminTables**: Removes records from admin tables (endpoints, index_progress, reindex_requests, chain record)
+
+**Response** (Hard Delete):
+```json
+{
+  "status": "deletion_started",
+  "workflow_id": "delete-chain:1"
+}
+```
+
+The workflow can be tracked in the Temporal UI under the `canopyx` namespace.
+
+**Error Response** (500 Internal Server Error):
+```json
+{
+  "error": "failed to start delete workflow"
+}
+```
+
+**Examples**:
+```bash
+# Soft delete (recoverable)
+curl -X DELETE http://localhost:3000/api/chains/1 \
+  -H "Authorization: Bearer devtoken"
+
+# Hard delete (permanent)
+curl -X DELETE "http://localhost:3000/api/chains/1?hard=true" \
+  -H "Authorization: Bearer devtoken"
+```
+
+## Recover Chain
+
+**Route**: `POST /api/chains/{id}/recover`
+
+**Description**: Restore a soft-deleted chain. Unpauses schedules and re-enables indexing.
 
 **Authentication**: Required (Bearer token)
 
@@ -290,14 +362,15 @@ curl -X PATCH http://localhost:3000/api/chains/1 \
 **Response**:
 ```json
 {
-  "message": "Chain deleted successfully",
-  "chain_id": 1
+  "ok": "1"
 }
 ```
 
+**Note**: Only works for soft-deleted chains. Hard-deleted chains cannot be recovered.
+
 **Example**:
 ```bash
-curl -X DELETE http://localhost:3000/api/chains/1 \
+curl -X POST http://localhost:3000/api/chains/1/recover \
   -H "Authorization: Bearer devtoken"
 ```
 

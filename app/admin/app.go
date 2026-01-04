@@ -85,17 +85,23 @@ func Initialize(ctx context.Context) *types.App {
 	logger.Info("Cross-chain database initialized successfully",
 		zap.String("database", crossChainDB.Name))
 
-	temporalClient, err := temporal.NewClient(ctx, logger)
+	// Create multi-namespace Temporal client manager
+	temporalManager, err := temporal.NewClientManager(ctx, logger)
 	if err != nil {
-		logger.Fatal("Unable to establish temporal connection", zap.Error(err))
+		logger.Fatal("Unable to create temporal manager", zap.Error(err))
 	}
 
-	// Ensure the Temporal namespace exists
-	err = temporalClient.EnsureNamespace(ctx, 7*24*time.Hour)
+	// Get admin client and ensure namespace exists
+	adminClient, err := temporalManager.GetAdminClient(ctx)
 	if err != nil {
-		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
+		logger.Fatal("Unable to get admin temporal client", zap.Error(err))
 	}
-	logger.Info("Temporal namespace ready", zap.String("namespace", temporalClient.Namespace))
+
+	err = adminClient.EnsureNamespace(ctx, 7*24*time.Hour)
+	if err != nil {
+		logger.Fatal("Unable to ensure admin temporal namespace", zap.Error(err))
+	}
+	logger.Info("Admin Temporal namespace ready", zap.String("namespace", adminClient.Namespace))
 
 	// Initialize Redis client for real-time WebSocket events (optional)
 	var redisClient *redis.Client
@@ -118,8 +124,8 @@ func Initialize(ctx context.Context) *types.App {
 		CrossChainDB: crossChainDB,
 		ChainsDB:     xsync.NewMap[string, chainstore.Store](), // Initialize empty chain DB cache
 
-		// Temporal initialization
-		TemporalClient: temporalClient,
+		// Temporal initialization (multi-namespace support)
+		TemporalManager: temporalManager,
 
 		// Redis initialization
 		RedisClient: redisClient,
@@ -150,19 +156,20 @@ func Initialize(ctx context.Context) *types.App {
 
 	// Initialize Temporal maintenance worker for cross-chain compaction
 	activityContext := &activity.Context{
-		Logger:         logger,
-		CrossChainDB:   crossChainDB,
-		TemporalClient: temporalClient,
+		Logger:          logger,
+		AdminDB:         indexerDb,
+		CrossChainDB:    crossChainDB,
+		TemporalManager: temporalManager,
 	}
 	workflowContext := workflow.Context{
-		TemporalClient:  temporalClient,
+		TemporalManager: temporalManager,
 		ActivityContext: activityContext,
 	}
 
-	// Create a maintenance worker
+	// Create a maintenance worker on admin namespace
 	maintenanceWorker := worker.New(
-		temporalClient.TClient,
-		temporalClient.GetAdminMaintenanceQueue(),
+		adminClient.TClient,
+		adminClient.MaintenanceQueue, // "maintenance" (simplified)
 		worker.Options{
 			MaxConcurrentWorkflowTaskPollers:       5,
 			MaxConcurrentActivityTaskPollers:       5,
@@ -180,10 +187,23 @@ func Initialize(ctx context.Context) *types.App {
 		},
 	)
 
+	// Register delete chain workflow
+	maintenanceWorker.RegisterWorkflowWithOptions(
+		workflowContext.DeleteChainWorkflow,
+		temporalworkflow.RegisterOptions{
+			Name: temporaladmin.DeleteChainWorkflowName,
+		},
+	)
+
 	// Register compaction activities
 	maintenanceWorker.RegisterActivity(activityContext.CompactGlobalTable)
 	maintenanceWorker.RegisterActivity(activityContext.CompactAllGlobalTables)
 	maintenanceWorker.RegisterActivity(activityContext.LogCompactionSummary)
+
+	// Register delete chain activities
+	maintenanceWorker.RegisterActivity(activityContext.CleanCrossChainData)
+	maintenanceWorker.RegisterActivity(activityContext.DropChainDatabase)
+	maintenanceWorker.RegisterActivity(activityContext.CleanAdminTables)
 
 	app.MaintenanceWorker = maintenanceWorker
 	logger.Info("Maintenance worker initialized successfully")

@@ -36,8 +36,13 @@ func (c *Controller) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Check Temporal connection using CheckHealth method
-	if c.App.TemporalClient != nil {
-		if _, err := c.App.TemporalClient.TClient.CheckHealth(ctx, nil); err != nil {
+	if c.App.TemporalManager != nil {
+		adminClient, err := c.App.TemporalManager.GetAdminClient(ctx)
+		if err != nil {
+			c.App.Logger.Warn("Health check: Temporal admin client failed", zap.Error(err))
+			checks["temporal"] = "unhealthy: " + err.Error()
+			overallHealthy = false
+		} else if _, err := adminClient.TClient.CheckHealth(ctx, nil); err != nil {
 			c.App.Logger.Warn("Health check: Temporal connection failed", zap.Error(err))
 			checks["temporal"] = "unhealthy: " + err.Error()
 			overallHealthy = false

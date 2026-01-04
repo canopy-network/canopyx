@@ -6,7 +6,6 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
@@ -43,7 +42,7 @@ type App struct {
 	// Running tracks chains we believe are applied; helps us decide to stop /delete.
 	Running *xsync.Map[string, *Chain]
 
-	Temporal *temporal.Client
+	TemporalManager *temporal.ClientManager
 
 	queueCache *xsync.Map[string, cachedQueueStats]
 
@@ -110,25 +109,30 @@ func Initialize(ctx context.Context, provider Provider) (*App, error) {
 		logger.Fatal("unable to initialize indexer database", zap.Error(err))
 	}
 
-	temporalClient, err := temporal.NewClient(ctx, logger)
+	temporalManager, err := temporal.NewClientManager(ctx, logger)
 	if err != nil {
-		logger.Fatal("unable to initialize temporal client", zap.Error(err))
+		logger.Fatal("unable to initialize temporal client manager", zap.Error(err))
 	}
 
-	if err := temporalClient.EnsureNamespace(ctx, 7*24*time.Hour); err != nil {
-		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
+	// Ensure admin namespace exists for health checks
+	adminClient, err := temporalManager.GetAdminClient(ctx)
+	if err != nil {
+		logger.Fatal("unable to get admin temporal client", zap.Error(err))
 	}
-	logger.Info("Temporal namespace ready", zap.String("namespace", temporalClient.Namespace))
+	if err := adminClient.EnsureNamespace(ctx, 7*24*time.Hour); err != nil {
+		logger.Fatal("Unable to ensure admin temporal namespace", zap.Error(err))
+	}
+	logger.Info("Temporal admin namespace ready", zap.String("namespace", adminClient.Namespace))
 
 	app := &App{
-		IndexerDB:  indexerDb,
-		Cron:       nil,
-		CronSpec:   "*/15 * * * * *", // TODO: allow this to be set via env var?
-		Provider:   provider,
-		Running:    xsync.NewMap[string, *Chain](),
-		Temporal:   temporalClient,
-		queueCache: xsync.NewMap[string, cachedQueueStats](),
-		Logger:     logger,
+		IndexerDB:       indexerDb,
+		Cron:            nil,
+		CronSpec:        "*/15 * * * * *", // TODO: allow this to be set via env var?
+		Provider:        provider,
+		Running:         xsync.NewMap[string, *Chain](),
+		TemporalManager: temporalManager,
+		queueCache:      xsync.NewMap[string, cachedQueueStats](),
+		Logger:          logger,
 	}
 
 	if err := app.SetupScheduler(ctx, cron.DefaultLogger, app.CronSpec); err != nil {
@@ -208,8 +212,8 @@ func (a *App) StopCron() {
 	if err := a.Provider.Close(); err != nil {
 		a.Logger.Warn("provider close returned error", zap.Error(err))
 	}
-	if a.Temporal != nil && a.Temporal.TClient != nil {
-		a.Temporal.TClient.Close()
+	if a.TemporalManager != nil {
+		a.TemporalManager.Close()
 	}
 	a.Logger.Info("cron stopped")
 }
@@ -308,7 +312,7 @@ func (a *App) Reconcile(ctx context.Context) error {
 	// If any previously Running chain disappeared from desired, delete it.
 	var pruned int
 	a.Running.Range(func(q string, prev *Chain) bool {
-		chainID := strings.Split(q, ":")[1]
+		chainID := prev.ID // Use stored chain ID, not parsed from queue name
 		if _, ok := desiredSet[chainID]; !ok {
 			if err := a.Provider.DeleteChain(ctx, chainID); err != nil {
 				a.Logger.Warn("prune delete failed", zap.String("chain_id", chainID), zap.String("queue_id", q), zap.Error(err))
@@ -400,8 +404,17 @@ func (a *App) ReconcileReindexWorkers(ctx context.Context) error {
 		}
 
 		// Check reindex queue depth
-		reindexQueue := a.Temporal.GetIndexerReindexQueue(chain.ChainID)
-		pendingWorkflowTasks, pendingActivityTasks, _, _, err := a.Temporal.GetQueueStats(ctx, reindexQueue)
+		// Get the chain client to query queue stats in chain's namespace
+		chainClient, clientErr := a.TemporalManager.GetChainClient(ctx, chain.ChainID)
+		if clientErr != nil {
+			a.Logger.Warn("failed to get chain client for reindex queue",
+				zap.Uint64("chain_id", chain.ChainID),
+				zap.Error(clientErr))
+			continue
+		}
+
+		reindexQueue := chainClient.ReindexQueue
+		pendingWorkflowTasks, pendingActivityTasks, _, _, err := chainClient.GetQueueStats(ctx, reindexQueue)
 		if err != nil {
 			a.Logger.Warn("failed to get reindex queue stats",
 				zap.Uint64("chain_id", chain.ChainID),
@@ -530,9 +543,11 @@ func (a *App) populateChain(ctx context.Context, ch *Chain) {
 		return
 	}
 
-	// With dual-queue architecture, we have both live and historical queues
-	// For backward compatibility with display/logging, we'll show both queue names
-	ch.TaskQueue = fmt.Sprintf("%s,%s", a.Temporal.GetIndexerLiveQueue(chainIDUint), a.Temporal.GetIndexerHistoricalQueue(chainIDUint))
+	// With multi-namespace architecture, each chain has its own namespace
+	// Display: namespace/live,namespace/historical
+	config := temporal.DefaultNamespaceConfig()
+	namespace := config.ChainNamespace(chainIDUint)
+	ch.TaskQueue = fmt.Sprintf("%s/live,%s/historical", namespace, namespace)
 
 	if ch.Paused || ch.Deleted {
 		ch.Replicas = 0
@@ -665,8 +680,8 @@ func (a *App) updateDeploymentHealthStatus(ctx context.Context, chainID uint64) 
 
 func (a *App) fetchQueueStats(ctx context.Context, chainID uint64) (QueueStats, error) {
 	chainIDStr := strconv.FormatUint(chainID, 10)
-	if a.Temporal == nil {
-		return QueueStats{}, fmt.Errorf("temporal client not initialized")
+	if a.TemporalManager == nil {
+		return QueueStats{}, fmt.Errorf("temporal manager not initialized")
 	}
 	if cached, ok := a.queueCache.Load(chainIDStr); ok {
 		if time.Since(cached.fetched) < queueStatsTTL {
@@ -677,12 +692,18 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID uint64) (QueueStats, 
 	ctx, cancel := context.WithTimeout(ctx, queueRequestTimeout)
 	defer cancel()
 
-	// NEW: Get stats from BOTH queues (live and historical)
-	liveQueue := a.Temporal.GetIndexerLiveQueue(chainID)
-	historicalQueue := a.Temporal.GetIndexerHistoricalQueue(chainID)
+	// Get chain client to query stats in chain's namespace
+	chainClient, err := a.TemporalManager.GetChainClient(ctx, chainID)
+	if err != nil {
+		return QueueStats{}, fmt.Errorf("failed to get chain client: %w", err)
+	}
+
+	// Get stats from BOTH queues (live and historical) in chain namespace
+	liveQueue := chainClient.LiveQueue
+	historicalQueue := chainClient.HistoricalQueue
 
 	// Fetch live queue stats
-	livePendingWF, livePendingAct, livePollers, liveBacklogAge, liveErr := a.Temporal.GetQueueStats(ctx, liveQueue)
+	livePendingWF, livePendingAct, livePollers, liveBacklogAge, liveErr := chainClient.GetQueueStats(ctx, liveQueue)
 	if liveErr != nil {
 		a.Logger.Warn("failed to fetch live queue stats, continuing with historical",
 			zap.String("chain_id", chainIDStr),
@@ -697,7 +718,7 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID uint64) (QueueStats, 
 	}
 
 	// Fetch historical queue stats
-	histPendingWF, histPendingAct, histPollers, histBacklogAge, histErr := a.Temporal.GetQueueStats(ctx, historicalQueue)
+	histPendingWF, histPendingAct, histPollers, histBacklogAge, histErr := chainClient.GetQueueStats(ctx, historicalQueue)
 	if histErr != nil {
 		a.Logger.Warn("failed to fetch historical queue stats",
 			zap.String("chain_id", chainIDStr),

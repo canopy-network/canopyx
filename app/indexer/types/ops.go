@@ -54,7 +54,7 @@ type ActivityIndexAtHeight struct {
 // ActivityRecordIndexedInput contains the parameters for recording indexing progress with timing data.
 type ActivityRecordIndexedInput struct {
 	Height         uint64  `json:"height"`
-	IndexingTimeMs float64 `json:"indexingTimeMs"` // Total activity execution time in milliseconds
+	IndexingTimeMs float64 `json:"indexingTimeMs"` // Total workflow execution time in milliseconds
 	IndexingDetail string  `json:"indexingDetail"` // JSON string with breakdown of individual activity timings
 }
 

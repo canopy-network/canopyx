@@ -110,6 +110,8 @@ func New(ctx context.Context, logger *zap.Logger, dbName string, poolConfig ...*
 	options.MaxOpenConns = maxOpenConns
 	options.MaxIdleConns = maxIdleConns
 	options.ConnMaxLifetime = connMaxLifetime
+	options.BlockBufferSize = 10
+	options.MaxCompressionBuffer = 10240
 	options.Debug = false
 
 	// Set compression if not already set
@@ -247,9 +249,10 @@ func WithSequentialConsistency(ctx context.Context) context.Context {
 	}))
 }
 
-// WithInsertQuorum is REMOVED - not needed with ConnOpenInOrder connection strategy.
-// ConnOpenInOrder ensures we read from the same replica we wrote to, providing
-// read-after-write consistency without the overhead and timeout issues of quorum.
+// NOTE: insert_quorum and external aggregation settings are configured at the
+// ClickHouse server level in deploy/k8s/clickhouse/base/installation.yaml.
+// This provides consistent behavior across all queries and allows tuning
+// based on actual database resources without code changes.
 
 // SanitizeName sanitizes the provided database name to be compatible with ClickHouse.
 func SanitizeName(id string) string {
@@ -286,75 +289,6 @@ func ReplicatedEngine(engine, versionCol string) string {
 	return replicatedEngine
 }
 
-// extractReplicas parses comma-separated replica addresses from DSN
-// Supports formats:
-//   - Single host: clickhouse://user:pass@host:9000/db
-//   - Multiple hosts: clickhouse://user:pass@host1:9000,host2:9000/db
-//   - With query params: clickhouse://user:pass@host1:9000,host2:9000/db?sslmode=disable
-func extractReplicas(dsn string) []string {
-	// Remove protocol prefix
-	cleaned := strings.TrimPrefix(dsn, "clickhouse://")
-	cleaned = strings.TrimPrefix(cleaned, "tcp://")
-
-	// Extract host portion (between @ and / or ?)
-	hostPart := cleaned
-	if idx := strings.Index(cleaned, "@"); idx != -1 {
-		hostPart = cleaned[idx+1:]
-	}
-	if idx := strings.IndexAny(hostPart, "/?"); idx != -1 {
-		hostPart = hostPart[:idx]
-	}
-
-	// Split on comma for multiple replicas
-	replicas := strings.Split(hostPart, ",")
-
-	// Clean up and validate
-	result := make([]string, 0, len(replicas))
-	for _, r := range replicas {
-		r = strings.TrimSpace(r)
-		if r != "" {
-			result = append(result, r)
-		}
-	}
-
-	if len(result) == 0 {
-		return []string{"localhost:9000"}
-	}
-
-	return result
-}
-
-// extractCredentials extracts username and password from a DSN string
-// Format: clickhouse://username:password@host:port/...
-// Returns: username, password (defaults to "default" and "" if not found)
-func extractCredentials(dsn string) (string, string) {
-	// Remove protocol prefix
-	dsn = strings.TrimPrefix(dsn, "clickhouse://")
-	dsn = strings.TrimPrefix(dsn, "tcp://")
-
-	// Check if credentials are present (format: username:password@...)
-	atIdx := strings.Index(dsn, "@")
-	if atIdx == -1 {
-		// No credentials in DSN, use defaults
-		return "default", ""
-	}
-
-	// Extract credentials part (everything before @)
-	credentials := dsn[:atIdx]
-
-	// Split username:password
-	colonIdx := strings.Index(credentials, ":")
-	if colonIdx == -1 {
-		// Only username provided, no password
-		return credentials, ""
-	}
-
-	username := credentials[:colonIdx]
-	password := credentials[colonIdx+1:]
-
-	return username, password
-}
-
 // Exec Helper method to execute raw SQL queries
 func (c *Client) Exec(ctx context.Context, query string, args ...interface{}) error {
 	return c.Db.Exec(ctx, query, args...)
@@ -365,19 +299,50 @@ func (c *Client) QueryRow(ctx context.Context, query string, args ...interface{}
 	return c.Db.QueryRow(ctx, query, args...)
 }
 
-// Query Helper method to query multiple rows
+// Query Helper method to query multiple rows.
+// IMPORTANT: Caller MUST call rows.Close() when done to release the connection back to pool.
+// Prefer Select() when possible as it handles connection release automatically.
 func (c *Client) Query(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 	return c.Db.Query(ctx, query, args...)
 }
 
-// Select Helper method to select into a slice
+// Select Helper method to select into a slice.
+// This is the preferred method for queries as it automatically handles row closing
+// and releases the connection back to the pool immediately after scanning.
 func (c *Client) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	return c.Db.Select(ctx, dest, query, args...)
 }
 
+// QueryWithTimeout wraps Query with a query-level timeout.
+// This prevents long-running queries from holding connections indefinitely.
+// Uses ClickHouse's max_execution_time setting for server-side enforcement.
+func (c *Client) QueryWithTimeout(ctx context.Context, timeout time.Duration, query string, args ...interface{}) (driver.Rows, error) {
+	queryCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"max_execution_time": int(timeout.Seconds()),
+	}))
+	return c.Db.Query(queryCtx, query, args...)
+}
+
+// SelectWithTimeout wraps Select with a query-level timeout.
+// This is the preferred method for queries with timeout requirements.
+func (c *Client) SelectWithTimeout(ctx context.Context, timeout time.Duration, dest interface{}, query string, args ...interface{}) error {
+	queryCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"max_execution_time": int(timeout.Seconds()),
+	}))
+	return c.Db.Select(queryCtx, dest, query, args...)
+}
+
+// QueryRowWithTimeout wraps QueryRow with a query-level timeout.
+func (c *Client) QueryRowWithTimeout(ctx context.Context, timeout time.Duration, query string, args ...interface{}) driver.Row {
+	queryCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"max_execution_time": int(timeout.Seconds()),
+	}))
+	return c.Db.QueryRow(queryCtx, query, args...)
+}
+
 // PrepareBatch Helper method for batch inserts
 func (c *Client) PrepareBatch(ctx context.Context, query string) (driver.Batch, error) {
-	return c.Db.PrepareBatch(ctx, query)
+	return c.Db.PrepareBatch(ctx, query, driver.WithReleaseConnection())
 }
 
 // Close Helper method to close the connection

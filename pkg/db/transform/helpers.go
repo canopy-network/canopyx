@@ -10,14 +10,3 @@ func bytesToHex(b []byte) string {
 	}
 	return hex.EncodeToString(b)
 }
-
-// ptrHex converts a byte slice to a pointer to hex string.
-// Returns nil if byte slice is empty, otherwise returns pointer to hex string.
-// This is useful for optional fields in database models.
-func ptrHex(b []byte) *string {
-	if len(b) == 0 {
-		return nil
-	}
-	s := hex.EncodeToString(b)
-	return &s
-}

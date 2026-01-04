@@ -20,9 +20,9 @@ const LPPositionSnapshotsUpdateAtColumnName = "updated_at"
 // - DoubleDelta,ZSTD(1) for timestamps
 var LPPositionSnapshotColumns = []ColumnDef{
 	// Position Identity
-	{Name: "source_chain_id", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "source_chain_id", Type: "UInt16", Codec: "Delta, ZSTD(1)"},
 	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
-	{Name: "pool_id", Type: "UInt64", Codec: "Delta, ZSTD(1)"},
+	{Name: "pool_id", Type: "UInt32", Codec: "Delta, ZSTD(1)"},
 
 	// Snapshot Date & State
 	{Name: "snapshot_date", Type: "Date", Codec: "Delta, ZSTD(1)"},
@@ -32,7 +32,7 @@ var LPPositionSnapshotColumns = []ColumnDef{
 
 	// Position Lifecycle
 	{Name: "position_created_date", Type: "Date", Codec: "Delta, ZSTD(1)"},
-	{Name: "position_closed_date", Type: "Nullable(Date)", Codec: "ZSTD(1)"},
+	{Name: "position_closed_date", Type: "Date DEFAULT '1970-01-01'", Codec: "ZSTD(1)"}, // Default to epoch if not closed
 	{Name: "is_position_active", Type: "UInt8", Codec: "ZSTD(1)"},
 
 	// Metadata
@@ -60,9 +60,9 @@ var LPPositionSnapshotColumns = []ColumnDef{
 //   - Active positions: SELECT * FROM lp_position_snapshots_global FINAL WHERE source_chain_id = ? AND is_position_active = 1
 type LPPositionSnapshot struct {
 	// Position Identity - composite key for deduplication
-	SourceChainID uint64 `ch:"source_chain_id" json:"source_chain_id"` // Chain where LP staked
+	SourceChainID uint16 `ch:"source_chain_id" json:"source_chain_id"` // Chain where LP staked
 	Address       string `ch:"address" json:"address"`                 // LP holder address
-	PoolID        uint64 `ch:"pool_id" json:"pool_id"`                 // Liquidity pool ID
+	PoolID        uint32 `ch:"pool_id" json:"pool_id"`                 // Liquidity pool ID
 
 	// Snapshot Date & State
 	SnapshotDate        time.Time `ch:"snapshot_date" json:"snapshot_date"`                 // Calendar date (UTC) of snapshot
@@ -71,9 +71,9 @@ type LPPositionSnapshot struct {
 	PoolSharePercentage uint64    `ch:"pool_share_percentage" json:"pool_share_percentage"` // Pool share with 6 decimals (25.46421% = 25464210)
 
 	// Position Lifecycle
-	PositionCreatedDate time.Time  `ch:"position_created_date" json:"position_created_date"` // Date when position first created (points > 0)
-	PositionClosedDate  *time.Time `ch:"position_closed_date" json:"position_closed_date"`   // Date when position closed (points = 0), nil if active
-	IsPositionActive    uint8      `ch:"is_position_active" json:"is_position_active"`       // 1 if position currently active, 0 if closed
+	PositionCreatedDate time.Time `ch:"position_created_date" json:"position_created_date"` // Date when position first created (points > 0)
+	PositionClosedDate  time.Time `ch:"position_closed_date" json:"position_closed_date"`   // Date when position closed (points = 0), epoch default if active
+	IsPositionActive    uint8     `ch:"is_position_active" json:"is_position_active"`       // 1 if position currently active, 0 if closed
 
 	// Metadata
 	ComputedAt time.Time `ch:"computed_at" json:"computed_at"` // When snapshot was computed

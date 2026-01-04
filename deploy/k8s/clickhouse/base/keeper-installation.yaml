@@ -35,6 +35,14 @@ spec:
       keeper_server/coordination_settings/election_timeout_lower_bound_ms: "1000"  # Fast leader election
       keeper_server/coordination_settings/election_timeout_upper_bound_ms: "2000"
 
+      # Throughput optimizations - critical for high-volume indexing
+      keeper_server/coordination_settings/force_sync: "false"                      # Async disk writes (faster, less durable on crash)
+      keeper_server/coordination_settings/max_requests_batch_size: "1000"          # Batch more requests together (default: 100)
+      keeper_server/coordination_settings/max_requests_batch_bytes_size: "1048576" # 1MB batch size (default: 100KB)
+      keeper_server/coordination_settings/max_flush_batch_size: "5000"             # More commits per flush (default: 1000)
+      keeper_server/coordination_settings/max_request_queue_size: "1000000"        # Larger request queue (default: 100K)
+      keeper_server/coordination_settings/compress_logs: "true"                    # Compress Raft logs (saves disk I/O)
+
   templates:
     podTemplates:
       - name: clickhouse-keeper-pod

@@ -17,22 +17,23 @@ data:
         '' close;
       }
 
-      # Upstream services
-      upstream admin_web {
-        server canopyx-admin-web.default.svc.cluster.local:3003;
-      }
-
-      upstream admin_api {
-        server canopyx-admin.default.svc.cluster.local:3000;
-      }
+      # Use Kubernetes DNS resolver with short TTL for dynamic re-resolution
+      # kube-dns runs at this address in most k8s clusters
+      resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
+      resolver_timeout 5s;
 
       server {
         listen 80;
         server_name _;
 
+        # Define backend addresses as variables to force DNS re-resolution
+        set $admin_web_backend "canopyx-admin-web.default.svc.cluster.local:3003";
+        set $admin_api_backend "canopyx-admin.default.svc.cluster.local:3000";
+
         # Admin API WebSocket endpoint (migrated from query service)
         location /api/admin/ws {
-          proxy_pass http://admin_api/api/ws;
+          rewrite ^/api/admin/ws(.*)$ /api/ws$1 break;
+          proxy_pass http://$admin_api_backend;
           proxy_http_version 1.1;
           proxy_set_header Upgrade $http_upgrade;
           proxy_set_header Connection $connection_upgrade;
@@ -48,7 +49,8 @@ data:
 
         # Admin API
         location /api/admin/ {
-          proxy_pass http://admin_api/api/;
+          rewrite ^/api/admin/(.*)$ /api/$1 break;
+          proxy_pass http://$admin_api_backend;
           proxy_http_version 1.1;
           proxy_set_header Host $host;
           proxy_set_header X-Real-IP $remote_addr;
@@ -58,7 +60,8 @@ data:
 
         # Admin API (legacy /api/* routes)
         location /api/ {
-          proxy_pass http://admin_api/api/;
+          rewrite ^/api/(.*)$ /api/$1 break;
+          proxy_pass http://$admin_api_backend;
           proxy_http_version 1.1;
           proxy_set_header Host $host;
           proxy_set_header X-Real-IP $remote_addr;
@@ -69,7 +72,7 @@ data:
         # All other requests - Admin Web (Next.js)
         # Includes support for Next.js HMR WebSocket (/_next/webpack-hmr)
         location / {
-          proxy_pass http://admin_web;
+          proxy_pass http://$admin_web_backend;
           proxy_http_version 1.1;
           proxy_set_header Upgrade $http_upgrade;
           proxy_set_header Connection $connection_upgrade;

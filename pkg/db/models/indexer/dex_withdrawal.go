@@ -14,7 +14,7 @@ var DexWithdrawalColumns = []ColumnDef{
 	{Name: "order_id", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
 	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
-	{Name: "committee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "committee", Type: "UInt16", Codec: "Delta, ZSTD(1)"},
 	{Name: "address", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "percent", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "state", Type: "LowCardinality(String)"},
@@ -48,7 +48,7 @@ type DexWithdrawal struct {
 	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 
 	// Chain context
-	Committee uint64 `ch:"committee" json:"committee"` // Committee ID (pool's chain ID)
+	Committee uint16 `ch:"committee" json:"committee"` // Committee ID (pool's chain ID)
 
 	// Withdrawal details (from DexLiquidityWithdraw)
 	Address string `ch:"address" json:"address"` // Hex string representation of address

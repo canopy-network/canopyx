@@ -30,7 +30,7 @@ func (wc *Context) CompactCrossChainTablesWorkflow(ctx workflow.Context) (types.
 			MaximumInterval:    30 * time.Second,
 			MaximumAttempts:    3, // Limited retries - if compaction fails, log it and continue
 		},
-		TaskQueue: wc.TemporalClient.GetAdminMaintenanceQueue(),
+		TaskQueue: "maintenance", // Simplified admin queue name (in canopyx namespace)
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 

@@ -159,7 +159,7 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 	currentCommittees := make(map[uint64]*indexermodels.Committee)
 	for _, rpcCommittee := range committeesAtH {
 		currentCommittees[rpcCommittee.ChainId] = &indexermodels.Committee{
-			ChainID:                rpcCommittee.ChainId,
+			ChainID:                uint16(rpcCommittee.ChainId),
 			LastRootHeightUpdated:  rpcCommittee.LastRootHeightUpdated,
 			LastChainHeightUpdated: rpcCommittee.LastChainHeightUpdated,
 			NumberOfSamples:        rpcCommittee.NumberOfSamples,
@@ -193,7 +193,7 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 		prevMap := make(map[uint64]*indexermodels.Committee)
 		for _, rpcCommittee := range committeesAtH1 {
 			prevMap[rpcCommittee.ChainId] = &indexermodels.Committee{
-				ChainID:                rpcCommittee.ChainId,
+				ChainID:                uint16(rpcCommittee.ChainId),
 				LastRootHeightUpdated:  rpcCommittee.LastRootHeightUpdated,
 				LastChainHeightUpdated: rpcCommittee.LastChainHeightUpdated,
 				NumberOfSamples:        rpcCommittee.NumberOfSamples,
@@ -229,18 +229,7 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 			zap.Int("changedCommittees", len(changedCommittees)))
 	}
 
-	// Only insert if committees changed (sparse insert)
-	if len(changedCommittees) > 0 {
-		if err := chainDb.InsertCommitteesStaging(ctx, changedCommittees); err != nil {
-			return types.ActivityIndexCommitteesOutput{}, err
-		}
-		ac.Logger.Info("Committees changed, inserted to staging",
-			zap.Uint64("height", in.Height),
-			zap.Uint64("chainID", ac.ChainID),
-			zap.Int("numChanged", len(changedCommittees)))
-	}
-
-	// Extract and insert payment percents for all committees at height H
+	// Extract payment percents for all committees at height H BEFORE inserts
 	// PaymentPercents track reward distribution for each committee
 	var payments []*indexermodels.CommitteePayment
 	for _, rpcCommittee := range committeesAtH {
@@ -255,11 +244,56 @@ func (ac *Context) IndexCommittees(ctx context.Context, in types.ActivityIndexAt
 		}
 	}
 
-	// Insert payment percents to staging (always insert, even if committees didn't change)
+	// Insert committees and payments to staging tables in PARALLEL
+	// Each insert goes to a different table, so no conflicts
+	insertPool := ac.WorkerPool(2) // 2 workers for 2 parallel inserts
+	insertGroup := insertPool.NewGroupContext(ctx)
+	insertCtx := insertGroup.Context()
+
+	var (
+		insertCommitteesErr error
+		insertPaymentsErr   error
+	)
+
+	// Worker 1: Insert committees (if changed)
+	if len(changedCommittees) > 0 {
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			insertCommitteesErr = chainDb.InsertCommitteesStaging(insertCtx, changedCommittees)
+		})
+	}
+
+	// Worker 2: Insert payments (always insert, even if committees didn't change)
 	if len(payments) > 0 {
-		if err := chainDb.InsertCommitteePaymentsStaging(ctx, payments); err != nil {
-			return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("insert committee payments: %w", err)
-		}
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			insertPaymentsErr = chainDb.InsertCommitteePaymentsStaging(insertCtx, payments)
+		})
+	}
+
+	// Wait for all inserts to complete (ignore pool errors, check individual errors below)
+	_ = insertGroup.Wait()
+
+	// Check for insert errors
+	if insertCommitteesErr != nil {
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("insert committees staging: %w", insertCommitteesErr)
+	}
+	if insertPaymentsErr != nil {
+		return types.ActivityIndexCommitteesOutput{}, fmt.Errorf("insert committee payments: %w", insertPaymentsErr)
+	}
+
+	// Log results
+	if len(changedCommittees) > 0 {
+		ac.Logger.Info("Committees changed, inserted to staging",
+			zap.Uint64("height", in.Height),
+			zap.Uint64("chainID", ac.ChainID),
+			zap.Int("numChanged", len(changedCommittees)))
+	}
+	if len(payments) > 0 {
 		ac.Logger.Debug("Committee payments inserted",
 			zap.Uint64("height", in.Height),
 			zap.Int("numPayments", len(payments)))

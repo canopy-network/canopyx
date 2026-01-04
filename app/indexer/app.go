@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	defaultCatchupThreshold        = 200
+	defaultCatchupThreshold        = 500
 	defaultDirectScheduleBatchSize = 50
 	defaultSchedulerBatchSize      = 250 // Reduced from 5000 to avoid overwhelming Temporal/Cassandra at scale (100+ chains)
 	defaultBlockTimeSeconds        = 20
@@ -31,23 +31,25 @@ const (
 	// Parallelism calculation constants - single source of truth
 	// These constants define the resource requirements per block workflow
 	// TODO: Tuneup this numbers better base on experience.
-	peakConcurrentActivitiesPerBlock = 30  // Actual peak during PromoteData phase (20 stagingEntities)
-	connectionsPerActivity           = 2   // One connection per executing activity
+	peakConcurrentActivitiesPerBlock = 20  // Actual peak during PromoteData phase (20 stagingEntities)
+	connectionsPerActivity           = 8   // Each activity uses parallel workers: 4-8 RPC + 2-4 INSERT goroutines
 	bufferConnections                = 100 // Buffer for ops workflows + parallel cleanup workflows (20 activities × ~10 concurrent cleanups)
 
 	// Default parallel block limits per worker type
-	defaultLiveParallelBlocks       = 5  // Live indexing: low latency, small batches
-	defaultHistoricalParallelBlocks = 10 // Historical: high throughput, large batches
-	defaultReindexParallelBlocks    = 10 // Reindex: high throughput, large batches
+	// These match the deployed values in deploy/k8s/controller/base/deployment.yaml
+	defaultLiveParallelBlocks       = 2 // Live indexing: low latency, small batches
+	defaultHistoricalParallelBlocks = 5 // Historical: high throughput, large batches
+	defaultReindexParallelBlocks    = 5 // Reindex: high throughput, large batches
 )
 
 type App struct {
-	LiveWorker       worker.Worker // NEW: Live block indexing (optimized for low-latency)
-	HistoricalWorker worker.Worker // NEW: Historical block indexing (optimized for throughput)
-	ReindexWorker    worker.Worker // NEW: Reindex block processing (optimized for throughput, dedicated queue)
-	OpsWorker        worker.Worker // UNCHANGED: Operations (headscan, gapscan, scheduler)
-	TemporalClient   *temporal.Client
-	Logger           *zap.Logger
+	LiveWorker        worker.Worker // NEW: Live block indexing (optimized for low-latency)
+	HistoricalWorker  worker.Worker // NEW: Historical block indexing (optimized for throughput)
+	ReindexWorker     worker.Worker // NEW: Reindex block processing (optimized for throughput, dedicated queue)
+	OpsWorker         worker.Worker // Operations (headscan, gapscan, scheduler)
+	MaintenanceWorker worker.Worker // Maintenance (cleanup workflows - separate from ops to avoid blocking)
+	ChainClient       *temporal.ChainClient
+	Logger            *zap.Logger
 
 	// Database connections (need to be closed on shutdown)
 	IndexerDB    adminstore.Store
@@ -70,6 +72,9 @@ func (a *App) Start(ctx context.Context) {
 	if err := a.OpsWorker.Start(); err != nil {
 		a.Logger.Fatal("Unable to start operations worker", zap.Error(err))
 	}
+	if err := a.MaintenanceWorker.Start(); err != nil {
+		a.Logger.Fatal("Unable to start maintenance worker", zap.Error(err))
+	}
 	<-ctx.Done()
 	a.Stop()
 }
@@ -80,6 +85,7 @@ func (a *App) Stop() {
 	a.HistoricalWorker.Stop()
 	a.ReindexWorker.Stop()
 	a.OpsWorker.Stop()
+	a.MaintenanceWorker.Stop()
 	time.Sleep(200 * time.Millisecond)
 
 	// Close database connections to prevent connection pool leaks
@@ -160,7 +166,7 @@ func Initialize(ctx context.Context) *App {
 	chainIdleConns := totalParallelBlocks * peakConcurrentActivitiesPerBlock * connectionsPerActivity
 	chainMaxConns := chainIdleConns + bufferConnections
 
-	// Configure pool sizes for chain database (high throughput)
+	// Configure pool sizes for a chain database (high throughput)
 	chainPoolConfig := clickhouse.PoolConfig{
 		MaxOpenConns:    chainMaxConns,
 		MaxIdleConns:    chainIdleConns,
@@ -238,15 +244,15 @@ func Initialize(ctx context.Context) *App {
 		logger.Info("Cross-chain sync setup complete", zap.Uint64("chain_id", chainIDUint))
 	}
 
-	temporalClient, err := temporal.NewClient(ctx, logger)
+	chainClient, err := temporal.NewChainClient(ctx, logger, chainIDUint)
 	if err != nil {
 		logger.Fatal("Unable to establish temporal connection", zap.Error(err))
 	}
 
-	if err := temporalClient.EnsureNamespace(ctx, 7*24*time.Hour); err != nil {
+	if err := chainClient.EnsureNamespace(ctx, 7*24*time.Hour); err != nil {
 		logger.Fatal("Unable to ensure temporal namespace", zap.Error(err))
 	}
-	logger.Info("Temporal namespace ready", zap.String("namespace", temporalClient.Namespace))
+	logger.Info("Temporal namespace ready", zap.String("namespace", chainClient.Namespace))
 
 	// Initialize Redis client for real-time event publishing
 	redisClient, err := redis.NewClient(ctx, logger)
@@ -287,14 +293,14 @@ func Initialize(ctx context.Context) *App {
 		CrossChainDB:         crossChainDb,
 		RPCFactory:           rpc.NewHTTPFactory(rpcOpts),
 		RPCOpts:              rpcOpts,
-		TemporalClient:       temporalClient,
+		ChainClient:          chainClient,
 		RedisClient:          redisClient,
 		WorkerMaxParallelism: utils.EnvInt("SCHEDULER_BATCH_MAX_PARALLELISM", 0),
 	}
 
 	workflowContext := workflow.Context{
 		ChainID:         chainIDUint,
-		TemporalClient:  temporalClient,
+		ChainClient:     chainClient,
 		ActivityContext: activityContext,
 		Config: workflow.Config{
 			CatchupThreshold:        uint64(catchupThreshold),
@@ -306,11 +312,11 @@ func Initialize(ctx context.Context) *App {
 
 	// Create Live Worker - optimized for low-latency, high-priority blocks
 	liveWorker := worker.New(
-		temporalClient.TClient,
-		temporalClient.GetIndexerLiveQueue(chainIDUint),
+		chainClient.TClient,
+		chainClient.LiveQueue,
 		worker.Options{
-			MaxConcurrentWorkflowTaskPollers:       10,
-			MaxConcurrentActivityTaskPollers:       10,
+			MaxConcurrentWorkflowTaskPollers:       liveParallelBlocks,
+			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock,
 			MaxConcurrentWorkflowTaskExecutionSize: liveMaxWorkflows,
 			MaxConcurrentActivityExecutionSize:     liveMaxActivities,
 			WorkerStopTimeout:                      1 * time.Minute,
@@ -319,11 +325,11 @@ func Initialize(ctx context.Context) *App {
 
 	// Create Historical Worker - optimized for high-throughput batch processing
 	historicalWorker := worker.New(
-		temporalClient.TClient,
-		temporalClient.GetIndexerHistoricalQueue(chainIDUint),
+		chainClient.TClient,
+		chainClient.HistoricalQueue,
 		worker.Options{
-			MaxConcurrentWorkflowTaskPollers:       50,
-			MaxConcurrentActivityTaskPollers:       50,
+			MaxConcurrentWorkflowTaskPollers:       historicalMaxWorkflows,
+			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock,
 			MaxConcurrentWorkflowTaskExecutionSize: historicalMaxWorkflows,
 			MaxConcurrentActivityExecutionSize:     historicalMaxActivities,
 			WorkerStopTimeout:                      1 * time.Minute,
@@ -332,11 +338,11 @@ func Initialize(ctx context.Context) *App {
 
 	// Create Reindex Worker - optimized for high-throughput reindex processing
 	reindexWorker := worker.New(
-		temporalClient.TClient,
-		temporalClient.GetIndexerReindexQueue(chainIDUint),
+		chainClient.TClient,
+		chainClient.ReindexQueue,
 		worker.Options{
-			MaxConcurrentWorkflowTaskPollers:       50,
-			MaxConcurrentActivityTaskPollers:       50,
+			MaxConcurrentWorkflowTaskPollers:       reindexMaxWorkflows,
+			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock,
 			MaxConcurrentWorkflowTaskExecutionSize: reindexMaxWorkflows,
 			MaxConcurrentActivityExecutionSize:     reindexMaxActivities,
 			WorkerStopTimeout:                      1 * time.Minute,
@@ -374,30 +380,24 @@ func Initialize(ctx context.Context) *App {
 		w.RegisterActivity(activityContext.RecordIndexed)
 	}
 
-	// Ops worker configuration calculated from total indexing capacity
-	// CleanupStagingWorkflow triggers after each indexed block, so peak cleanup concurrency
-	// equals total parallel blocks across all workers (live + historical + reindex)
-	// Each cleanup workflow uses local activities (runs in-process, no task queue overhead)
-	opsMaxCleanupWorkflows := totalParallelBlocks * 2 // 2x buffer for burst scenarios
-	opsMaxActivities := 20                            // For HeadScan, GapScan, Scheduler (regular activities)
+	// Ops worker configuration - optimized for HeadScan, GapScan, Scheduler workflows
+	// Note: Cleanup workflows moved to the maintenance queue to avoid blocking ops workflows
+	opsMaxWorkflows := 20  // HeadScan, GapScan, Scheduler, Snapshot workflows
+	opsMaxActivities := 50 // Activities for HeadScan, GapScan, Scheduler, Snapshots
 
 	logger.Info("Ops worker configuration",
-		zap.Int("total_parallel_blocks", totalParallelBlocks),
-		zap.Int("ops_max_cleanup_workflows", opsMaxCleanupWorkflows),
+		zap.Int("ops_max_workflows", opsMaxWorkflows),
 		zap.Int("ops_max_activities", opsMaxActivities),
 	)
 
 	opsWorker := worker.New(
-		temporalClient.TClient,
-		temporalClient.GetIndexerOpsQueue(chainIDUint),
+		chainClient.TClient,
+		chainClient.OpsQueue,
 		worker.Options{
-			// Cleanup workflows use local activities - need high workflow task poller count
-			MaxConcurrentWorkflowTaskPollers: opsMaxCleanupWorkflows,
-			// Regular activities (HeadScan, GapScan, Scheduler) - moderate count
-			MaxConcurrentActivityTaskPollers: opsMaxActivities,
-			// Execution size should match or exceed poller count for cleanup workflows
-			MaxConcurrentWorkflowTaskExecutionSize: opsMaxCleanupWorkflows,
-			MaxConcurrentActivityExecutionSize:     opsMaxActivities * 10,
+			MaxConcurrentWorkflowTaskPollers:       opsMaxWorkflows,
+			MaxConcurrentActivityTaskPollers:       opsMaxActivities,
+			MaxConcurrentWorkflowTaskExecutionSize: opsMaxWorkflows,
+			MaxConcurrentActivityExecutionSize:     opsMaxActivities,
 			WorkerStopTimeout:                      1 * time.Minute,
 		},
 	)
@@ -417,10 +417,6 @@ func Initialize(ctx context.Context) *App {
 	opsWorker.RegisterWorkflowWithOptions(
 		workflowContext.ReindexSchedulerWorkflow,
 		temporalworkflow.RegisterOptions{Name: indexer.ReindexSchedulerWorkflowName},
-	)
-	opsWorker.RegisterWorkflowWithOptions(
-		workflowContext.CleanupStagingWorkflow,
-		temporalworkflow.RegisterOptions{Name: indexer.CleanupStagingWorkflowName},
 	)
 	opsWorker.RegisterWorkflowWithOptions(
 		workflowContext.PollSnapshotWorkflow,
@@ -444,21 +440,54 @@ func Initialize(ctx context.Context) *App {
 	opsWorker.RegisterActivity(activityContext.StartReindexWorkflowBatch)
 	opsWorker.RegisterActivity(activityContext.IsSchedulerWorkflowRunning)
 	opsWorker.RegisterActivity(activityContext.CleanPromotedData)
-	opsWorker.RegisterActivity(activityContext.CleanAllPromotedData)
 	opsWorker.RegisterActivity(activityContext.IndexPoll)
 	opsWorker.RegisterActivity(activityContext.IndexProposals)
 	opsWorker.RegisterActivity(activityContext.ComputeLPSnapshots)
 
+	// Maintenance worker configuration - handles cleanup workflows separately from ops
+	// CleanupStagingWorkflow triggers after each indexed block, so peak cleanup concurrency
+	// equals total parallel blocks across all workers (live + historical + reindex)
+	maintenanceMaxWorkflows := totalParallelBlocks * 2 // 2x buffer for burst scenarios
+
+	logger.Info("Maintenance worker configuration",
+		zap.Int("total_parallel_blocks", totalParallelBlocks),
+		zap.Int("maintenance_max_workflows", maintenanceMaxWorkflows),
+	)
+
+	maintenanceWorker := worker.New(
+		chainClient.TClient,
+		chainClient.MaintenanceQueue,
+		worker.Options{
+			// Cleanup workflows use local activities - need high workflow task poller count
+			MaxConcurrentWorkflowTaskPollers:       maintenanceMaxWorkflows,
+			MaxConcurrentActivityTaskPollers:       maintenanceMaxWorkflows,
+			MaxConcurrentWorkflowTaskExecutionSize: maintenanceMaxWorkflows,
+			MaxConcurrentActivityExecutionSize:     maintenanceMaxWorkflows * 2,
+			WorkerStopTimeout:                      1 * time.Minute,
+		},
+	)
+
+	maintenanceWorker.RegisterWorkflowWithOptions(
+		workflowContext.CleanupStagingWorkflow,
+		temporalworkflow.RegisterOptions{Name: indexer.CleanupStagingWorkflowName},
+	)
+	// Batch cleanup activities for hourly staging cleanup workflow
+	maintenanceWorker.RegisterActivity(activityContext.GetCleanableHeights)
+	maintenanceWorker.RegisterActivity(activityContext.CleanStagingBatch)
+	// Legacy: CleanAllPromotedData kept for backwards compatibility but no longer used
+	maintenanceWorker.RegisterActivity(activityContext.CleanAllPromotedData)
+
 	return &App{
-		LiveWorker:       liveWorker,
-		HistoricalWorker: historicalWorker,
-		ReindexWorker:    reindexWorker,
-		OpsWorker:        opsWorker,
-		TemporalClient:   temporalClient,
-		Logger:           logger,
-		IndexerDB:        indexerDb,
-		ChainDB:          chainDb,
-		CrossChainDB:     crossChainDb,
-		RedisClient:      redisClient,
+		LiveWorker:        liveWorker,
+		HistoricalWorker:  historicalWorker,
+		ReindexWorker:     reindexWorker,
+		OpsWorker:         opsWorker,
+		MaintenanceWorker: maintenanceWorker,
+		ChainClient:       chainClient,
+		Logger:            logger,
+		IndexerDB:         indexerDb,
+		ChainDB:           chainDb,
+		CrossChainDB:      crossChainDb,
+		RedisClient:       redisClient,
 	}
 }

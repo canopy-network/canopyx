@@ -1,12 +1,12 @@
 package crosschain
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 )
 
 // HealthStatus represents the overall health of the cross-chain sync system.
@@ -43,23 +43,9 @@ func (db *DB) GetHealthStatus(ctx context.Context) (*HealthStatus, error) {
 		ORDER BY chain_id
 	`, db.Name, db.getGlobalTableName(indexer.AccountsProductionTableName))
 
-	rows, err := db.Query(ctx, chainsQuery)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query chains: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
 	var chainIDs []uint64
-	for rows.Next() {
-		var chainID uint64
-		if err := rows.Scan(&chainID); err != nil {
-			db.Logger.Warn("Failed to scan chain ID", zap.Error(err))
-			continue
-		}
-		chainIDs = append(chainIDs, chainID)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows iteration error: %w", err)
+	if err := db.Select(ctx, &chainIDs, chainsQuery); err != nil {
+		return nil, fmt.Errorf("failed to query chains: %w", err)
 	}
 
 	health.TotalChainsSynced = len(chainIDs)

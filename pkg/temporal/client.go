@@ -56,7 +56,7 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 	defer cancel()
 
 	host := utils.Env("TEMPORAL_HOSTPORT", "localhost:7233")
-	ns := utils.Env("TEMPORAL_NAMESPACE", "canopyx")
+	ns := utils.Env("TEMPORAL_NAMESPACE", DefaultAdminNamespace)
 	loggerWrapper := NewZapAdapter(logger)
 	retryConfig := retry.DefaultConfig()
 

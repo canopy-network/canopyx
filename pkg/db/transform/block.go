@@ -18,7 +18,7 @@ func Block(result *lib.BlockResult) *indexer.Block {
 		Height:          h.Height,
 		Hash:            bytesToHex(h.Hash),
 		Time:            time.UnixMicro(int64(h.Time)),
-		NetworkID:       uint64(h.NetworkId),
+		NetworkID:       uint32(h.NetworkId),
 		LastBlockHash:   bytesToHex(h.LastBlockHash),
 		ProposerAddress: bytesToHex(h.ProposerAddress),
 		Size:            int32(result.Meta.Size),

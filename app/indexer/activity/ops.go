@@ -64,11 +64,12 @@ func (ac *Context) GetLastIndexed(ctx context.Context) (uint64, error) {
 // It updates the health status for each individual endpoint and the overall chain health.
 // Returns the maximum height found across all healthy endpoints.
 // NOTE: /v1/height may return blocks before they're ready, so we verify block availability.
+// Uses lightweight GetChainRPCEndpoints query (2 columns instead of 25).
 func (ac *Context) GetLatestHead(ctx context.Context) (uint64, error) {
 	logger := activity.GetLogger(ctx)
 
-	// Get chain to access RPC endpoints
-	chain, err := ac.AdminDB.GetChain(ctx, ac.ChainID)
+	// Get chain RPC endpoints only (lightweight query)
+	chain, err := ac.AdminDB.GetChainRPCEndpoints(ctx, ac.ChainID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get chain: %w", err)
 	}
@@ -238,14 +239,14 @@ func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityInde
 	// Determine target queue based on block age
 	var taskQueue string
 	if utils.IsLiveBlock(latest, in.Height) {
-		taskQueue = ac.TemporalClient.GetIndexerLiveQueue(ac.ChainID)
+		taskQueue = ac.ChainClient.LiveQueue
 		logger.Debug("Routing to live queue",
 			zap.String("task_queue", taskQueue),
 			zap.Uint64("latest", latest),
 			zap.Uint64("height", in.Height),
 		)
 	} else {
-		taskQueue = ac.TemporalClient.GetIndexerHistoricalQueue(ac.ChainID)
+		taskQueue = ac.ChainClient.HistoricalQueue
 		logger.Debug("Routing to historical queue",
 			zap.String("task_queue", taskQueue),
 			zap.Uint64("latest", latest),
@@ -253,7 +254,7 @@ func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityInde
 		)
 	}
 
-	wfID := ac.TemporalClient.GetIndexBlockWorkflowId(ac.ChainID, in.Height)
+	wfID := ac.ChainClient.GetIndexBlockWorkflowID(in.Height)
 	options := client.StartWorkflowOptions{
 		ID:        wfID,
 		TaskQueue: taskQueue, // UPDATED: Dynamic queue selection based on block age
@@ -270,7 +271,7 @@ func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityInde
 		}
 	}
 
-	_, err = ac.TemporalClient.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", in)
+	_, err = ac.ChainClient.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", in)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if errors.As(err, &alreadyStarted) {
@@ -288,10 +289,10 @@ func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityInde
 func (ac *Context) IsSchedulerWorkflowRunning(ctx context.Context) (bool, error) {
 	logger := activity.GetLogger(ctx)
 
-	wfID := ac.TemporalClient.GetSchedulerWorkflowID(ac.ChainID)
+	wfID := ac.ChainClient.SchedulerWorkflowID
 
 	// Query the workflow execution status
-	desc, err := ac.TemporalClient.TClient.DescribeWorkflowExecution(ctx, wfID, "")
+	desc, err := ac.ChainClient.TClient.DescribeWorkflowExecution(ctx, wfID, "")
 	if err != nil {
 		// If workflow not found, it's not running
 		var notFound *serviceerror.NotFound
@@ -409,7 +410,7 @@ func (ac *Context) StartIndexWorkflowBatch(ctx context.Context, in types.Activit
 				zap.Int("count", int(histBatch.EndHeight-histBatch.StartHeight+1)),
 			)
 
-			histResult, err := ac.scheduleBatchToQueue(ctx, histBatch, ac.TemporalClient.GetIndexerHistoricalQueue(ac.ChainID))
+			histResult, err := ac.scheduleBatchToQueue(ctx, histBatch, ac.ChainClient.HistoricalQueue)
 			if err != nil {
 				logger.Error("Failed to schedule historical portion", zap.Error(err))
 			} else {
@@ -437,7 +438,7 @@ func (ac *Context) StartIndexWorkflowBatch(ctx context.Context, in types.Activit
 				zap.Int("count", int(liveBatch.EndHeight-liveBatch.StartHeight+1)),
 			)
 
-			liveResult, err := ac.scheduleBatchToQueue(ctx, liveBatch, ac.TemporalClient.GetIndexerLiveQueue(ac.ChainID))
+			liveResult, err := ac.scheduleBatchToQueue(ctx, liveBatch, ac.ChainClient.LiveQueue)
 			if err != nil {
 				logger.Error("Failed to schedule live portion", zap.Error(err))
 			} else {
@@ -466,14 +467,14 @@ func (ac *Context) StartIndexWorkflowBatch(ctx context.Context, in types.Activit
 	// Single-queue batch (either entirely live or entirely historical)
 	var taskQueue string
 	if batchIsLive {
-		taskQueue = ac.TemporalClient.GetIndexerLiveQueue(ac.ChainID)
+		taskQueue = ac.ChainClient.LiveQueue
 		logger.Info("Batch routing to live queue",
 			zap.String("task_queue", taskQueue),
 			zap.Uint64("start", in.StartHeight),
 			zap.Uint64("end", in.EndHeight),
 		)
 	} else {
-		taskQueue = ac.TemporalClient.GetIndexerHistoricalQueue(ac.ChainID)
+		taskQueue = ac.ChainClient.HistoricalQueue
 		logger.Info("Batch routing to historical queue",
 			zap.String("task_queue", taskQueue),
 			zap.Uint64("start", in.StartHeight),
@@ -514,7 +515,7 @@ func (ac *Context) scheduleBatchToQueue(ctx context.Context, in types.ActivityBa
 				return
 			}
 
-			wfID := ac.TemporalClient.GetIndexBlockWorkflowId(ac.ChainID, h)
+			wfID := ac.ChainClient.GetIndexBlockWorkflowID(h)
 			options := client.StartWorkflowOptions{
 				ID:        wfID,
 				TaskQueue: taskQueue, // Use the provided task queue
@@ -529,7 +530,7 @@ func (ac *Context) scheduleBatchToQueue(ctx context.Context, in types.ActivityBa
 				options.Priority = sdktemporal.Priority{PriorityKey: in.PriorityKey}
 			}
 
-			_, err := ac.TemporalClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
+			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
 				Height:      h,
 				PriorityKey: strconv.Itoa(in.PriorityKey),
 			})

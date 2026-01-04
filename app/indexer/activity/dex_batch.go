@@ -256,39 +256,35 @@ func (ac *Context) fetchBatchData(ctx context.Context, cli rpc.Client, height ui
 }
 
 // buildEventMaps queries events and builds lookup maps by orderID
+// Uses lightweight GetDexBatchEvents query (11 columns instead of 21, ~48% reduction)
 func (ac *Context) buildEventMaps(ctx context.Context, chainDb chainstore.Store, height uint64) (
-	swapEvents, depositEvents, withdrawalEvents map[string]*indexer.Event, err error,
+	swapEvents, depositEvents, withdrawalEvents map[string]*chainstore.EventDexBatch, err error,
 ) {
-	// Query events from the staging table
-	events, err := chainDb.GetEventsByTypeAndHeight(
-		ctx, height, true,
-		string(lib.EventTypeDexSwap),
-		string(lib.EventTypeDexLiquidityDeposit),
-		string(lib.EventTypeDexLiquidityWithdraw),
-	)
+	// Query events from the staging table using lightweight query
+	events, err := chainDb.GetDexBatchEvents(ctx, height, true)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("query events at height %d: %w", height, err)
 	}
 
 	// Build event maps for O(1) lookups
-	swapEvents = make(map[string]*indexer.Event)
-	depositEvents = make(map[string]*indexer.Event)
-	withdrawalEvents = make(map[string]*indexer.Event)
+	swapEvents = make(map[string]*chainstore.EventDexBatch)
+	depositEvents = make(map[string]*chainstore.EventDexBatch)
+	withdrawalEvents = make(map[string]*chainstore.EventDexBatch)
 
-	for _, event := range events {
-		// Events have nullable OrderID field
-		if event.OrderID == nil {
+	for i := range events {
+		event := &events[i]
+		// Skip events with empty order ID (default value)
+		if event.OrderID == "" {
 			continue
 		}
-		orderID := *event.OrderID
 
 		switch event.EventType {
 		case string(lib.EventTypeDexSwap):
-			swapEvents[orderID] = event
+			swapEvents[event.OrderID] = event
 		case string(lib.EventTypeDexLiquidityDeposit):
-			depositEvents[orderID] = event
+			depositEvents[event.OrderID] = event
 		case string(lib.EventTypeDexLiquidityWithdraw):
-			withdrawalEvents[orderID] = event
+			withdrawalEvents[event.OrderID] = event
 		}
 	}
 
@@ -351,7 +347,7 @@ func (ac *Context) buildH1ComparisonMaps(currentBatchesH1, nextBatchesH1 []*lib.
 // processCompleteItems processes items from H-1 batch that have completion events
 func (ac *Context) processCompleteItems(
 	currentBatchesH1 []*lib.DexBatch,
-	swapEvents, depositEvents, withdrawalEvents map[string]*indexer.Event,
+	swapEvents, depositEvents, withdrawalEvents map[string]*chainstore.EventDexBatch,
 	height uint64, blockTime time.Time,
 	orders *[]*indexer.DexOrder,
 	deposits *[]*indexer.DexDeposit,
@@ -369,7 +365,7 @@ func (ac *Context) processCompleteItems(
 					OrderID:         orderID,
 					Height:          height,
 					HeightTime:      blockTime,
-					Committee:       currentBatchH1.Committee,
+					Committee:       uint16(currentBatchH1.Committee),
 					Address:         address,
 					AmountForSale:   rpcOrder.AmountForSale,
 					RequestedAmount: rpcOrder.RequestedAmount,
@@ -377,23 +373,15 @@ func (ac *Context) processCompleteItems(
 					LockedHeight:    currentBatchH1.LockedHeight,
 				}
 
-				if swapEvent.Success != nil {
-					order.Success = *swapEvent.Success
-					if order.Success {
-						counters.NumOrdersSuccess++
-					} else {
-						counters.NumOrdersFailed++
-					}
+				order.Success = swapEvent.Success
+				if order.Success {
+					counters.NumOrdersSuccess++
+				} else {
+					counters.NumOrdersFailed++
 				}
-				if swapEvent.SoldAmount != nil {
-					order.SoldAmount = *swapEvent.SoldAmount
-				}
-				if swapEvent.BoughtAmount != nil {
-					order.BoughtAmount = *swapEvent.BoughtAmount
-				}
-				if swapEvent.LocalOrigin != nil {
-					order.LocalOrigin = *swapEvent.LocalOrigin
-				}
+				order.SoldAmount = swapEvent.SoldAmount
+				order.BoughtAmount = swapEvent.BoughtAmount
+				order.LocalOrigin = swapEvent.LocalOrigin
 
 				counters.NumOrdersComplete++
 				*orders = append(*orders, order)
@@ -407,20 +395,15 @@ func (ac *Context) processCompleteItems(
 
 			if depositEvent, exists := depositEvents[orderID]; exists {
 				deposit := &indexer.DexDeposit{
-					OrderID:    orderID,
-					Height:     height,
-					HeightTime: blockTime,
-					Committee:  currentBatchH1.Committee,
-					Address:    address,
-					Amount:     rpcDeposit.Amount,
-					State:      indexer.DexCompleteState,
-				}
-
-				if depositEvent.LocalOrigin != nil {
-					deposit.LocalOrigin = *depositEvent.LocalOrigin
-				}
-				if depositEvent.PointsReceived != nil {
-					deposit.PointsReceived = *depositEvent.PointsReceived
+					OrderID:        orderID,
+					Height:         height,
+					HeightTime:     blockTime,
+					Committee:      uint16(currentBatchH1.Committee),
+					Address:        address,
+					Amount:         rpcDeposit.Amount,
+					State:          indexer.DexCompleteState,
+					LocalOrigin:    depositEvent.LocalOrigin,
+					PointsReceived: depositEvent.PointsReceived,
 				}
 
 				counters.NumDepositsComplete++
@@ -442,23 +425,16 @@ func (ac *Context) processCompleteItems(
 				ac.Logger.Info("MATCHED: Withdrawal completed",
 					zap.String("orderID", orderID))
 				withdrawal := &indexer.DexWithdrawal{
-					OrderID:    orderID,
-					Height:     height,
-					HeightTime: blockTime,
-					Committee:  currentBatchH1.Committee,
-					Address:    address,
-					Percent:    rpcWithdrawal.Percent,
-					State:      indexer.DexCompleteState,
-				}
-
-				if withdrawalEvent.LocalAmount != nil {
-					withdrawal.LocalAmount = *withdrawalEvent.LocalAmount
-				}
-				if withdrawalEvent.RemoteAmount != nil {
-					withdrawal.RemoteAmount = *withdrawalEvent.RemoteAmount
-				}
-				if withdrawalEvent.PointsBurned != nil {
-					withdrawal.PointsBurned = *withdrawalEvent.PointsBurned
+					OrderID:      orderID,
+					Height:       height,
+					HeightTime:   blockTime,
+					Committee:    uint16(currentBatchH1.Committee),
+					Address:      address,
+					Percent:      rpcWithdrawal.Percent,
+					State:        indexer.DexCompleteState,
+					LocalAmount:  withdrawalEvent.LocalAmount,
+					RemoteAmount: withdrawalEvent.RemoteAmount,
+					PointsBurned: withdrawalEvent.PointsBurned,
 				}
 
 				counters.NumWithdrawalsComplete++
@@ -505,7 +481,7 @@ func (ac *Context) processLockedItems(
 					OrderID:         orderID,
 					Height:          height,
 					HeightTime:      blockTime,
-					Committee:       currentBatch.Committee,
+					Committee:       uint16(currentBatch.Committee),
 					Address:         address,
 					AmountForSale:   rpcOrder.AmountForSale,
 					RequestedAmount: rpcOrder.RequestedAmount,
@@ -539,7 +515,7 @@ func (ac *Context) processLockedItems(
 					OrderID:    orderID,
 					Height:     height,
 					HeightTime: blockTime,
-					Committee:  currentBatch.Committee,
+					Committee:  uint16(currentBatch.Committee),
 					Address:    address,
 					Amount:     rpcDeposit.Amount,
 					State:      indexer.DexLockedState,
@@ -571,7 +547,7 @@ func (ac *Context) processLockedItems(
 					OrderID:    orderID,
 					Height:     height,
 					HeightTime: blockTime,
-					Committee:  currentBatch.Committee,
+					Committee:  uint16(currentBatch.Committee),
 					Address:    address,
 					Percent:    rpcWithdrawal.Percent,
 					State:      indexer.DexLockedState,
@@ -615,7 +591,7 @@ func (ac *Context) processPendingItems(
 					OrderID:         orderID,
 					Height:          height,
 					HeightTime:      blockTime,
-					Committee:       nextBatch.Committee,
+					Committee:       uint16(nextBatch.Committee),
 					Address:         address,
 					AmountForSale:   rpcOrder.AmountForSale,
 					RequestedAmount: rpcOrder.RequestedAmount,
@@ -647,7 +623,7 @@ func (ac *Context) processPendingItems(
 					OrderID:    orderID,
 					Height:     height,
 					HeightTime: blockTime,
-					Committee:  nextBatch.Committee,
+					Committee:  uint16(nextBatch.Committee),
 					Address:    address,
 					Amount:     rpcDeposit.Amount,
 					State:      indexer.DexPendingState,
@@ -677,7 +653,7 @@ func (ac *Context) processPendingItems(
 					OrderID:    orderID,
 					Height:     height,
 					HeightTime: blockTime,
-					Committee:  nextBatch.Committee,
+					Committee:  uint16(nextBatch.Committee),
 					Address:    address,
 					Percent:    rpcWithdrawal.Percent,
 					State:      indexer.DexPendingState,
@@ -706,7 +682,7 @@ func (ac *Context) processPendingItems(
 		zap.Int("withdrawals_pending_unchanged", counters.WithdrawalsPendingUnchanged))
 }
 
-// insertDexBatchData inserts all DEX batch data to staging tables
+// insertDexBatchData inserts all DEX batch data to staging tables in PARALLEL
 func (ac *Context) insertDexBatchData(
 	ctx context.Context,
 	chainDb chainstore.Store,
@@ -714,22 +690,60 @@ func (ac *Context) insertDexBatchData(
 	deposits []*indexer.DexDeposit,
 	withdrawals []*indexer.DexWithdrawal,
 ) error {
+	// Insert to staging tables in PARALLEL using worker pool
+	// Each insert goes to a different table, so no conflicts
+	insertPool := ac.WorkerPool(3) // 3 workers for 3 parallel inserts
+	insertGroup := insertPool.NewGroupContext(ctx)
+	insertCtx := insertGroup.Context()
+
+	var (
+		ordersErr      error
+		depositsErr    error
+		withdrawalsErr error
+	)
+
+	// Worker 1: Insert DEX orders
 	if len(orders) > 0 {
-		if err := chainDb.InsertDexOrdersStaging(ctx, orders); err != nil {
-			return fmt.Errorf("insert dex orders staging: %w", err)
-		}
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			ordersErr = chainDb.InsertDexOrdersStaging(insertCtx, orders)
+		})
 	}
 
+	// Worker 2: Insert DEX deposits
 	if len(deposits) > 0 {
-		if err := chainDb.InsertDexDepositsStaging(ctx, deposits); err != nil {
-			return fmt.Errorf("insert dex deposits staging: %w", err)
-		}
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			depositsErr = chainDb.InsertDexDepositsStaging(insertCtx, deposits)
+		})
 	}
 
+	// Worker 3: Insert DEX withdrawals
 	if len(withdrawals) > 0 {
-		if err := chainDb.InsertDexWithdrawalsStaging(ctx, withdrawals); err != nil {
-			return fmt.Errorf("insert dex withdrawals staging: %w", err)
-		}
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			withdrawalsErr = chainDb.InsertDexWithdrawalsStaging(insertCtx, withdrawals)
+		})
+	}
+
+	// Wait for all inserts to complete (ignore pool errors, check individual errors below)
+	_ = insertGroup.Wait()
+
+	// Check for insert errors
+	if ordersErr != nil {
+		return fmt.Errorf("insert dex orders staging: %w", ordersErr)
+	}
+	if depositsErr != nil {
+		return fmt.Errorf("insert dex deposits staging: %w", depositsErr)
+	}
+	if withdrawalsErr != nil {
+		return fmt.Errorf("insert dex withdrawals staging: %w", withdrawalsErr)
 	}
 
 	return nil

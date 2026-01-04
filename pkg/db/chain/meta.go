@@ -64,22 +64,12 @@ func (db *DB) GetTableSchema(ctx context.Context, tableName string) ([]Column, e
 		ORDER BY position
 	`
 
-	rows, err := db.Db.Query(ctx, query, db.Name, tableName)
-	if err != nil {
+	var columns []Column
+	if err := db.Db.Select(ctx, &columns, query, db.Name, tableName); err != nil {
 		return nil, fmt.Errorf("query system.columns: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	var columns []Column
-	for rows.Next() {
-		var col Column
-		if err := rows.Scan(&col.Name, &col.Type); err != nil {
-			return nil, fmt.Errorf("scan column: %w", err)
-		}
-		columns = append(columns, col)
-	}
-
-	return columns, rows.Err()
+	return columns, nil
 }
 
 // GetTableDataPaginated retrieves paginated data from a table with optional height filters

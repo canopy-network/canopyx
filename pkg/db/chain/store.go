@@ -48,10 +48,20 @@ type Store interface {
 	// --- Query entities
 
 	GetBlock(ctx context.Context, height uint64) (*indexermodels.Block, error)
+	GetBlockTime(ctx context.Context, height uint64) (time.Time, error)
 	GetBlockSummary(ctx context.Context, height uint64, staging bool) (*indexermodels.BlockSummary, error)
 	HasBlock(ctx context.Context, height uint64) (bool, error)
 	GetHighestBlockBeforeTime(ctx context.Context, targetTime time.Time) (*indexermodels.Block, error)
 	GetEventsByTypeAndHeight(ctx context.Context, height uint64, staging bool, eventTypes ...string) ([]*indexermodels.Event, error)
+
+	// --- Lightweight event queries (optimized for specific activities)
+
+	GetRewardSlashEvents(ctx context.Context, height uint64, staging bool) ([]EventRewardSlash, error)
+	GetValidatorLifecycleEvents(ctx context.Context, height uint64, staging bool) ([]EventLifecycle, error)
+	GetOrderBookSwapEvents(ctx context.Context, height uint64, staging bool) ([]EventWithOrderID, error)
+	GetDexOrderEvents(ctx context.Context, height uint64, staging bool) ([]EventWithOrderID, error)
+	GetEventCountsByType(ctx context.Context, height uint64, staging bool, eventTypes ...string) (map[string]uint64, error)
+	GetDexBatchEvents(ctx context.Context, height uint64, staging bool) ([]EventDexBatch, error)
 
 	// --- Delete entities
 
@@ -69,4 +79,5 @@ type Store interface {
 	PromoteEntity(ctx context.Context, entity entities.Entity, height uint64) error
 	CleanEntityStaging(ctx context.Context, entity entities.Entity, height uint64) error
 	CleanAllEntitiesStaging(ctx context.Context, entitiesToClean []entities.Entity, height uint64) error
+	CleanStagingBatch(ctx context.Context, heights []uint64) (int, error)
 }

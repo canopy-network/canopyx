@@ -23,7 +23,7 @@ func Event(e *lib.Event) (*indexer.Event, error) {
 
 	// Set common fields from lib.Event
 	evt.Height = e.Height
-	evt.ChainID = e.ChainId
+	evt.ChainID = uint16(e.ChainId)
 	evt.Address = bytesToHex(e.Address)
 	evt.Reference = e.Reference
 	evt.EventType = e.EventType
@@ -39,41 +39,42 @@ func Event(e *lib.Event) (*indexer.Event, error) {
 }
 
 // extractEventFields uses type switch on protobuf oneof to extract fields directly into evt.
+// Fields use value types with defaults (0, false, ”) instead of Nullable pointers.
 func extractEventFields(e *lib.Event, evt *indexer.Event) {
 	switch msg := e.Msg.(type) {
 	case *lib.Event_Reward:
-		evt.Amount = &msg.Reward.Amount
+		evt.Amount = msg.Reward.Amount
 
 	case *lib.Event_Slash:
-		evt.Amount = &msg.Slash.Amount
+		evt.Amount = msg.Slash.Amount
 
 	case *lib.Event_DexLiquidityDeposit:
-		evt.Amount = &msg.DexLiquidityDeposit.Amount
-		evt.LocalOrigin = &msg.DexLiquidityDeposit.LocalOrigin
-		evt.OrderID = ptrHex(msg.DexLiquidityDeposit.OrderId)
-		evt.PointsReceived = &msg.DexLiquidityDeposit.Points
+		evt.Amount = msg.DexLiquidityDeposit.Amount
+		evt.LocalOrigin = msg.DexLiquidityDeposit.LocalOrigin
+		evt.OrderID = bytesToHex(msg.DexLiquidityDeposit.OrderId)
+		evt.PointsReceived = msg.DexLiquidityDeposit.Points
 
 	case *lib.Event_DexLiquidityWithdrawal:
-		evt.LocalAmount = &msg.DexLiquidityWithdrawal.LocalAmount
-		evt.RemoteAmount = &msg.DexLiquidityWithdrawal.RemoteAmount
-		evt.OrderID = ptrHex(msg.DexLiquidityWithdrawal.OrderId)
-		evt.PointsBurned = &msg.DexLiquidityWithdrawal.PointsBurned
+		evt.LocalAmount = msg.DexLiquidityWithdrawal.LocalAmount
+		evt.RemoteAmount = msg.DexLiquidityWithdrawal.RemoteAmount
+		evt.OrderID = bytesToHex(msg.DexLiquidityWithdrawal.OrderId)
+		evt.PointsBurned = msg.DexLiquidityWithdrawal.PointsBurned
 
 	case *lib.Event_DexSwap:
-		evt.SoldAmount = &msg.DexSwap.SoldAmount
-		evt.BoughtAmount = &msg.DexSwap.BoughtAmount
-		evt.LocalOrigin = &msg.DexSwap.LocalOrigin
-		evt.Success = &msg.DexSwap.Success
-		evt.OrderID = ptrHex(msg.DexSwap.OrderId)
+		evt.SoldAmount = msg.DexSwap.SoldAmount
+		evt.BoughtAmount = msg.DexSwap.BoughtAmount
+		evt.LocalOrigin = msg.DexSwap.LocalOrigin
+		evt.Success = msg.DexSwap.Success
+		evt.OrderID = bytesToHex(msg.DexSwap.OrderId)
 
 	case *lib.Event_OrderBookSwap:
-		evt.SoldAmount = &msg.OrderBookSwap.SoldAmount
-		evt.BoughtAmount = &msg.OrderBookSwap.BoughtAmount
-		evt.OrderID = ptrHex(msg.OrderBookSwap.OrderId)
-		evt.Data = ptrHex(msg.OrderBookSwap.Data)
-		evt.SellerReceiveAddress = ptrHex(msg.OrderBookSwap.SellerReceiveAddress)
-		evt.BuyerSendAddress = ptrHex(msg.OrderBookSwap.BuyerSendAddress)
-		evt.SellersSendAddress = ptrHex(msg.OrderBookSwap.SellersSendAddress)
+		evt.SoldAmount = msg.OrderBookSwap.SoldAmount
+		evt.BoughtAmount = msg.OrderBookSwap.BoughtAmount
+		evt.OrderID = bytesToHex(msg.OrderBookSwap.OrderId)
+		evt.Data = bytesToHex(msg.OrderBookSwap.Data)
+		evt.SellerReceiveAddress = bytesToHex(msg.OrderBookSwap.SellerReceiveAddress)
+		evt.BuyerSendAddress = bytesToHex(msg.OrderBookSwap.BuyerSendAddress)
+		evt.SellersSendAddress = bytesToHex(msg.OrderBookSwap.SellersSendAddress)
 		// Note: OrderBookSwap doesn't have Success or LocalOrigin fields (unlike DexSwap)
 
 	case *lib.Event_AutoPause:

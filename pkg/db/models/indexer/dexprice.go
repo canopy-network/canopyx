@@ -12,8 +12,8 @@ const DexPricesStagingTableName = "dex_prices_staging"
 // - DoubleDelta,LZ4 for sequential/monotonic values (height, timestamps)
 // - Delta,ZSTD(3) for gradually changing values (chain_id, pool amounts, prices)
 var DexPriceColumns = []ColumnDef{
-	{Name: "local_chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
-	{Name: "remote_chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "local_chain_id", Type: "UInt16", Codec: "Delta, ZSTD(1)"},
+	{Name: "remote_chain_id", Type: "UInt16", Codec: "Delta, ZSTD(1)"},
 	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
 	{Name: "local_pool", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "remote_pool", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
@@ -29,8 +29,8 @@ var DexPriceColumns = []ColumnDef{
 // Uses ReplacingMergeTree to allow re-indexing and maintain latest state per (local_chain_id, remote_chain_id, height).
 type DexPrice struct {
 	// Primary key (composite)
-	LocalChainID  uint64 `ch:"local_chain_id" json:"local_chain_id"`
-	RemoteChainID uint64 `ch:"remote_chain_id" json:"remote_chain_id"`
+	LocalChainID  uint16 `ch:"local_chain_id" json:"local_chain_id"`
+	RemoteChainID uint16 `ch:"remote_chain_id" json:"remote_chain_id"`
 
 	// Pool liquidity amounts
 	LocalPool  uint64 `ch:"local_pool" json:"local_pool"`   // Liquidity in local chain tokens

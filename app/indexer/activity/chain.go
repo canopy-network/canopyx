@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/utils"
+	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"go.uber.org/zap"
@@ -14,31 +15,35 @@ import (
 // RecordIndexed records the height of the last block indexed for a given chain along with timing metrics.
 // After updating the index_progress watermark, it publishes a block.indexed event to Redis for real-time notifications.
 func (ac *Context) RecordIndexed(ctx context.Context, in types.ActivityRecordIndexedInput) error {
-	// Get chain database to fetch block time
+	// Get chain database for block data (needed for Redis event)
 	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
 	if err != nil {
 		return err
 	}
 
-	// Query block to get its timestamp
-	block, err := chainDb.GetBlock(ctx, in.Height)
+	// Query block FIRST to verify it exists before updating index_progress
+	// This prevents marking blocks as indexed when PromoteData failed
+	consistentCtx := clickhouse.WithSequentialConsistency(ctx)
+	block, err := chainDb.GetBlock(consistentCtx, in.Height)
 	if err != nil {
+		// If block doesn't exist, fail so Temporal retries (PromoteData might still be in progress)
 		return err
 	}
 
-	// Update index_progress watermark first - this makes data queryable
-	if err := ac.AdminDB.RecordIndexed(ctx, ac.ChainID, in.Height, block.Time, in.IndexingTimeMs, in.IndexingDetail); err != nil {
+	// Update index_progress watermark - only after verifying block exists
+	// IndexingTimeMs already contains the accurate workflow execution time
+	if err := ac.AdminDB.RecordIndexed(ctx, ac.ChainID, in.Height, in.IndexingTimeMs, in.IndexingDetail); err != nil {
 		return err
 	}
 
 	// Publish block.indexed event to Redis (best-effort, don't fail if Redis unavailable)
 	if ac.RedisClient != nil {
 		// Build event
-		// Query block summary to get entity counts
-		summary, summaryErr := chainDb.GetBlockSummary(ctx, in.Height, false)
+		// Query block summary to get entity counts (use consistent context for replication safety)
+		summary, summaryErr := chainDb.GetBlockSummary(consistentCtx, in.Height, false)
 		if summaryErr != nil {
 			// fallback to staging just in case the database is still processing the propagation
-			summary, summaryErr = chainDb.GetBlockSummary(ctx, in.Height, true)
+			summary, summaryErr = chainDb.GetBlockSummary(consistentCtx, in.Height, true)
 			if summaryErr != nil {
 				ac.Logger.Warn(
 					"Fail to load block summary to publish block.indexed event (non-fatal)",

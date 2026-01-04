@@ -11,8 +11,8 @@ import (
 // The height and height_time fields must be populated by the caller (activity layer).
 func DexPrice(r *lib.DexPrice) *indexer.DexPrice {
 	return &indexer.DexPrice{
-		LocalChainID:  r.LocalChainId,
-		RemoteChainID: r.RemoteChainId,
+		LocalChainID:  uint16(r.LocalChainId),
+		RemoteChainID: uint16(r.RemoteChainId),
 		LocalPool:     r.LocalPool,
 		RemotePool:    r.RemotePool,
 		PriceE6:       r.E6ScaledPrice,
@@ -22,6 +22,6 @@ func DexPrice(r *lib.DexPrice) *indexer.DexPrice {
 
 // DexPriceKey creates a unique key for DexPrice lookups based on chain pair.
 // Used for efficient map-based lookups when calculating H-1 deltas.
-func DexPriceKey(localChainID, remoteChainID uint64) string {
+func DexPriceKey(localChainID, remoteChainID uint16) string {
 	return fmt.Sprintf("%d:%d", localChainID, remoteChainID)
 }

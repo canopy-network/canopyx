@@ -41,13 +41,14 @@ func SetSchedulerContinueThresholdForTesting(threshold int) func() {
 func (wc *Context) HeadScan(ctx workflow.Context, in types.WorkflowHeadScanInput) (*activity.HeadResult, error) {
 	logger := workflow.GetLogger(ctx)
 
-	// Local activity options for fast DB queries and RPC calls
+	// Local activity options for DB queries and RPC calls
+	// Uses StartToCloseTimeout (not ScheduleToClose) since local activities run in-process without queue delay
 	localAo := workflow.LocalActivityOptions{
-		ScheduleToCloseTimeout: 20 * time.Second,
+		StartToCloseTimeout: 2 * time.Minute,
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,
-			MaximumInterval:    5 * time.Second,
+			MaximumInterval:    10 * time.Second,
 			MaximumAttempts:    5,
 		},
 	}
@@ -62,7 +63,7 @@ func (wc *Context) HeadScan(ctx workflow.Context, in types.WorkflowHeadScanInput
 			MaximumInterval:    10 * time.Second,
 			MaximumAttempts:    5,
 		},
-		TaskQueue: wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID),
+		TaskQueue: wc.ChainClient.OpsQueue,
 	}
 	regularCtx := workflow.WithActivityOptions(ctx, ao)
 
@@ -154,10 +155,10 @@ func (wc *Context) HeadScan(ctx workflow.Context, in types.WorkflowHeadScanInput
 				LatestHeight: latest,
 			}
 
-			wfID := wc.TemporalClient.GetSchedulerWorkflowID(wc.ChainID)
+			wfID := wc.ChainClient.SchedulerWorkflowID
 			wfOptions := workflow.ChildWorkflowOptions{
 				WorkflowID:               wfID,
-				TaskQueue:                wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID),
+				TaskQueue:                wc.ChainClient.OpsQueue,
 				WorkflowExecutionTimeout: 0,                                 // No timeout - workflow can run indefinitely
 				WorkflowTaskTimeout:      10 * time.Minute,                  // 10-minute task timeout to prevent heartbeat errors
 				ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON, // Don't terminate when the parent completes
@@ -210,36 +211,24 @@ func (wc *Context) HeadScan(ctx workflow.Context, in types.WorkflowHeadScanInput
 }
 
 // GapScanWorkflow periodically checks for missing heights and schedules their indexing.
-// Uses adaptive scheduling: SchedulerWorkflow for large ranges (>=1000 blocks), direct for small ranges.
+// For each gap, triggers SchedulerWorkflow (same as HeadScan) which handles batching and ContinueAsNew.
 func (wc *Context) GapScanWorkflow(ctx workflow.Context) error {
 	logger := workflow.GetLogger(ctx)
 
-	// Local activity options for fast DB queries and RPC calls
+	// Local activity options for DB queries
+	// Uses StartToCloseTimeout (not ScheduleToClose) since local activities run in-process without queue delay
 	localAo := workflow.LocalActivityOptions{
-		ScheduleToCloseTimeout: 20 * time.Second,
+		StartToCloseTimeout: 2 * time.Minute,
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,
-			MaximumInterval:    5 * time.Second,
+			MaximumInterval:    10 * time.Second,
 			MaximumAttempts:    5,
 		},
 	}
 	localCtx := workflow.WithLocalActivityOptions(ctx, localAo)
 
-	// Regular activity options for IsSchedulerWorkflowRunning (Temporal API call)
-	ao := workflow.ActivityOptions{
-		StartToCloseTimeout: 30 * time.Second,
-		RetryPolicy: &sdktemporal.RetryPolicy{
-			InitialInterval:    time.Second,
-			BackoffCoefficient: 2.0,
-			MaximumInterval:    10 * time.Second,
-			MaximumAttempts:    5,
-		},
-		TaskQueue: wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID),
-	}
-	regularCtx := workflow.WithActivityOptions(ctx, ao)
-
-	// Query for gaps and the latest head
+	// Query for gaps and latest height
 	var latest uint64
 	if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.GetLatestHead).Get(localCtx, &latest); err != nil {
 		return err
@@ -275,105 +264,65 @@ func (wc *Context) GapScanWorkflow(ctx workflow.Context) error {
 		"total_blocks", totalBlocks,
 	)
 
-	// Determine mode: normal (<1000 blocks) vs catch-up (>=1000 blocks)
-	if totalBlocks < wc.Config.CatchupThreshold {
-		// Normal mode: Process gaps directly with high priority
-		logger.Info("GapScan using direct scheduling (small gaps)",
+	// Trigger SchedulerWorkflow for each gap - same mechanism as HeadScan
+	// SchedulerWorkflow handles batching, ContinueAsNew, and all the heavy lifting
+	for i, gap := range gaps {
+		gapSize := gap.To - gap.From + 1
+		logger.Info("Triggering SchedulerWorkflow for gap",
 			"chain_id", wc.ChainID,
-			"total_blocks", totalBlocks,
+			"gap_index", i+1,
+			"total_gaps", len(gaps),
+			"from", gap.From,
+			"to", gap.To,
+			"count", gapSize,
 		)
 
-		for _, gap := range gaps {
-			logger.Info("Scheduling gap directly",
-				"chain_id", wc.ChainID,
-				"from", gap.From,
-				"to", gap.To,
-				"count", gap.To-gap.From+1,
-			)
+		schedulerInput := types.WorkflowSchedulerInput{
+			StartHeight:  gap.From,
+			EndHeight:    gap.To,
+			LatestHeight: latest,
+		}
 
-			if err := wc.scheduleDirectly(ctx, wc.ChainID, gap.From, gap.To); err != nil {
+		// Use unique workflow ID per gap to allow parallel processing
+		wfID := wc.ChainClient.GapSchedulerWorkflowID(gap.From, gap.To)
+		wfOptions := workflow.ChildWorkflowOptions{
+			WorkflowID:               wfID,
+			TaskQueue:                wc.ChainClient.OpsQueue,
+			WorkflowExecutionTimeout: 0,                                 // No timeout
+			WorkflowTaskTimeout:      10 * time.Minute,                  // 10 minute task timeout
+			ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON, // Don't terminate when parent completes
+		}
+		childCtx := workflow.WithChildOptions(ctx, wfOptions)
+
+		// Start child workflow without waiting for completion
+		future := workflow.ExecuteChildWorkflow(childCtx, wc.SchedulerWorkflow, schedulerInput)
+
+		// Just check if workflow started successfully
+		var childExec workflow.Execution
+		if err := future.GetChildWorkflowExecution().Get(ctx, &childExec); err != nil {
+			if strings.Contains(err.Error(), "ChildWorkflowExecutionAlreadyStartedError") ||
+				strings.Contains(err.Error(), "child workflow execution already started") {
+				logger.Info("Gap SchedulerWorkflow already running",
+					"chain_id", wc.ChainID,
+					"gap_from", gap.From,
+					"gap_to", gap.To,
+				)
+			} else {
+				logger.Error("Failed to start gap SchedulerWorkflow",
+					"chain_id", wc.ChainID,
+					"gap_from", gap.From,
+					"gap_to", gap.To,
+					"error", err.Error(),
+				)
 				return err
 			}
-		}
-	} else {
-		// Catch-up mode: Check if SchedulerWorkflow is already running
-		var isRunning bool
-		if err := workflow.ExecuteActivity(regularCtx, wc.ActivityContext.IsSchedulerWorkflowRunning).Get(regularCtx, &isRunning); err != nil {
-			logger.Warn("Failed to check if scheduler is running, proceeding with trigger",
-				"chain_id", wc.ChainID,
-				"error", err.Error(),
-			)
-			isRunning = false
-		}
-
-		if isRunning {
-			logger.Info("SchedulerWorkflow already running, skipping trigger",
-				"chain_id", wc.ChainID,
-				"total_blocks", totalBlocks,
-			)
 		} else {
-			// Trigger SchedulerWorkflow for large gaps
-			logger.Info("GapScan triggering SchedulerWorkflow (large gaps)",
+			logger.Info("Gap SchedulerWorkflow started",
 				"chain_id", wc.ChainID,
-				"total_blocks", totalBlocks,
+				"workflow_id", childExec.ID,
+				"gap_from", gap.From,
+				"gap_to", gap.To,
 			)
-
-			// Combine all gaps into a single range for scheduler
-			// Find minimum From and maximum To across all gaps
-			minHeight := gaps[0].From
-			maxHeight := gaps[0].To
-			for _, gap := range gaps[1:] {
-				if gap.From < minHeight {
-					minHeight = gap.From
-				}
-				if gap.To > maxHeight {
-					maxHeight = gap.To
-				}
-			}
-
-			schedulerInput := types.WorkflowSchedulerInput{
-				StartHeight:  minHeight,
-				EndHeight:    maxHeight,
-				LatestHeight: latest,
-			}
-
-			wfID := wc.TemporalClient.GetSchedulerWorkflowID(wc.ChainID)
-			wfOptions := workflow.ChildWorkflowOptions{
-				WorkflowID:               wfID,
-				TaskQueue:                wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID),
-				WorkflowExecutionTimeout: 0,                                 // No timeout - workflow can run indefinitely
-				WorkflowTaskTimeout:      10 * time.Minute,                  // 10 minute task timeout to prevent heartbeat errors
-				ParentClosePolicy:        enums.PARENT_CLOSE_POLICY_ABANDON, // Don't terminate when parent completes
-			}
-			childCtx := workflow.WithChildOptions(ctx, wfOptions)
-
-			// Start child workflow without waiting for completion
-			future := workflow.ExecuteChildWorkflow(childCtx, wc.SchedulerWorkflow, schedulerInput)
-
-			// Just check if workflow started successfully
-			var childExec workflow.Execution
-			if err := future.GetChildWorkflowExecution().Get(ctx, &childExec); err != nil {
-				// Check if error is "already started" - this is not a failure, it means scheduler is already running
-				if strings.Contains(err.Error(), "ChildWorkflowExecutionAlreadyStartedError") ||
-					strings.Contains(err.Error(), "child workflow execution already started") {
-					logger.Info("SchedulerWorkflow already running (concurrent start detected)",
-						"chain_id", wc.ChainID,
-					)
-					// Not an error - scheduler is already doing what we want
-				} else {
-					logger.Error("Failed to start SchedulerWorkflow",
-						"chain_id", wc.ChainID,
-						"error", err.Error(),
-					)
-					return err
-				}
-			} else {
-				logger.Info("SchedulerWorkflow started successfully",
-					"chain_id", wc.ChainID,
-					"workflow_id", childExec.ID,
-					"run_id", childExec.RunID,
-				)
-			}
 		}
 	}
 
@@ -437,7 +386,7 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.WorkflowS
 			MaximumInterval:    2 * time.Second,
 			MaximumAttempts:    0,
 		},
-		TaskQueue: wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID),
+		TaskQueue: wc.ChainClient.OpsQueue,
 	}
 	activityCtx := workflow.WithActivityOptions(ctx, ao)
 
@@ -552,13 +501,14 @@ func (wc *Context) scheduleDirectly(ctx workflow.Context, chainID uint64, start,
 		"total", totalBlocks,
 	)
 
-	// Local activity options
+	// Local activity options for StartIndexWorkflow calls
+	// Uses StartToCloseTimeout (not ScheduleToClose) since local activities run in-process without queue delay
 	localAo := workflow.LocalActivityOptions{
-		ScheduleToCloseTimeout: 20 * time.Second,
+		StartToCloseTimeout: 2 * time.Minute,
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,
-			MaximumInterval:    5 * time.Second,
+			MaximumInterval:    10 * time.Second,
 			MaximumAttempts:    5,
 		},
 	}

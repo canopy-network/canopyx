@@ -129,16 +129,17 @@ func (ac *Context) ComputeLPSnapshots(ctx context.Context, input types.ActivityC
 
 		// Position is active if points > 0
 		isActive := pp.Points > 0
-		var closedDate *time.Time
+		// Default closed date to epoch (1970-01-01) for active positions
+		// Set to snapshot date when position is closed (points = 0)
+		closedDate := time.Time{} // Zero time is epoch in ClickHouse
 		if !isActive {
-			// Position is closed (points = 0), set closed date to snapshot date
-			closedDate = &input.TargetDate
+			closedDate = input.TargetDate
 		}
 
 		snapshot := &indexer.LPPositionSnapshot{
-			SourceChainID:       ac.ChainID,
+			SourceChainID:       uint16(ac.ChainID),
 			Address:             pp.Address,
-			PoolID:              pp.PoolID,
+			PoolID:              uint32(pp.PoolID),
 			SnapshotDate:        input.TargetDate,
 			SnapshotHeight:      snapshotHeight,
 			SnapshotBalance:     pp.LiquidityPoolPoints, // Pre-calculated balance

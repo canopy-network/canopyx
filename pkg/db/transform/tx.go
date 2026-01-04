@@ -15,7 +15,7 @@ import (
 
 // Transaction maps a Canopy lib.TxResult (protobuf) into the single-table Transaction model.
 // The Transaction uses google.protobuf.Any for polymorphic message types (26 variants).
-// Type-specific fields are extracted and stored in nullable columns for efficient querying.
+// Type-specific fields are extracted and stored in columns with defaults for efficient querying.
 func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 	tx := txResult.Transaction
 
@@ -36,20 +36,11 @@ func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 		return nil, fmt.Errorf("marshal transaction to JSON: %w", err)
 	}
 
-	// Extract optional signature fields
-	var publicKey *string
-	if tx.Signature != nil && len(tx.Signature.PublicKey) > 0 {
-		publicKey = ptrHex(tx.Signature.PublicKey)
-	}
-	var signature *string
-	if tx.Signature != nil && len(tx.Signature.Signature) > 0 {
-		signature = ptrHex(tx.Signature.Signature)
-	}
-
-	// Extract optional memo
-	var memo *string
-	if tx.Memo != "" {
-		memo = &tx.Memo
+	// Extract signature fields (empty string default if not present)
+	var publicKey, signature string
+	if tx.Signature != nil {
+		publicKey = bytesToHex(tx.Signature.PublicKey)
+		signature = bytesToHex(tx.Signature.Signature)
 	}
 
 	// Determine signer: prefer txResult.Sender, fallback to deriving from public key
@@ -65,15 +56,15 @@ func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 	return &indexer.Transaction{
 		Height:              txResult.Height,
 		TxHash:              txResult.TxHash,
-		TxIndex:             uint32(txResult.Index),
+		TxIndex:             uint16(txResult.Index),
 		Time:                time.UnixMicro(int64(tx.Time)),
 		CreatedHeight:       tx.CreatedHeight,
-		NetworkID:           tx.NetworkId,
+		NetworkID:           uint32(tx.NetworkId),
 		MessageType:         tx.MessageType,
 		Signer:              signer, // Canonical signer from signature verification, with message-specific fallback
 		Amount:              fields.Amount,
 		Fee:                 tx.Fee,
-		Memo:                memo,
+		Memo:                tx.Memo, // Empty string if not set
 		ValidatorAddress:    fields.ValidatorAddress,
 		Commission:          fields.Commission,
 		ChainID:             fields.ChainID,
@@ -99,28 +90,30 @@ func Transaction(txResult *lib.TxResult) (*indexer.Transaction, error) {
 }
 
 // TransactionFields holds extracted type-specific fields from transaction messages.
+// Uses value types with defaults (0, ”, 0.0) to match non-Nullable ClickHouse columns.
 type TransactionFields struct {
-	Amount              *uint64
-	ValidatorAddress    *string
-	Commission          *float64
-	ChainID             *uint64
-	SellAmount          *uint64
-	BuyAmount           *uint64
-	LiquidityAmount     *uint64
-	LiquidityPercent    *uint64
-	OrderID             *string
-	Price               *float64
-	ParamKey            *string
-	ParamValue          *string
-	CommitteeID         *uint64
-	Recipient           *string
-	PollHash            *string
-	BuyerReceiveAddress *string
-	BuyerSendAddress    *string
-	BuyerChainDeadline  *uint64
+	Amount              uint64
+	ValidatorAddress    string
+	Commission          float64
+	ChainID             uint16
+	SellAmount          uint64
+	BuyAmount           uint64
+	LiquidityAmount     uint64
+	LiquidityPercent    uint64
+	OrderID             string
+	Price               float64
+	ParamKey            string
+	ParamValue          string
+	CommitteeID         uint16
+	Recipient           string
+	PollHash            string
+	BuyerReceiveAddress string
+	BuyerSendAddress    string
+	BuyerChainDeadline  uint64
 }
 
 // extractTransactionFields unpacks google.protobuf.Any and extracts fields based on message type.
+// Uses value assignments (not pointers) to match non-Nullable ClickHouse columns.
 func extractTransactionFields(tx *lib.Transaction, txHash string) (*TransactionFields, error) {
 	fields := &TransactionFields{}
 
@@ -131,16 +124,16 @@ func extractTransactionFields(tx *lib.Transaction, txHash string) (*TransactionF
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageSend: %w", err)
 		}
-		fields.Recipient = ptrHex(msg.ToAddress)
-		fields.Amount = &msg.Amount
+		fields.Recipient = bytesToHex(msg.ToAddress)
+		fields.Amount = msg.Amount
 
 	case "stake":
 		var msg fsm.MessageStake
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageStake: %w", err)
 		}
-		fields.Recipient = ptrHex(msg.OutputAddress) // Validator address (short form of public key)
-		fields.Amount = &msg.Amount
+		fields.Recipient = bytesToHex(msg.OutputAddress) // Validator address (short form of public key)
+		fields.Amount = msg.Amount
 		// Note: Validators stake to multiple committees, not a single ChainID
 
 	case "editStake":
@@ -148,42 +141,41 @@ func extractTransactionFields(tx *lib.Transaction, txHash string) (*TransactionF
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageEditStake: %w", err)
 		}
-		fields.Recipient = ptrHex(msg.Address)
-		fields.Amount = &msg.Amount
+		fields.Recipient = bytesToHex(msg.Address)
+		fields.Amount = msg.Amount
 
 	case "unstake":
 		var msg fsm.MessageUnstake
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageUnstake: %w", err)
 		}
-		fields.Recipient = ptrHex(msg.Address)
+		fields.Recipient = bytesToHex(msg.Address)
 
 	case "pause":
 		var msg fsm.MessagePause
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessagePause: %w", err)
 		}
-		fields.Recipient = ptrHex(msg.Address)
+		fields.Recipient = bytesToHex(msg.Address)
 
 	case "unpause":
 		var msg fsm.MessageUnpause
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageUnpause: %w", err)
 		}
-		fields.Recipient = ptrHex(msg.Address)
+		fields.Recipient = bytesToHex(msg.Address)
 
 	case "changeParameter":
 		var msg fsm.MessageChangeParameter
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageChangeParameter: %w", err)
 		}
-		fields.ParamKey = &msg.ParameterKey
+		fields.ParamKey = msg.ParameterKey
 		// Extract ParameterValue from Any type as JSON
 		if msg.ParameterValue != nil {
 			paramValueJSON, err := protojson.Marshal(msg.ParameterValue)
 			if err == nil {
-				paramValueStr := string(paramValueJSON)
-				fields.ParamValue = &paramValueStr
+				fields.ParamValue = string(paramValueJSON)
 			}
 		}
 
@@ -192,33 +184,31 @@ func extractTransactionFields(tx *lib.Transaction, txHash string) (*TransactionF
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageDAOTransfer: %w", err)
 		}
-		fields.Recipient = ptrHex(msg.Address)
-		fields.Amount = &msg.Amount
+		fields.Recipient = bytesToHex(msg.Address)
+		fields.Amount = msg.Amount
 
 	case "subsidy":
 		var msg fsm.MessageSubsidy
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageSubsidy: %w", err)
 		}
-		fields.CommitteeID = &msg.ChainId
+		fields.CommitteeID = uint16(msg.ChainId)
 
 	case "createOrder":
 		var msg fsm.MessageCreateOrder
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageCreateOrder: %w", err)
 		}
-		fields.ChainID = &msg.ChainId
-		fields.SellAmount = &msg.AmountForSale
-		if msg.RequestedAmount > 0 {
-			price := float64(msg.RequestedAmount) / float64(msg.AmountForSale)
-			fields.Price = &price
+		fields.ChainID = uint16(msg.ChainId)
+		fields.SellAmount = msg.AmountForSale
+		if msg.RequestedAmount > 0 && msg.AmountForSale > 0 {
+			fields.Price = float64(msg.RequestedAmount) / float64(msg.AmountForSale)
 		}
-		fields.Recipient = ptrHex(msg.SellerReceiveAddress)
+		fields.Recipient = bytesToHex(msg.SellerReceiveAddress)
 		// Extract order_id from first 20 bytes of tx_hash
 		txHashBytes, err := hex.DecodeString(txHash)
 		if err == nil && len(txHashBytes) >= 20 {
-			orderIDHex := hex.EncodeToString(txHashBytes[:20])
-			fields.OrderID = &orderIDHex
+			fields.OrderID = hex.EncodeToString(txHashBytes[:20])
 		}
 
 	case "editOrder":
@@ -226,47 +216,46 @@ func extractTransactionFields(tx *lib.Transaction, txHash string) (*TransactionF
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageEditOrder: %w", err)
 		}
-		fields.ChainID = &msg.ChainId
-		fields.OrderID = ptrHex(msg.OrderId)
-		fields.SellAmount = &msg.AmountForSale
+		fields.ChainID = uint16(msg.ChainId)
+		fields.OrderID = bytesToHex(msg.OrderId)
+		fields.SellAmount = msg.AmountForSale
 		if msg.RequestedAmount > 0 && msg.AmountForSale > 0 {
-			price := float64(msg.RequestedAmount) / float64(msg.AmountForSale)
-			fields.Price = &price
+			fields.Price = float64(msg.RequestedAmount) / float64(msg.AmountForSale)
 		}
-		fields.Recipient = ptrHex(msg.SellerReceiveAddress) // Seller's receive address for the counter asset
+		fields.Recipient = bytesToHex(msg.SellerReceiveAddress) // Seller's receive address for the counter asset
 
 	case "deleteOrder":
 		var msg fsm.MessageDeleteOrder
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageDeleteOrder: %w", err)
 		}
-		fields.ChainID = &msg.ChainId
-		fields.OrderID = ptrHex(msg.OrderId)
+		fields.ChainID = uint16(msg.ChainId)
+		fields.OrderID = bytesToHex(msg.OrderId)
 
 	case "dexLimitOrder":
 		var msg fsm.MessageDexLimitOrder
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageDexLimitOrder: %w", err)
 		}
-		fields.ChainID = &msg.ChainId
-		fields.SellAmount = &msg.AmountForSale
-		fields.BuyAmount = &msg.RequestedAmount
+		fields.ChainID = uint16(msg.ChainId)
+		fields.SellAmount = msg.AmountForSale
+		fields.BuyAmount = msg.RequestedAmount
 
 	case "dexLiquidityDeposit":
 		var msg fsm.MessageDexLiquidityDeposit
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageDexLiquidityDeposit: %w", err)
 		}
-		fields.ChainID = &msg.ChainId
-		fields.LiquidityAmount = &msg.Amount
+		fields.ChainID = uint16(msg.ChainId)
+		fields.LiquidityAmount = msg.Amount
 
 	case "dexLiquidityWithdraw":
 		var msg fsm.MessageDexLiquidityWithdraw
 		if err := tx.Msg.UnmarshalTo(&msg); err != nil {
 			return nil, fmt.Errorf("unmarshal MessageDexLiquidityWithdraw: %w", err)
 		}
-		fields.ChainID = &msg.ChainId
-		fields.LiquidityPercent = &msg.Percent // Percent of liquidity to withdraw
+		fields.ChainID = uint16(msg.ChainId)
+		fields.LiquidityPercent = msg.Percent // Percent of liquidity to withdraw
 
 	default:
 		// Unknown message type - no fields extracted
@@ -277,6 +266,7 @@ func extractTransactionFields(tx *lib.Transaction, txHash string) (*TransactionF
 }
 
 // parseMemoFields extracts fields from memo JSON (poll and order operations).
+// Uses value assignments (not pointers) to match non-Nullable ClickHouse columns.
 func parseMemoFields(memo string, fields *TransactionFields) {
 	// Try to parse as poll operations
 	var pollMemo struct {
@@ -286,9 +276,9 @@ func parseMemoFields(memo string, fields *TransactionFields) {
 	}
 	if err := json.Unmarshal([]byte(memo), &pollMemo); err == nil {
 		if len(pollMemo.StartPoll) == 64 {
-			fields.PollHash = &pollMemo.StartPoll
+			fields.PollHash = pollMemo.StartPoll
 		} else if len(pollMemo.VotePoll) == 64 {
-			fields.PollHash = &pollMemo.VotePoll
+			fields.PollHash = pollMemo.VotePoll
 		}
 		return
 	}
@@ -304,18 +294,12 @@ func parseMemoFields(memo string, fields *TransactionFields) {
 	}
 	if err := json.Unmarshal([]byte(memo), &orderMemo); err == nil {
 		if orderMemo.LockOrder && orderMemo.OrderID != "" {
-			fields.OrderID = &orderMemo.OrderID
-			if orderMemo.BuyerReceiveAddress != "" {
-				fields.BuyerReceiveAddress = &orderMemo.BuyerReceiveAddress
-			}
-			if orderMemo.BuyerSendAddress != "" {
-				fields.BuyerSendAddress = &orderMemo.BuyerSendAddress
-			}
-			if orderMemo.BuyerChainDeadline > 0 {
-				fields.BuyerChainDeadline = &orderMemo.BuyerChainDeadline
-			}
+			fields.OrderID = orderMemo.OrderID
+			fields.BuyerReceiveAddress = orderMemo.BuyerReceiveAddress
+			fields.BuyerSendAddress = orderMemo.BuyerSendAddress
+			fields.BuyerChainDeadline = orderMemo.BuyerChainDeadline
 		} else if orderMemo.CloseOrder && orderMemo.OrderID != "" {
-			fields.OrderID = &orderMemo.OrderID
+			fields.OrderID = orderMemo.OrderID
 		}
 	}
 }

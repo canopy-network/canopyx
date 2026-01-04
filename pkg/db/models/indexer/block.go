@@ -18,7 +18,7 @@ var BlockColumns = []ColumnDef{
 	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
 	{Name: "hash", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
-	{Name: "network_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "network_id", Type: "UInt32", Codec: "Delta, ZSTD(3)"},
 	{Name: "parent_hash", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "proposer_address", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "size", Type: "Int32", Codec: "Delta, ZSTD(3)"},
@@ -37,7 +37,7 @@ type Block struct {
 	Height          uint64    `ch:"height" json:"height"`
 	Hash            string    `ch:"hash" json:"hash"`
 	Time            time.Time `ch:"time" json:"time"` // stored as DateTime64(6)
-	NetworkID       uint64    `ch:"network_id" json:"network_id"`
+	NetworkID       uint32    `ch:"network_id" json:"network_id"`
 	LastBlockHash   string    `ch:"parent_hash" json:"parent_hash"`
 	ProposerAddress string    `ch:"proposer_address" json:"proposer_address"`
 	Size            int32     `ch:"size" json:"size"`

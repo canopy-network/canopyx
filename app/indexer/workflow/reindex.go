@@ -34,7 +34,7 @@ func (wc *Context) ReindexSchedulerWorkflow(ctx workflow.Context, input types.Wo
 			MaximumInterval:    2 * time.Second,
 			MaximumAttempts:    0, // Unlimited retries
 		},
-		TaskQueue: wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID),
+		TaskQueue: wc.ChainClient.OpsQueue,
 	}
 	activityCtx := workflow.WithActivityOptions(ctx, ao)
 

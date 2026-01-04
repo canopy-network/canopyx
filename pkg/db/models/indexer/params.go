@@ -17,7 +17,7 @@ var ParamsColumns = []ColumnDef{
 	// Consensus parameters
 	{Name: "block_size", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "protocol_version", Type: "String", Codec: "ZSTD(3)"},
-	{Name: "root_chain_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "root_chain_id", Type: "UInt16", Codec: "Delta, ZSTD(1)"},
 	{Name: "retired", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	// Validator parameters
 	{Name: "unstaking_blocks", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
@@ -71,7 +71,7 @@ type Params struct {
 	// Consensus parameters (4 fields)
 	BlockSize       uint64 `ch:"block_size" json:"block_size"`             // Maximum allowed block size in bytes
 	ProtocolVersion string `ch:"protocol_version" json:"protocol_version"` // Minimum protocol version required
-	RootChainID     uint64 `ch:"root_chain_id" json:"root_chain_id"`       // Root chain ID (parent chain)
+	RootChainID     uint16 `ch:"root_chain_id" json:"root_chain_id"`       // Root chain ID (parent chain)
 	Retired         uint64 `ch:"retired" json:"retired"`                   // Whether chain is retired (0=active, 1=retired)
 
 	// Validator parameters (19 fields)

@@ -85,21 +85,53 @@ helm_repo(
 
 print("Deploying ClickHouse via Altinity ClickHouse Operator")
 
-# Generate dynamic storage patch based on tilt-config.yaml
-clickhouse_storage = resources_cfg.get('clickhouse', {})
-hot_storage = clickhouse_storage.get('hot_storage', '2Gi')
-warm_storage = clickhouse_storage.get('warm_storage', '2Gi')
-cold_storage = clickhouse_storage.get('cold_storage', '5Gi')
-log_storage = clickhouse_storage.get('log_storage', '1Gi')
+# Generate dynamic storage and resource patch based on tilt-config.yaml
+clickhouse_cfg = resources_cfg.get('clickhouse', {})
+hot_storage = clickhouse_cfg.get('hot_storage', '2Gi')
+warm_storage = clickhouse_cfg.get('warm_storage', '2Gi')
+cold_storage = clickhouse_cfg.get('cold_storage', '5Gi')
+log_storage = clickhouse_cfg.get('log_storage', '1Gi')
+# CPU/Memory resources for ClickHouse pods
+ch_cpu_limit = clickhouse_cfg.get('cpu_limit', '2000m')
+ch_cpu_request = clickhouse_cfg.get('cpu_request', '1000m')
+ch_memory_limit = clickhouse_cfg.get('memory_limit', '4Gi')
+ch_memory_request = clickhouse_cfg.get('memory_request', '2Gi')
 
-# Build storage patch YAML
-storage_patch = """# Auto-generated storage patch from tilt-config.yaml
-# Profile: {profile} | Hot: {hot} | Warm: {warm} | Cold: {cold} | Log: {log}
+# Build storage and resource patch YAML
+storage_patch = """# Auto-generated patch from tilt-config.yaml
+# Profile: {profile} | CPU: {cpu_req}/{cpu_lim} | Memory: {mem_req}/{mem_lim}
+# Storage: Hot={hot} | Warm={warm} | Cold={cold} | Log={log}
 apiVersion: clickhouse.altinity.com/v1
 kind: ClickHouseInstallation
 metadata:
   name: canopyx
 spec:
+  templates:
+    podTemplates:
+      - name: clickhouse-pod
+        spec:
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:25.8
+              env:
+                - name: KUBERNETES_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              volumeMounts:
+                - name: hot-volume
+                  mountPath: /var/lib/clickhouse/hot
+                - name: warm-volume
+                  mountPath: /var/lib/clickhouse/warm
+                - name: cold-volume
+                  mountPath: /var/lib/clickhouse/cold
+              resources:
+                requests:
+                  memory: "{mem_req}"
+                  cpu: "{cpu_req}"
+                limits:
+                  memory: "{mem_lim}"
+                  cpu: "{cpu_lim}"
   defaults:
     templates:
       volumeClaimTemplates:
@@ -134,7 +166,12 @@ spec:
             resources:
               requests:
                 storage: {log}
-""".format(profile=profile, hot=hot_storage, warm=warm_storage, cold=cold_storage, log=log_storage)
+""".format(
+    profile=profile,
+    hot=hot_storage, warm=warm_storage, cold=cold_storage, log=log_storage,
+    cpu_lim=ch_cpu_limit, cpu_req=ch_cpu_request,
+    mem_lim=ch_memory_limit, mem_req=ch_memory_request
+)
 
 # Write patch file using Python
 local_resource(
@@ -148,7 +185,8 @@ with open('deploy/k8s/clickhouse/overlays/local/pvc-sizes.yaml', 'w') as f:
   labels=['clickhouse']
 )
 
-print("  ClickHouse storage sizes (profile=%s): hot=%s, warm=%s, cold=%s, log=%s" % (profile, hot_storage, warm_storage, cold_storage, log_storage))
+print("  ClickHouse resources (profile=%s): CPU=%s/%s, Memory=%s/%s" % (profile, ch_cpu_request, ch_cpu_limit, ch_memory_request, ch_memory_limit))
+print("  ClickHouse storage: hot=%s, warm=%s, cold=%s, log=%s" % (hot_storage, warm_storage, cold_storage, log_storage))
 
 # Step 1: Deploy ClickHouse Operator (installs CRDs)
 helm_resource(

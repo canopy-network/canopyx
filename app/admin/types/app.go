@@ -29,8 +29,8 @@ type App struct {
 	ChainsDB     *xsync.Map[string, chainstore.Store]
 	CrossChainDB crosschain.Store
 
-	// Temporal Client wrapper
-	TemporalClient *temporal.Client
+	// Temporal Client Manager (multi-namespace support)
+	TemporalManager *temporal.ClientManager
 
 	// Temporal Workers
 	MaintenanceWorker worker.Worker // Maintenance worker for cross-chain compaction (go.temporal.io/sdk/worker.Worker)
@@ -68,6 +68,12 @@ func (a *App) Start(ctx context.Context) {
 		a.MaintenanceWorker.Stop()
 	}
 
+	// Close Temporal manager (closes all clients)
+	if a.TemporalManager != nil {
+		a.Logger.Info("Closing Temporal manager")
+		a.TemporalManager.Close()
+	}
+
 	if a.AdminDB != nil {
 		a.Logger.Info("closing admin database connection")
 		err := a.AdminDB.Close()
@@ -86,12 +92,12 @@ func (a *App) Start(ctx context.Context) {
 	a.Logger.Info("さようなら!")
 }
 
-// NewChainDb initializes or retrieves an instance of ChainDB for a given blockchain identified by chainID.
-// The database and tables must already exist (created by indexer).
+// NewChainDb retrieves or creates a ChainDB instance for a given blockchain identified by chainID.
+// The database and tables must already exist (created by indexer at startup).
 // Returns the ChainDB instance or an error in case of failure.
 //
-// IMPORTANT: Reuses the admin DB's connection pool to avoid creating separate pools for each chain.
-// This is efficient since admin only does occasional reads from the web UI.
+// IMPORTANT: This does NOT call InitializeDB - that should only happen once at startup in app.go.
+// Reuses the admin DB's connection pool to avoid creating separate pools for each chain.
 func (a *App) NewChainDb(ctx context.Context, chainID string) (chainstore.Store, error) {
 	if chainDb, ok := a.ChainsDB.Load(chainID); ok {
 		// chainDb is already loaded
@@ -108,13 +114,6 @@ func (a *App) NewChainDb(ctx context.Context, chainID string) (chainstore.Store,
 	// Admin only does occasional reads from web UI, no need for separate pools.
 	// All queries use "database"."table" format, so one connection pool can serve multiple databases.
 	chainDB := chainstore.NewWithSharedClient(a.AdminDB.Client, chainIDUint)
-
-	// Initialize the database and tables if they don't exist yet.
-	// This handles the race condition where admin creates the chain before the indexer pod starts.
-	// InitializeDB is idempotent and uses CREATE IF NOT EXISTS, so it's safe to call multiple times.
-	if err := chainDB.InitializeDB(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize chain database: %w", err)
-	}
 
 	a.ChainsDB.Store(chainID, chainDB)
 
@@ -145,32 +144,46 @@ func (a *App) ReconcileSchedules(ctx context.Context) error {
 }
 
 // EnsureHeadSchedule ensures the required schedules for indexing are created if they do not already exist.
+// The schedule is created in the chain's namespace (chain_<id>).
 func (a *App) EnsureHeadSchedule(ctx context.Context, chainID string) error {
 	// Convert string chainID to uint64
 	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
 	if parseErr != nil {
 		return fmt.Errorf("invalid chain ID format: %w", parseErr)
 	}
-	id := a.TemporalClient.GetHeadScheduleID(chainIDUint)
-	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
-	_, err := h.Describe(ctx)
+
+	// Get chain-specific client
+	chainClient, err := a.TemporalManager.GetChainClient(ctx, chainIDUint)
+	if err != nil {
+		return fmt.Errorf("failed to get chain client: %w", err)
+	}
+
+	id := chainClient.HeadScheduleID // "headscan" (simplified)
+	h := chainClient.TSClient.GetHandle(ctx, id)
+	_, err = h.Describe(ctx)
 	if err == nil {
-		a.Logger.Info("Head scan schedule already exists", zap.String("id", id), zap.String("chainID", chainID))
+		a.Logger.Info("Head scan schedule already exists",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace),
+			zap.String("chainID", chainID))
 		return nil
 	}
 
 	var notFound *serviceerror.NotFound
 	if errors.As(err, &notFound) {
-		_, scheduleErr := a.TemporalClient.TSClient.Create(
+		a.Logger.Info("Creating head scan schedule",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace))
+		_, scheduleErr := chainClient.TSClient.Create(
 			ctx, client.ScheduleOptions{
 				ID:   id,
-				Spec: a.TemporalClient.TwoSecondSpec(),
+				Spec: temporal.TwoSecondSpec(),
 				Action: &client.ScheduleWorkflowAction{
 					Workflow:                 indexer.HeadScanWorkflowName,
 					Args:                     []interface{}{indexer.HeadScanInput{ChainID: chainIDUint}},
-					TaskQueue:                a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
-					WorkflowExecutionTimeout: 10 * time.Minute, // Allow up to 10 minutes for HeadScan (direct scheduling can take time)
-					WorkflowTaskTimeout:      2 * time.Minute,  // 2-minute task timeout for workflow logic
+					TaskQueue:                chainClient.OpsQueue, // "ops" (simplified)
+					WorkflowExecutionTimeout: 10 * time.Minute,
+					WorkflowTaskTimeout:      2 * time.Minute,
 				},
 			},
 		)
@@ -180,34 +193,47 @@ func (a *App) EnsureHeadSchedule(ctx context.Context, chainID string) error {
 }
 
 // EnsureGapScanSchedule ensures the required schedules for indexing are created if they do not already exist.
+// The schedule is created in the chain's namespace (chain_<id>).
 func (a *App) EnsureGapScanSchedule(ctx context.Context, chainID string) error {
 	// Convert string chainID to uint64
 	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
 	if parseErr != nil {
 		return fmt.Errorf("invalid chain ID format: %w", parseErr)
 	}
-	id := a.TemporalClient.GetGapScanScheduleID(chainIDUint)
-	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
-	_, err := h.Describe(ctx)
+
+	// Get chain-specific client
+	chainClient, err := a.TemporalManager.GetChainClient(ctx, chainIDUint)
+	if err != nil {
+		return fmt.Errorf("failed to get chain client: %w", err)
+	}
+
+	id := chainClient.GapScanScheduleID // "gapscan" (simplified)
+	h := chainClient.TSClient.GetHandle(ctx, id)
+	_, err = h.Describe(ctx)
 	if err == nil {
-		a.Logger.Info("Gap scan schedule already exists", zap.String("id", id), zap.String("chainID", chainID))
+		a.Logger.Info("Gap scan schedule already exists",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace),
+			zap.String("chainID", chainID))
 		return nil
 	}
 
 	var notFound *serviceerror.NotFound
 	if errors.As(err, &notFound) {
-		a.Logger.Info("Creating gap scan schedule", zap.String("id", id))
-		_, scheduleErr := a.TemporalClient.TSClient.Create(
+		a.Logger.Info("Creating gap scan schedule",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace))
+		_, scheduleErr := chainClient.TSClient.Create(
 			ctx,
 			client.ScheduleOptions{
 				ID:   id,
-				Spec: a.TemporalClient.OneHourSpec(),
+				Spec: temporal.OneHourSpec(),
 				Action: &client.ScheduleWorkflowAction{
 					Workflow:                 indexer.GapScanWorkflowName,
 					Args:                     []interface{}{indexer.GapScanInput{ChainID: chainIDUint}},
-					TaskQueue:                a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
-					WorkflowExecutionTimeout: 10 * time.Minute, // Allow up to 10 minutes for GapScan (direct scheduling can take time)
-					WorkflowTaskTimeout:      2 * time.Minute,  // 2-minute task timeout for workflow logic
+					TaskQueue:                chainClient.OpsQueue, // "ops" (simplified)
+					WorkflowExecutionTimeout: 10 * time.Minute,
+					WorkflowTaskTimeout:      2 * time.Minute,
 				},
 			},
 		)
@@ -218,32 +244,45 @@ func (a *App) EnsureGapScanSchedule(ctx context.Context, chainID string) error {
 
 // EnsurePollSnapshotSchedule ensures the poll snapshot schedule is created if it does not already exist.
 // This schedule runs every 5 minutes to capture governance poll snapshots.
+// The schedule is created in the chain's namespace (chain_<id>).
 func (a *App) EnsurePollSnapshotSchedule(ctx context.Context, chainID string) error {
 	// Convert string chainID to uint64
 	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
 	if parseErr != nil {
 		return fmt.Errorf("invalid chain ID format: %w", parseErr)
 	}
-	id := a.TemporalClient.GetPollSnapshotScheduleID(chainIDUint)
-	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
-	_, err := h.Describe(ctx)
+
+	// Get chain-specific client
+	chainClient, err := a.TemporalManager.GetChainClient(ctx, chainIDUint)
+	if err != nil {
+		return fmt.Errorf("failed to get chain client: %w", err)
+	}
+
+	id := chainClient.PollSnapshotScheduleID // "pollsnapshot" (simplified)
+	h := chainClient.TSClient.GetHandle(ctx, id)
+	_, err = h.Describe(ctx)
 	if err == nil {
-		a.Logger.Info("Poll snapshot schedule already exists", zap.String("id", id), zap.String("chainID", chainID))
+		a.Logger.Info("Poll snapshot schedule already exists",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace),
+			zap.String("chainID", chainID))
 		return nil
 	}
 
 	var notFound *serviceerror.NotFound
 	if errors.As(err, &notFound) {
-		a.Logger.Info("Creating poll snapshot schedule", zap.String("id", id))
-		_, scheduleErr := a.TemporalClient.TSClient.Create(
+		a.Logger.Info("Creating poll snapshot schedule",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace))
+		_, scheduleErr := chainClient.TSClient.Create(
 			ctx,
 			client.ScheduleOptions{
 				ID:   id,
-				Spec: a.TemporalClient.FiveMinuteSpec(),
+				Spec: temporal.FiveMinuteSpec(),
 				Action: &client.ScheduleWorkflowAction{
 					Workflow:  indexer.PollSnapshotWorkflowName,
 					Args:      []interface{}{}, // No input args needed
-					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+					TaskQueue: chainClient.OpsQueue,
 				},
 			},
 		)
@@ -254,32 +293,94 @@ func (a *App) EnsurePollSnapshotSchedule(ctx context.Context, chainID string) er
 
 // EnsureProposalSnapshotSchedule ensures the proposal snapshot schedule is created if it does not already exist.
 // This schedule runs every 5 minutes to capture governance proposal snapshots.
+// The schedule is created in the chain's namespace (chain_<id>).
 func (a *App) EnsureProposalSnapshotSchedule(ctx context.Context, chainID string) error {
 	// Convert string chainID to uint64
 	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
 	if parseErr != nil {
 		return fmt.Errorf("invalid chain ID format: %w", parseErr)
 	}
-	id := a.TemporalClient.GetProposalSnapshotScheduleID(chainIDUint)
-	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
-	_, err := h.Describe(ctx)
+
+	// Get chain-specific client
+	chainClient, err := a.TemporalManager.GetChainClient(ctx, chainIDUint)
+	if err != nil {
+		return fmt.Errorf("failed to get chain client: %w", err)
+	}
+
+	id := chainClient.ProposalSnapshotScheduleID // "proposalsnapshot" (simplified)
+	h := chainClient.TSClient.GetHandle(ctx, id)
+	_, err = h.Describe(ctx)
 	if err == nil {
-		a.Logger.Info("Proposal snapshot schedule already exists", zap.String("id", id), zap.String("chainID", chainID))
+		a.Logger.Info("Proposal snapshot schedule already exists",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace),
+			zap.String("chainID", chainID))
 		return nil
 	}
 
 	var notFound *serviceerror.NotFound
 	if errors.As(err, &notFound) {
-		a.Logger.Info("Creating proposal snapshot schedule", zap.String("id", id))
-		_, scheduleErr := a.TemporalClient.TSClient.Create(
+		a.Logger.Info("Creating proposal snapshot schedule",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace))
+		_, scheduleErr := chainClient.TSClient.Create(
 			ctx,
 			client.ScheduleOptions{
 				ID:   id,
-				Spec: a.TemporalClient.FiveMinuteSpec(),
+				Spec: temporal.FiveMinuteSpec(),
 				Action: &client.ScheduleWorkflowAction{
 					Workflow:  indexer.ProposalSnapshotWorkflowName,
 					Args:      []interface{}{}, // No input args needed
-					TaskQueue: a.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+					TaskQueue: chainClient.OpsQueue,
+				},
+			},
+		)
+		return scheduleErr
+	}
+	return err
+}
+
+// EnsureCleanupStagingSchedule ensures the cleanup staging schedule is created if it does not already exist.
+// This schedule runs hourly to batch cleanup staging tables for heights that have been successfully indexed.
+// The schedule is created in the chain's namespace (chain_<id>).
+func (a *App) EnsureCleanupStagingSchedule(ctx context.Context, chainID string) error {
+	// Convert string chainID to uint64
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+
+	// Get chain-specific client
+	chainClient, err := a.TemporalManager.GetChainClient(ctx, chainIDUint)
+	if err != nil {
+		return fmt.Errorf("failed to get chain client: %w", err)
+	}
+
+	id := chainClient.CleanupStagingScheduleID // "cleanupstaging"
+	h := chainClient.TSClient.GetHandle(ctx, id)
+	_, err = h.Describe(ctx)
+	if err == nil {
+		a.Logger.Info("Cleanup staging schedule already exists",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace),
+			zap.String("chainID", chainID))
+		return nil
+	}
+
+	var notFound *serviceerror.NotFound
+	if errors.As(err, &notFound) {
+		a.Logger.Info("Creating cleanup staging schedule",
+			zap.String("id", id),
+			zap.String("namespace", chainClient.Namespace))
+		_, scheduleErr := chainClient.TSClient.Create(
+			ctx,
+			client.ScheduleOptions{
+				ID:   id,
+				Spec: temporal.OneHourSpec(),
+				Action: &client.ScheduleWorkflowAction{
+					Workflow:  indexer.CleanupStagingWorkflowName,
+					Args:      []interface{}{}, // Uses defaults: lookbackHours=2, bufferHours=1
+					TaskQueue: chainClient.MaintenanceQueue,
 				},
 			},
 		)
@@ -289,7 +390,19 @@ func (a *App) EnsureProposalSnapshotSchedule(ctx context.Context, chainID string
 }
 
 // EnsureChainSchedules ensures the required schedules for indexing are created if they do not already exist.
+// It first ensures the chain's namespace exists, then creates all schedules in that namespace.
 func (a *App) EnsureChainSchedules(ctx context.Context, chainID string) error {
+	// Convert string chainID to uint64
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+
+	// Ensure namespace exists first
+	if err := a.TemporalManager.EnsureChainNamespace(ctx, chainIDUint, 7*24*time.Hour); err != nil {
+		return fmt.Errorf("failed to ensure chain namespace: %w", err)
+	}
+
 	if err := a.EnsureHeadSchedule(ctx, chainID); err != nil {
 		return err
 	}
@@ -306,37 +419,123 @@ func (a *App) EnsureChainSchedules(ctx context.Context, chainID string) error {
 		return err
 	}
 
+	if err := a.EnsureCleanupStagingSchedule(ctx, chainID); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // EnsureCrossChainCompactionSchedule ensures the cross-chain table compaction schedule is created.
+// This schedule is created in the admin namespace (canopyx).
 func (a *App) EnsureCrossChainCompactionSchedule(ctx context.Context) error {
-	id := a.TemporalClient.GetCrossChainCompactionScheduleID()
-	h := a.TemporalClient.TSClient.GetHandle(ctx, id)
-	_, err := h.Describe(ctx)
+	// Get admin client
+	adminClient, err := a.TemporalManager.GetAdminClient(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get admin client: %w", err)
+	}
+
+	id := adminClient.CrossChainCompactionScheduleID // "crosschain:compaction"
+	h := adminClient.TSClient.GetHandle(ctx, id)
+	_, err = h.Describe(ctx)
 	if err == nil {
-		a.Logger.Info("Cross-chain compaction schedule already exists", zap.String("id", id))
+		a.Logger.Info("Cross-chain compaction schedule already exists",
+			zap.String("id", id),
+			zap.String("namespace", adminClient.Namespace))
 		return nil
 	}
 
 	var notFound *serviceerror.NotFound
 	if errors.As(err, &notFound) {
-		a.Logger.Info("Creating cross-chain compaction schedule", zap.String("id", id))
-		_, scheduleErr := a.TemporalClient.TSClient.Create(
+		a.Logger.Info("Creating cross-chain compaction schedule",
+			zap.String("id", id),
+			zap.String("namespace", adminClient.Namespace))
+		_, scheduleErr := adminClient.TSClient.Create(
 			ctx,
 			client.ScheduleOptions{
 				ID:   id,
-				Spec: a.TemporalClient.OneHourSpec(), // Run every hour
+				Spec: temporal.OneHourSpec(),
 				Action: &client.ScheduleWorkflowAction{
-					Workflow:  "CompactCrossChainTablesWorkflow",       // Workflow name from pkg/temporal/admin
-					Args:      []interface{}{map[string]interface{}{}}, // Empty input
-					TaskQueue: a.TemporalClient.GetAdminMaintenanceQueue(),
+					Workflow:  "CompactCrossChainTablesWorkflow",
+					Args:      []interface{}{map[string]interface{}{}},
+					TaskQueue: adminClient.MaintenanceQueue, // "maintenance"
 				},
 			},
 		)
 		return scheduleErr
 	}
 	return err
+}
+
+// PauseChainSchedules pauses all schedules in a chain's namespace.
+// This is called during soft-delete of a chain.
+func (a *App) PauseChainSchedules(ctx context.Context, chainID string) error {
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	return a.TemporalManager.PauseChainSchedules(ctx, chainIDUint)
+}
+
+// UnpauseChainSchedules unpauses all schedules in a chain's namespace.
+// This is called during restore of a soft-deleted chain.
+func (a *App) UnpauseChainSchedules(ctx context.Context, chainID string) error {
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	return a.TemporalManager.UnpauseChainSchedules(ctx, chainIDUint)
+}
+
+// DeleteChainSchedules deletes all schedules in a chain's namespace.
+// This is called before deleting the namespace itself during hard-delete.
+func (a *App) DeleteChainSchedules(ctx context.Context, chainID string) error {
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	return a.TemporalManager.DeleteChainSchedules(ctx, chainIDUint)
+}
+
+// DeleteChainNamespace deletes a chain's Temporal namespace.
+// This is called during hard-delete (permanent deletion) of a chain.
+func (a *App) DeleteChainNamespace(ctx context.Context, chainID string) error {
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	return a.TemporalManager.DeleteChainNamespace(ctx, chainIDUint)
+}
+
+// TerminateRunningWorkflows terminates all running workflows in a chain's namespace.
+// This is called during soft-delete to stop any in-progress work.
+func (a *App) TerminateRunningWorkflows(ctx context.Context, chainID string, reason string) error {
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+	return a.TemporalManager.TerminateRunningWorkflows(ctx, chainIDUint, reason)
+}
+
+// StartDeleteChainWorkflow starts the hard delete workflow in the admin namespace.
+// Returns the workflow ID for tracking.
+func (a *App) StartDeleteChainWorkflow(ctx context.Context, chainID uint64) (string, error) {
+	adminClient, err := a.TemporalManager.GetAdminClient(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get admin client: %w", err)
+	}
+
+	workflowID, runID, err := adminClient.StartDeleteChainWorkflow(ctx, chainID)
+	if err != nil {
+		return "", err
+	}
+
+	a.Logger.Info("Delete chain workflow started",
+		zap.Uint64("chain_id", chainID),
+		zap.String("workflow_id", workflowID),
+		zap.String("run_id", runID))
+
+	return workflowID, nil
 }
 
 // LoadChainStore loads or creates a chain store for the given chain ID.

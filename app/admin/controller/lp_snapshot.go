@@ -11,6 +11,7 @@ import (
 	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	crosschainstore "github.com/canopy-network/canopyx/pkg/db/crosschain"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/canopy-network/canopyx/pkg/temporal"
 	indexerworkflow "github.com/canopy-network/canopyx/pkg/temporal/indexer"
 	"github.com/go-jose/go-jose/v4/json"
 	"github.com/gorilla/mux"
@@ -35,6 +36,17 @@ func (c *Controller) HandleCreateLPSnapshotSchedule(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Get the chain client for this chain's namespace
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain client",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to connect to chain namespace"})
+		return
+	}
+
 	// Parse optional backfill parameters
 	var req struct {
 		Backfill *struct {
@@ -49,9 +61,9 @@ func (c *Controller) HandleCreateLPSnapshotSchedule(w http.ResponseWriter, r *ht
 		}
 	}
 
-	// Create the schedule
-	scheduleID := c.App.TemporalClient.GetLPSnapshotScheduleID(chainIDUint)
-	handle := c.App.TemporalClient.TSClient.GetHandle(r.Context(), scheduleID)
+	// Create the schedule in chain namespace
+	scheduleID := chainClient.LPSnapshotScheduleID
+	handle := chainClient.TSClient.GetHandle(r.Context(), scheduleID)
 
 	// Check if schedule already exists
 	_, err = handle.Describe(r.Context())
@@ -74,17 +86,18 @@ func (c *Controller) HandleCreateLPSnapshotSchedule(w http.ResponseWriter, r *ht
 	// Create hourly schedule
 	c.App.Logger.Info("Creating LP snapshot schedule",
 		zap.Uint64("chain_id", chainIDUint),
-		zap.String("schedule_id", scheduleID))
+		zap.String("schedule_id", scheduleID),
+		zap.String("namespace", chainClient.Namespace))
 
-	_, scheduleErr := c.App.TemporalClient.TSClient.Create(
+	_, scheduleErr := chainClient.TSClient.Create(
 		r.Context(),
 		client.ScheduleOptions{
 			ID:   scheduleID,
-			Spec: c.App.TemporalClient.OneHourSpec(),
+			Spec: temporal.OneHourSpec(),
 			Action: &client.ScheduleWorkflowAction{
 				Workflow:  indexerworkflow.LPSnapshotWorkflowName,
 				Args:      []interface{}{}, // No input args - workflow reads scheduled time from context
-				TaskQueue: c.App.TemporalClient.GetIndexerOpsQueue(chainIDUint),
+				TaskQueue: chainClient.OpsQueue,
 			},
 		},
 	)
@@ -152,8 +165,19 @@ func (c *Controller) HandlePauseLPSnapshotSchedule(w http.ResponseWriter, r *htt
 		return
 	}
 
-	scheduleID := c.App.TemporalClient.GetLPSnapshotScheduleID(chainIDUint)
-	handle := c.App.TemporalClient.TSClient.GetHandle(r.Context(), scheduleID)
+	// Get the chain client for this chain's namespace
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain client",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to connect to chain namespace"})
+		return
+	}
+
+	scheduleID := chainClient.LPSnapshotScheduleID
+	handle := chainClient.TSClient.GetHandle(r.Context(), scheduleID)
 
 	if err := handle.Pause(r.Context(), client.SchedulePauseOptions{
 		Note: "Paused via Admin API",
@@ -207,8 +231,19 @@ func (c *Controller) HandleUnpauseLPSnapshotSchedule(w http.ResponseWriter, r *h
 		}
 	}
 
-	scheduleID := c.App.TemporalClient.GetLPSnapshotScheduleID(chainIDUint)
-	handle := c.App.TemporalClient.TSClient.GetHandle(r.Context(), scheduleID)
+	// Get the chain client for this chain's namespace
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain client",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to connect to chain namespace"})
+		return
+	}
+
+	scheduleID := chainClient.LPSnapshotScheduleID
+	handle := chainClient.TSClient.GetHandle(r.Context(), scheduleID)
 
 	if err := handle.Unpause(r.Context(), client.ScheduleUnpauseOptions{
 		Note: "Unpaused via Admin API",
@@ -279,8 +314,19 @@ func (c *Controller) HandleDeleteLPSnapshotSchedule(w http.ResponseWriter, r *ht
 		return
 	}
 
-	scheduleID := c.App.TemporalClient.GetLPSnapshotScheduleID(chainIDUint)
-	handle := c.App.TemporalClient.TSClient.GetHandle(r.Context(), scheduleID)
+	// Get the chain client for this chain's namespace
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain client",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to connect to chain namespace"})
+		return
+	}
+
+	scheduleID := chainClient.LPSnapshotScheduleID
+	handle := chainClient.TSClient.GetHandle(r.Context(), scheduleID)
 
 	if err := handle.Delete(r.Context()); err != nil {
 		var notFound *serviceerror.NotFound
@@ -362,7 +408,18 @@ func (c *Controller) HandleTriggerLPSnapshotBackfill(w http.ResponseWriter, r *h
 		}
 	}
 
-	scheduleID := c.App.TemporalClient.GetLPSnapshotScheduleID(chainIDUint)
+	// Get the chain client for this chain's namespace
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain client",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to connect to chain namespace"})
+		return
+	}
+
+	scheduleID := chainClient.LPSnapshotScheduleID
 
 	if err := c.triggerLPSnapshotBackfill(r.Context(), chainIDUint, scheduleID, startDate, endDate); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -483,10 +540,10 @@ func (c *Controller) calculateBackfillRange(ctx context.Context, chainID uint64)
 	chainDB := chainstore.NewWithSharedClient(c.App.AdminDB.Client, chainID)
 	// Note: No Close() needed - shares admin DB's connection pool
 
-	// Get block 1 for the start date
-	block1, err := chainDB.GetBlock(ctx, 1)
+	// Get block 1 time for the start date (lightweight query - only fetches time column)
+	block1Time, err := chainDB.GetBlockTime(ctx, 1)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("failed to get block 1: %w", err)
+		return time.Time{}, time.Time{}, fmt.Errorf("failed to get block 1 time: %w", err)
 	}
 
 	// Get last indexed height
@@ -499,14 +556,15 @@ func (c *Controller) calculateBackfillRange(ctx context.Context, chainID uint64)
 		return time.Time{}, time.Time{}, fmt.Errorf("no blocks indexed yet for chain %d", chainID)
 	}
 
-	lastBlock, err := chainDB.GetBlock(ctx, lastIndexedHeight)
+	// Get last block time (lightweight query - only fetches time column)
+	lastBlockTime, err := chainDB.GetBlockTime(ctx, lastIndexedHeight)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("failed to get last indexed block: %w", err)
+		return time.Time{}, time.Time{}, fmt.Errorf("failed to get last indexed block time: %w", err)
 	}
 
 	// Convert to calendar dates (UTC)
-	startDate = time.Date(block1.Time.Year(), block1.Time.Month(), block1.Time.Day(), 0, 0, 0, 0, time.UTC)
-	endDate = time.Date(lastBlock.Time.Year(), lastBlock.Time.Month(), lastBlock.Time.Day(), 0, 0, 0, 0, time.UTC)
+	startDate = time.Date(block1Time.Year(), block1Time.Month(), block1Time.Day(), 0, 0, 0, 0, time.UTC)
+	endDate = time.Date(lastBlockTime.Year(), lastBlockTime.Month(), lastBlockTime.Day(), 0, 0, 0, 0, time.UTC)
 
 	c.App.Logger.Info("Calculated backfill range",
 		zap.Uint64("chain_id", chainID),
@@ -520,7 +578,12 @@ func (c *Controller) calculateBackfillRange(ctx context.Context, chainID uint64)
 
 // triggerLPSnapshotBackfill triggers a Temporal schedule backfill.
 func (c *Controller) triggerLPSnapshotBackfill(ctx context.Context, chainID uint64, scheduleID string, startDate, endDate time.Time) error {
-	handle := c.App.TemporalClient.TSClient.GetHandle(ctx, scheduleID)
+	// Get the chain client for this chain's namespace
+	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainID)
+	if err != nil {
+		return fmt.Errorf("failed to get chain client: %w", err)
+	}
+	handle := chainClient.TSClient.GetHandle(ctx, scheduleID)
 
 	c.App.Logger.Info("Triggering LP snapshot backfill",
 		zap.Uint64("chain_id", chainID),
@@ -529,7 +592,7 @@ func (c *Controller) triggerLPSnapshotBackfill(ctx context.Context, chainID uint
 		zap.Time("end_date", endDate))
 
 	// Use Temporal's built-in schedule backfill
-	err := handle.Backfill(ctx, client.ScheduleBackfillOptions{
+	err = handle.Backfill(ctx, client.ScheduleBackfillOptions{
 		Backfill: []client.ScheduleBackfill{
 			{
 				Start:   startDate,

@@ -144,6 +144,21 @@ defaultNamespaces:
       history: Disabled
       visibility: Disabled
 
+# Dynamic configuration for Temporal
+# These settings are applied at runtime and don't require a restart
+dynamicConfig:
+  # Increase concurrent poller limits (default: 100)
+  # Required for multi-replica indexers with 5 workers each
+  frontend.perNamespaceWorkerCount:
+    - value: 500
+      constraints: {}
+  matching.perTaskQueuePartitionMaxConcurrentPollers:
+    - value: 500
+      constraints: {}
+  matching.maxTaskQueueIdleTime:
+    - value: 5m
+      constraints: {}
+
 # Disable monitoring for dev
 prometheus:
   enabled: false

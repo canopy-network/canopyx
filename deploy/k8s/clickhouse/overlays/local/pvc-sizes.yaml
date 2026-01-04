@@ -1,10 +1,37 @@
-# Auto-generated storage patch from tilt-config.yaml
-# Profile: development | Hot: 2Gi | Warm: 2Gi | Cold: 5Gi | Log: 1Gi
+# Auto-generated patch from tilt-config.yaml
+# Profile: development | CPU: 2000m/8000m | Memory: 4Gi/12Gi
+# Storage: Hot=2Gi | Warm=2Gi | Cold=5Gi | Log=1Gi
 apiVersion: clickhouse.altinity.com/v1
 kind: ClickHouseInstallation
 metadata:
   name: canopyx
 spec:
+  templates:
+    podTemplates:
+      - name: clickhouse-pod
+        spec:
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:25.8
+              env:
+                - name: KUBERNETES_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              volumeMounts:
+                - name: hot-volume
+                  mountPath: /var/lib/clickhouse/hot
+                - name: warm-volume
+                  mountPath: /var/lib/clickhouse/warm
+                - name: cold-volume
+                  mountPath: /var/lib/clickhouse/cold
+              resources:
+                requests:
+                  memory: 4Gi
+                  cpu: 2000m
+                limits:
+                  memory: 12Gi
+                  cpu: 8000m
   defaults:
     templates:
       volumeClaimTemplates:

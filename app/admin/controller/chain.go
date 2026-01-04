@@ -25,7 +25,6 @@ import (
 	"github.com/go-jose/go-jose/v4/json"
 	"github.com/gorilla/mux"
 	"github.com/puzpuzpuz/xsync/v4"
-	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.uber.org/zap"
@@ -560,8 +559,12 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5) Fetch queue metrics for both ops and indexer queues
-	if c.App.TemporalClient != nil {
+	if c.App.TemporalManager != nil {
 		for _, chn := range chains {
+			// Skip deleted chains - their namespace has been deleted
+			if chn.Deleted != 0 {
+				continue
+			}
 			chainIDStr := strconv.FormatUint(chn.ChainID, 10)
 			opsStats, indexerStats, err := c.describeBothQueues(ctx, chainIDStr)
 			if err != nil {
@@ -840,18 +843,28 @@ func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
 	workflowID := fmt.Sprintf("reindex-scheduler-chain-%d-range-%d-%d-%d",
 		chainIDUint, minHeight, maxHeight, time.Now().Unix())
 
-	tc := c.App.TemporalClient
-	if tc == nil {
-		c.App.Logger.Error("temporal client unavailable",
+	if c.App.TemporalManager == nil {
+		c.App.Logger.Error("temporal manager unavailable",
 			zap.Uint64("chain_id", chainIDUint))
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporal client unavailable"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporal manager unavailable"})
+		return
+	}
+
+	// Get chain-specific client
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain client",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to get chain client"})
 		return
 	}
 
 	options := client.StartWorkflowOptions{
 		ID:        workflowID,
-		TaskQueue: tc.GetIndexerOpsQueue(chainIDUint), // Scheduler runs on ops queue
+		TaskQueue: chainClient.OpsQueue, // "ops" (simplified, runs in chain namespace)
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    time.Second,
 			BackoffCoefficient: 1.2,
@@ -860,7 +873,7 @@ func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	run, err := tc.TClient.ExecuteWorkflow(r.Context(), options, "ReindexSchedulerWorkflow", input)
+	run, err := chainClient.TClient.ExecuteWorkflow(r.Context(), options, "ReindexSchedulerWorkflow", input)
 	if err != nil {
 		c.App.Logger.Error("failed to start reindex scheduler",
 			zap.Uint64("chain_id", chainIDUint),
@@ -897,17 +910,22 @@ func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
 
 // startOpsWorkflow starts a Temporal workflow to perform operations related to a specific chain and workflow name.
 // It dynamically determines the input structure based on the workflow name and uses a Temporal client to execute it.
-// Returns an error if a Temporal client is unavailable, chainID is invalid, or workflow execution fails.
+// Returns an error if the manager is unavailable, chainID is invalid, or workflow execution fails.
 func (c *Controller) startOpsWorkflow(ctx context.Context, chainID, workflowName string) error {
-	tc := c.App.TemporalClient
-	if tc == nil {
-		return fmt.Errorf("temporal client unavailable")
+	if c.App.TemporalManager == nil {
+		return fmt.Errorf("temporal manager unavailable")
 	}
 
 	// Convert string chainID to uint64
 	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
 	if parseErr != nil {
 		return fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+
+	// Get chain-specific client
+	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainIDUint)
+	if err != nil {
+		return fmt.Errorf("failed to get chain client: %w", err)
 	}
 
 	// Use the correct input type based on workflow name
@@ -924,10 +942,10 @@ func (c *Controller) startOpsWorkflow(ctx context.Context, chainID, workflowName
 
 	options := client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("%s:%s:%d", chainID, strings.ToLower(workflowName), time.Now().UnixNano()),
-		TaskQueue: tc.GetIndexerOpsQueue(chainIDUint),
+		TaskQueue: chainClient.OpsQueue, // "ops" (simplified, runs in chain namespace)
 	}
 
-	_, err := tc.TClient.ExecuteWorkflow(ctx, options, workflowName, input)
+	_, err = chainClient.TClient.ExecuteWorkflow(ctx, options, workflowName, input)
 	return err
 }
 
@@ -938,10 +956,9 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 	opsStats := admintypes.QueueStatus{}
 	indexerStats := admintypes.QueueStatus{}
 
-	temporalClient := c.App.TemporalClient
-	if temporalClient == nil {
-		c.App.Logger.Error("describeBothQueues: temporal client not initialized", zap.String("chain_id", chainID))
-		return opsStats, indexerStats, fmt.Errorf("temporal temporalClient not initialized")
+	if c.App.TemporalManager == nil {
+		c.App.Logger.Error("describeBothQueues: temporal manager not initialized", zap.String("chain_id", chainID))
+		return opsStats, indexerStats, fmt.Errorf("temporal manager not initialized")
 	}
 
 	// Check cache first (30s TTL to reduce Temporal API load)
@@ -968,6 +985,21 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 		}
 	}
 
+	// Convert string chainID to uint64 for getting chain client
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		return admintypes.QueueStatus{}, admintypes.QueueStatus{}, fmt.Errorf("invalid chain ID format: %w", parseErr)
+	}
+
+	// Get chain-specific client for queue stats
+	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("describeBothQueues: failed to get chain client",
+			zap.String("chain_id", chainID),
+			zap.Error(err))
+		return opsStats, indexerStats, fmt.Errorf("failed to get chain client: %w", err)
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 
@@ -982,19 +1014,13 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 	opsChannel := make(chan queueResult, 1)
 	indexerChannel := make(chan queueResult, 1)
 
-	// Convert string chainID to uint64 for temporal methods
-	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
-	if parseErr != nil {
-		return admintypes.QueueStatus{}, admintypes.QueueStatus{}, fmt.Errorf("invalid chain ID format: %w", parseErr)
-	}
-
-	// Query ops queue using the new common function
+	// Query ops queue using the simplified queue name
 	go func() {
-		queueName := temporalClient.GetIndexerOpsQueue(chainIDUint)
+		queueName := chainClient.OpsQueue // "ops" (simplified)
 		c.App.Logger.Debug("querying ops queue", zap.String("chain_id", chainID), zap.String("queue_name", queueName))
 
-		// Use the common GetQueueStats function with enhanced API
-		pendingWorkflows, pendingActivities, pollerCount, backlogAge, err := temporalClient.GetQueueStats(reqCtx, queueName)
+		// Use the chain client's GetQueueStats function with enhanced API
+		pendingWorkflows, pendingActivities, pollerCount, backlogAge, err := chainClient.GetQueueStats(reqCtx, queueName)
 		if err != nil {
 			opsChannel <- queueResult{
 				stats:           opsStats,
@@ -1021,9 +1047,9 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 
 	// Query BOTH live and historical queues and aggregate them for backward compatibility
 	go func() {
-		// Get stats from both live and historical queues
-		liveQueue := temporalClient.GetIndexerLiveQueue(chainIDUint)
-		historicalQueue := temporalClient.GetIndexerHistoricalQueue(chainIDUint)
+		// Get stats from both live and historical queues using simplified names
+		liveQueue := chainClient.LiveQueue             // "live"
+		historicalQueue := chainClient.HistoricalQueue // "historical"
 
 		c.App.Logger.Debug("querying both indexer queues",
 			zap.String("chain_id", chainID),
@@ -1031,7 +1057,7 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 			zap.String("historical_queue", historicalQueue))
 
 		// Query live queue
-		livePendingWF, livePendingAct, livePollers, liveBacklogAge, liveErr := temporalClient.GetQueueStats(reqCtx, liveQueue)
+		livePendingWF, livePendingAct, livePollers, liveBacklogAge, liveErr := chainClient.GetQueueStats(reqCtx, liveQueue)
 		if liveErr != nil {
 			c.App.Logger.Warn("failed to query live queue stats",
 				zap.String("chain_id", chainID),
@@ -1045,7 +1071,7 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 		}
 
 		// Query historical queue
-		histPendingWF, histPendingAct, histPollers, histBacklogAge, histErr := temporalClient.GetQueueStats(reqCtx, historicalQueue)
+		histPendingWF, histPendingAct, histPollers, histBacklogAge, histErr := chainClient.GetQueueStats(reqCtx, historicalQueue)
 		if histErr != nil {
 			c.App.Logger.Warn("failed to query historical queue stats",
 				zap.String("chain_id", chainID),
@@ -1117,7 +1143,7 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 	if opsResult.err != nil {
 		c.App.Logger.Error("failed to describe ops queue",
 			zap.String("chain_id", chainID),
-			zap.String("queue_name", temporalClient.GetIndexerOpsQueue(chainIDUint)),
+			zap.String("queue_name", chainClient.OpsQueue),
 			zap.Error(opsResult.err),
 		)
 		return opsStats, indexerStats, fmt.Errorf("failed to describe ops queue: %w", opsResult.err)
@@ -1125,8 +1151,8 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 	if indexerResult.err != nil {
 		c.App.Logger.Error("failed to describe indexer queues",
 			zap.String("chain_id", chainID),
-			zap.String("live_queue", temporalClient.GetIndexerLiveQueue(chainIDUint)),
-			zap.String("historical_queue", temporalClient.GetIndexerHistoricalQueue(chainIDUint)),
+			zap.String("live_queue", chainClient.LiveQueue),
+			zap.String("historical_queue", chainClient.HistoricalQueue),
 			zap.Error(indexerResult.err),
 		)
 		return opsStats, indexerStats, fmt.Errorf("failed to describe indexer queues: %w", indexerResult.err)
@@ -1183,18 +1209,25 @@ func (c *Controller) HandleChainPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3) Apply changes
-	if in.ChainName != cur.ChainName {
+	// 3) Apply changes (all user-updatable fields except paused/deleted/chain_id)
+
+	// Chain name
+	if in.ChainName != "" {
 		cur.ChainName = strings.TrimSpace(in.ChainName)
 	}
 
-	if in.Paused != cur.Paused {
-		cur.Paused = in.Paused
+	// Image
+	if in.Image != "" {
+		cur.Image = strings.TrimSpace(in.Image)
 	}
-	if in.Deleted != cur.Deleted {
-		cur.Deleted = in.Deleted
+
+	// Notes
+	if in.Notes != "" {
+		cur.Notes = strings.TrimSpace(in.Notes)
 	}
-	if in.RPCEndpoints != nil { // provided => replace
+
+	// RPC Endpoints
+	if in.RPCEndpoints != nil {
 		cleaned := make([]string, 0, len(in.RPCEndpoints))
 		for _, e := range in.RPCEndpoints {
 			e = strings.TrimSpace(e)
@@ -1225,21 +1258,35 @@ func (c *Controller) HandleChainPatch(w http.ResponseWriter, r *http.Request) {
 		cur.RPCEndpoints = cleaned
 	}
 
-	// Update MinReplicas if provided (non-zero value)
+	// Replicas configuration
 	if in.MinReplicas > 0 {
 		cur.MinReplicas = in.MinReplicas
 	}
-
-	// Update MaxReplicas if provided (non-zero value)
 	if in.MaxReplicas > 0 {
 		cur.MaxReplicas = in.MaxReplicas
 	}
-
-	// Validate that MaxReplicas >= MinReplicas after updates
 	if cur.MaxReplicas < cur.MinReplicas {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "max_replicas must be greater than or equal to min_replicas"})
 		return
+	}
+
+	// Reindex replicas configuration
+	if in.ReindexMinReplicas > 0 {
+		cur.ReindexMinReplicas = in.ReindexMinReplicas
+	}
+	if in.ReindexMaxReplicas > 0 {
+		cur.ReindexMaxReplicas = in.ReindexMaxReplicas
+	}
+	if cur.ReindexMaxReplicas < cur.ReindexMinReplicas {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "reindex_max_replicas must be greater than or equal to reindex_min_replicas"})
+		return
+	}
+
+	// Reindex scale threshold
+	if in.ReindexScaleThreshold > 0 {
+		cur.ReindexScaleThreshold = in.ReindexScaleThreshold
 	}
 
 	// 4) Persist (ReplacingMergeTree upsert)
@@ -1250,6 +1297,113 @@ func (c *Controller) HandleChainPatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+}
+
+// HandleChainsBulkUpdate updates all non-deleted chains with common fields.
+// PATCH /api/chains/bulk
+func (c *Controller) HandleChainsBulkUpdate(w http.ResponseWriter, r *http.Request) {
+	var req types.BulkUpdateChainsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json"})
+		return
+	}
+
+	// Validate that at least one field is being updated
+	if req.Image == "" && req.ReindexMinReplicas == 0 && req.ReindexMaxReplicas == 0 &&
+		req.ReindexScaleThreshold == 0 && req.MinReplicas == 0 && req.MaxReplicas == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "no fields to update"})
+		return
+	}
+
+	// Validate replica constraints if both are provided
+	if req.MinReplicas > 0 && req.MaxReplicas > 0 && req.MaxReplicas < req.MinReplicas {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "max_replicas must be >= min_replicas"})
+		return
+	}
+	if req.ReindexMinReplicas > 0 && req.ReindexMaxReplicas > 0 && req.ReindexMaxReplicas < req.ReindexMinReplicas {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "reindex_max_replicas must be >= reindex_min_replicas"})
+		return
+	}
+
+	ctx := r.Context()
+	user := c.currentUser(r)
+
+	// Get all non-deleted chains
+	chains, err := c.App.AdminDB.ListChain(ctx, false)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	updatedChainIDs := make([]uint64, 0, len(chains))
+
+	// Update each chain
+	for _, chain := range chains {
+		updated := false
+
+		// Apply image if provided
+		if req.Image != "" {
+			chain.Image = strings.TrimSpace(req.Image)
+			updated = true
+		}
+
+		// Apply replicas if provided
+		if req.MinReplicas > 0 {
+			chain.MinReplicas = req.MinReplicas
+			updated = true
+		}
+		if req.MaxReplicas > 0 {
+			chain.MaxReplicas = req.MaxReplicas
+			updated = true
+		}
+
+		// Apply reindex settings if provided
+		if req.ReindexMinReplicas > 0 {
+			chain.ReindexMinReplicas = req.ReindexMinReplicas
+			updated = true
+		}
+		if req.ReindexMaxReplicas > 0 {
+			chain.ReindexMaxReplicas = req.ReindexMaxReplicas
+			updated = true
+		}
+		if req.ReindexScaleThreshold > 0 {
+			chain.ReindexScaleThreshold = req.ReindexScaleThreshold
+			updated = true
+		}
+
+		// Validate replica constraints after updates
+		if chain.MaxReplicas < chain.MinReplicas {
+			chain.MaxReplicas = chain.MinReplicas
+		}
+		if chain.ReindexMaxReplicas < chain.ReindexMinReplicas {
+			chain.ReindexMaxReplicas = chain.ReindexMinReplicas
+		}
+
+		if updated {
+			if err := c.App.AdminDB.UpsertChain(ctx, &chain); err != nil {
+				c.App.Logger.Error("failed to update chain in bulk update",
+					zap.Uint64("chain_id", chain.ChainID),
+					zap.Error(err))
+				continue
+			}
+			updatedChainIDs = append(updatedChainIDs, chain.ChainID)
+		}
+	}
+
+	c.App.Logger.Info("bulk chain update completed",
+		zap.String("user", user),
+		zap.Int("updated_count", len(updatedChainIDs)),
+		zap.Any("chain_ids", updatedChainIDs))
+
+	_ = json.NewEncoder(w).Encode(types.BulkUpdateChainsResponse{
+		UpdatedCount: len(updatedChainIDs),
+		ChainIDs:     updatedChainIDs,
+	})
 }
 
 // HandlePatchChainsStatus PATCH /admin/chains/status
@@ -1294,8 +1448,8 @@ func (c *Controller) HandlePatchChainsStatus(w http.ResponseWriter, r *http.Requ
 
 // HandleChainDelete handles the deletion of a chain.
 // Query param: ?hard=true for permanent deletion (cannot be undone)
-// Default (soft delete): marks as deleted, stops processing, preserves data for recovery
-// Hard delete: soft delete + permanently removes all chain data
+// Default (soft delete): marks as deleted, pauses schedules, terminates workflows
+// Hard delete: deletes Temporal namespace, starts async workflow to clean all data
 func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {
@@ -1305,8 +1459,6 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-
-	// Parse query param to determine if this is a hard delete
 	hardDelete := r.URL.Query().Get("hard") == "true"
 
 	// 1. Verify chain exists
@@ -1324,34 +1476,60 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := c.currentUser(r)
-	c.App.Logger.Info("deleting chain", zap.String("chain_id", id), zap.String("user", user))
 
-	// 2. Delete Temporal schedules for this chain
-	if c.App.TemporalClient != nil {
-		// Delete head scan schedule
-		headScheduleID := c.App.TemporalClient.GetHeadScheduleID(chainIDUint)
-		headHandle := c.App.TemporalClient.TSClient.GetHandle(ctx, headScheduleID)
-		if err := headHandle.Delete(ctx); err != nil {
-			var notFound *serviceerror.NotFound
-			if !errors.As(err, &notFound) {
-				c.App.Logger.Warn("failed to delete head scan schedule", zap.String("chain_id", id), zap.Error(err))
+	if hardDelete {
+		// === HARD DELETE ===
+		c.App.Logger.Info("hard deleting chain", zap.String("chain_id", id), zap.String("user", user))
+
+		// 1. Delete Temporal namespace (removes all workflows and schedules)
+		if c.App.TemporalManager != nil {
+			if err := c.App.DeleteChainNamespace(ctx, id); err != nil {
+				c.App.Logger.Warn("failed to delete chain namespace", zap.String("chain_id", id), zap.Error(err))
 			}
 		}
 
-		// Delete gap scan schedule
-		gapScheduleID := c.App.TemporalClient.GetGapScanScheduleID(chainIDUint)
-		gapHandle := c.App.TemporalClient.TSClient.GetHandle(ctx, gapScheduleID)
-		if err := gapHandle.Delete(ctx); err != nil {
-			var notFound *serviceerror.NotFound
-			if !errors.As(err, &notFound) {
-				c.App.Logger.Warn("failed to delete gap scan schedule", zap.String("chain_id", id), zap.Error(err))
-			}
+		// 2. Clear in-memory caches
+		c.App.ChainsDB.Delete(id)
+		c.App.QueueStatsCache.Delete(id)
+
+		// 3. Start async workflow to clean all data (cross-chain, drop DB, admin tables)
+		workflowID, err := c.App.StartDeleteChainWorkflow(ctx, chainIDUint)
+		if err != nil {
+			c.App.Logger.Error("failed to start delete chain workflow", zap.String("chain_id", id), zap.Error(err))
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to start delete workflow"})
+			return
+		}
+
+		c.App.Logger.Info("chain hard delete workflow started",
+			zap.String("chain_id", id),
+			zap.String("workflow_id", workflowID),
+			zap.String("user", user))
+
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":      "deletion_started",
+			"workflow_id": workflowID,
+		})
+		return
+	}
+
+	// === SOFT DELETE ===
+	c.App.Logger.Info("soft deleting chain", zap.String("chain_id", id), zap.String("user", user))
+
+	// 1. Pause Temporal schedules
+	if c.App.TemporalManager != nil {
+		if err := c.App.PauseChainSchedules(ctx, id); err != nil {
+			c.App.Logger.Warn("failed to pause chain schedules", zap.String("chain_id", id), zap.Error(err))
+		}
+
+		// 2. Terminate all running workflows
+		if err := c.App.TerminateRunningWorkflows(ctx, id, "chain soft-deleted"); err != nil {
+			c.App.Logger.Warn("failed to terminate running workflows", zap.String("chain_id", id), zap.Error(err))
 		}
 	}
 
-	// 3. Mark chain as deleted and clear health status in admin database
+	// 3. Mark chain as deleted and clear health status
 	chain.Deleted = 1
-	// Clear all health statuses to "unknown" for deleted chains
 	now := time.Now()
 	chain.OverallHealthStatus = "unknown"
 	chain.OverallHealthUpdatedAt = now
@@ -1372,63 +1550,11 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Remove cross-chain sync for this chain (non-fatal - just log warnings)
-	if c.App.CrossChainDB != nil {
-		if ccStore, ok := c.App.CrossChainDB.(interface {
-			RemoveChainSync(context.Context, uint64) error
-		}); ok {
-			if syncErr := ccStore.RemoveChainSync(ctx, chainIDUint); syncErr != nil {
-				c.App.Logger.Warn("Failed to remove cross-chain sync for chain",
-					zap.Uint64("chain_id", chainIDUint),
-					zap.Error(syncErr))
-			} else {
-				c.App.Logger.Info("Cross-chain sync removed for chain",
-					zap.Uint64("chain_id", chainIDUint))
-			}
-		}
-	}
-
-	// 5. Remove chain database from in-memory cache
+	// 4. Clear in-memory caches
 	c.App.ChainsDB.Delete(id)
-
-	// 6. Clear queue stats cache for this chain
 	c.App.QueueStatsCache.Delete(id)
 
-	// Hard delete only: permanently remove all data
-	if hardDelete {
-		// 7. Delete endpoint health records for this chain
-		if err := c.App.AdminDB.DeleteEndpointsForChain(ctx, chainIDUint); err != nil {
-			c.App.Logger.Warn("failed to delete endpoint health records", zap.String("chain_id", id), zap.Error(err))
-		}
-
-		// 8. Delete index progress records for this chain
-		if err := c.App.AdminDB.DeleteIndexProgressForChain(ctx, chainIDUint); err != nil {
-			c.App.Logger.Warn("failed to delete index progress records", zap.String("chain_id", id), zap.Error(err))
-		}
-
-		// 9. Delete reindex request records for this chain
-		if err := c.App.AdminDB.DeleteReindexRequestsForChain(ctx, chainIDUint); err != nil {
-			c.App.Logger.Warn("failed to delete reindex request records", zap.String("chain_id", id), zap.Error(err))
-		}
-
-		// 10. Drop the chain-specific database
-		if err := c.App.AdminDB.DropChainDatabase(ctx, chainIDUint); err != nil {
-			c.App.Logger.Warn("failed to drop chain database", zap.String("chain_id", id), zap.Error(err))
-		}
-
-		// 11. Permanently remove chain record from chains table
-		if err := c.App.AdminDB.HardDeleteChain(ctx, chainIDUint); err != nil {
-			c.App.Logger.Error("failed to hard delete chain record", zap.String("chain_id", id), zap.Error(err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to permanently delete chain"})
-			return
-		}
-
-		c.App.Logger.Info("chain hard deleted successfully (permanent)", zap.String("chain_id", id), zap.String("user", user))
-	} else {
-		c.App.Logger.Info("chain soft deleted successfully (recoverable)", zap.String("chain_id", id), zap.String("user", user))
-	}
-
+	c.App.Logger.Info("chain soft deleted successfully", zap.String("chain_id", id), zap.String("user", user))
 	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 }
 
@@ -1463,23 +1589,17 @@ func (c *Controller) HandleChainRecover(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 2. Recreate Temporal schedules (head scan + gap scan)
-	if c.App.TemporalClient != nil {
-		// Ensure head scan schedule exists
-		if err := c.App.EnsureHeadSchedule(ctx, id); err != nil {
-			c.App.Logger.Warn("failed to ensure head scan schedule during recovery",
+	// 2. Unpause Temporal schedules (schedules were paused during soft-delete)
+	if c.App.TemporalManager != nil {
+		// First try to unpause existing schedules
+		if err := c.App.UnpauseChainSchedules(ctx, id); err != nil {
+			c.App.Logger.Warn("failed to unpause chain schedules during recovery, will try to recreate",
 				zap.String("chain_id", id), zap.Error(err))
 		}
 
-		// Ensure gap scan schedule exists
-		if err := c.App.EnsureGapScanSchedule(ctx, id); err != nil {
-			c.App.Logger.Warn("failed to ensure gap scan schedule during recovery",
-				zap.String("chain_id", id), zap.Error(err))
-		}
-
-		// Ensure poll snapshot schedule exists
-		if err := c.App.EnsurePollSnapshotSchedule(ctx, id); err != nil {
-			c.App.Logger.Warn("failed to ensure poll snapshot schedule during recovery",
+		// Ensure all schedules exist (creates if missing, no-op if exists)
+		if err := c.App.EnsureChainSchedules(ctx, id); err != nil {
+			c.App.Logger.Warn("failed to ensure chain schedules during recovery",
 				zap.String("chain_id", id), zap.Error(err))
 		}
 	}

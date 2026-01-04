@@ -11,6 +11,7 @@ import (
 	"github.com/canopy-network/canopy/fsm"
 	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.uber.org/zap"
 )
@@ -47,22 +48,26 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 
 	// Parallel RPC fetch using shared worker pool for performance
 	var (
-		currentValidators     []*fsm.Validator
-		previousValidators    []*fsm.Validator
-		currentNonSigners     []*fsm.NonSigner
-		previousNonSigners    []*fsm.NonSigner
-		currentDoubleSigners  []*lib.DoubleSigner
-		previousDoubleSigners []*lib.DoubleSigner
-		currentErr            error
-		previousErr           error
-		nonSignersErr         error
-		prevNonSignersErr     error
-		doubleSignersErr      error
-		prevDoubleSignersErr  error
+		currentValidators       []*fsm.Validator
+		previousValidators      []*fsm.Validator
+		currentNonSigners       []*fsm.NonSigner
+		previousNonSigners      []*fsm.NonSigner
+		currentDoubleSigners    []*lib.DoubleSigner
+		previousDoubleSigners   []*lib.DoubleSigner
+		subsidizedCommittees    []uint64
+		retiredCommittees       []uint64
+		currentErr              error
+		previousErr             error
+		nonSignersErr           error
+		prevNonSignersErr       error
+		doubleSignersErr        error
+		prevDoubleSignersErr    error
+		subsidizedCommitteesErr error
+		retiredCommitteesErr    error
 	)
 
 	// Get a subgroup from the shared worker pool for parallel RPC fetching
-	pool := ac.WorkerPool(6)
+	pool := ac.WorkerPool(8) // 8 workers: validators(2) + non-signers(2) + double-signers(2) + committees(2)
 	group := pool.NewGroupContext(ctx)
 	groupCtx := group.Context()
 
@@ -131,6 +136,22 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		}
 	})
 
+	// Worker 7: Fetch subsidized committees (for committee_validator denormalization)
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		subsidizedCommittees, subsidizedCommitteesErr = cli.SubsidizedCommitteesByHeight(groupCtx, input.Height)
+	})
+
+	// Worker 8: Fetch retired committees (for committee_validator denormalization)
+	group.Submit(func() {
+		if err := groupCtx.Err(); err != nil {
+			return
+		}
+		retiredCommittees, retiredCommitteesErr = cli.RetiredCommitteesByHeight(groupCtx, input.Height)
+	})
+
 	// Wait for all workers to complete
 	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
 		ac.Logger.Warn("parallel RPC fetch encountered error",
@@ -159,6 +180,22 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 	if prevDoubleSignersErr != nil && input.Height > 1 {
 		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch previous double-signers at height %d: %w", input.Height-1, prevDoubleSignersErr)
 	}
+	if subsidizedCommitteesErr != nil {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch subsidized committees at height %d: %w", input.Height, subsidizedCommitteesErr)
+	}
+	if retiredCommitteesErr != nil {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("fetch retired committees at height %d: %w", input.Height, retiredCommitteesErr)
+	}
+
+	// Build committee status maps for denormalization (O(1) lookup)
+	subsidizedMap := make(map[uint64]bool, len(subsidizedCommittees))
+	for _, id := range subsidizedCommittees {
+		subsidizedMap[id] = true
+	}
+	retiredMap := make(map[uint64]bool, len(retiredCommittees))
+	for _, id := range retiredCommittees {
+		retiredMap[id] = true
+	}
 
 	// Build previous state maps for O(1) lookups
 	prevValidatorMap := make(map[string]*fsm.Validator, len(previousValidators))
@@ -179,46 +216,41 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 		currentNonSignerMap[addrHex] = ns
 	}
 
-	// Query validator lifecycle events from staging table (event-driven state tracking)
+	// Query validator lifecycle events from staging table using lightweight query
+	// Returns only 3 columns (height, address, event_type) instead of 21 (~85% reduction)
 	// These events define state transitions in the validator lifecycle:
 	// - EventTypeAutomaticPause: validator transitions to paused state
 	// - EventTypeAutomaticBeginUnstaking: validator transitions to unstaking state
 	// - EventTypeAutomaticFinishUnstaking: validator deleted (unstaked)
 	// - EventTypeSlash: validator slashed (affects staked amount)
 	// - EventTypeReward: validator rewarded (informational, doesn't change state)
-	validatorEvents, err := chainDb.GetEventsByTypeAndHeight(
-		ctx, input.Height, true,
-		string(lib.EventTypeReward),
-		string(lib.EventTypeSlash),
-		string(lib.EventTypeAutoPause),
-		string(lib.EventTypeAutoBeginUnstaking),
-		string(lib.EventTypeFinishUnstaking),
-	)
+	validatorEvents, err := chainDb.GetValidatorLifecycleEvents(ctx, input.Height, true)
 	if err != nil {
 		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("query validator events at height %d: %w", input.Height, err)
 	}
 
 	// Build event maps by validator address for O(1) lookup
-	rewardEvents := make(map[string]*indexer.Event)
-	pauseEvents := make(map[string]*indexer.Event)
-	beginUnstakingEvents := make(map[string]*indexer.Event)
-	finishUnstakingEvents := make(map[string]*indexer.Event)
-	slashEvents := make(map[string]*indexer.Event)
+	// Using lightweight struct - only need address for existence check
+	rewardEvents := make(map[string]*chainstore.EventLifecycle)
+	pauseEvents := make(map[string]*chainstore.EventLifecycle)
+	beginUnstakingEvents := make(map[string]*chainstore.EventLifecycle)
+	finishUnstakingEvents := make(map[string]*chainstore.EventLifecycle)
+	slashEvents := make(map[string]*chainstore.EventLifecycle)
 
-	for _, event := range validatorEvents {
-		// Events have an Address field for the validator address
+	for i := range validatorEvents {
+		event := &validatorEvents[i]
 		addr := event.Address
 
 		switch event.EventType {
-		case "automatic-pause":
+		case string(lib.EventTypeAutoPause):
 			pauseEvents[addr] = event
-		case "automatic-begin-unstaking":
+		case string(lib.EventTypeAutoBeginUnstaking):
 			beginUnstakingEvents[addr] = event
-		case "automatic-finish-unstaking":
+		case string(lib.EventTypeFinishUnstaking):
 			finishUnstakingEvents[addr] = event
-		case "slash":
+		case string(lib.EventTypeSlash):
 			slashEvents[addr] = event
-		case "reward":
+		case string(lib.EventTypeReward):
 			rewardEvents[addr] = event
 		}
 	}
@@ -427,6 +459,7 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 	}
 
 	// Build committee-validator junction table records for validators with committee changes
+	// Denormalizes committee status (subsidized, retired) for efficient filtering without JOIN
 	var committeeValidators []*indexer.CommitteeValidator
 	for _, v := range changedValidators {
 		// Create a junction record for each committee this validator belongs to
@@ -440,34 +473,88 @@ func (ac *Context) IndexValidators(ctx context.Context, input types.ActivityInde
 				Compound:         v.Compound,
 				Height:           v.Height,
 				HeightTime:       v.HeightTime,
+				// Denormalized from Committee - enables filtering by committee status without JOIN
+				Subsidized: subsidizedMap[committeeID],
+				Retired:    retiredMap[committeeID],
 			}
 			committeeValidators = append(committeeValidators, cv)
 		}
 	}
 
-	// Insert to staging tables
+	// Insert to staging tables in PARALLEL using worker pool
+	// Each insert goes to a different table, so no conflicts
+	insertPool := ac.WorkerPool(4) // 4 workers for 4 parallel inserts
+	insertGroup := insertPool.NewGroupContext(ctx)
+	insertCtx := insertGroup.Context()
+
+	var (
+		validatorsErr        error
+		nonSigningInfoErr    error
+		committeeValErr      error
+		doubleSigningInfoErr error
+	)
+
+	// Worker 1: Insert validators
 	if len(changedValidators) > 0 {
-		if err := chainDb.InsertValidatorsStaging(ctx, changedValidators); err != nil {
-			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validators staging: %w", err)
-		}
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			validatorsErr = chainDb.InsertValidatorsStaging(insertCtx, changedValidators)
+		})
 	}
 
+	// Worker 2: Insert non-signing info
 	if len(changedNonSigningInfos) > 0 {
-		if err := chainDb.InsertValidatorNonSigningInfoStaging(ctx, changedNonSigningInfos); err != nil {
-			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validator non-signing info staging: %w", err)
-		}
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			nonSigningInfoErr = chainDb.InsertValidatorNonSigningInfoStaging(insertCtx, changedNonSigningInfos)
+		})
 	}
 
+	// Worker 3: Insert committee validators
 	if len(committeeValidators) > 0 {
-		if err := chainDb.InsertCommitteeValidatorsStaging(ctx, committeeValidators); err != nil {
-			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert committee validators staging: %w", err)
-		}
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			committeeValErr = chainDb.InsertCommitteeValidatorsStaging(insertCtx, committeeValidators)
+		})
 	}
 
+	// Worker 4: Insert double signing info
 	if len(changedDoubleSigningInfos) > 0 {
-		if err := chainDb.InsertValidatorDoubleSigningInfoStaging(ctx, changedDoubleSigningInfos); err != nil {
-			return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validator double signing info staging: %w", err)
-		}
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			doubleSigningInfoErr = chainDb.InsertValidatorDoubleSigningInfoStaging(insertCtx, changedDoubleSigningInfos)
+		})
+	}
+
+	// Wait for all inserts to complete
+	if err := insertGroup.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		ac.Logger.Warn("parallel insert encountered error",
+			zap.Uint64("chainId", ac.ChainID),
+			zap.Uint64("height", input.Height),
+			zap.Error(err),
+		)
+	}
+
+	// Check for insert errors
+	if validatorsErr != nil {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validators staging: %w", validatorsErr)
+	}
+	if nonSigningInfoErr != nil {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validator non-signing info staging: %w", nonSigningInfoErr)
+	}
+	if committeeValErr != nil {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert committee validators staging: %w", committeeValErr)
+	}
+	if doubleSigningInfoErr != nil {
+		return types.ActivityIndexValidatorsOutput{}, fmt.Errorf("insert validator double signing info staging: %w", doubleSigningInfoErr)
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0

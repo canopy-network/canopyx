@@ -51,8 +51,10 @@ func GetTableConfigs() []TableConfig {
 			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.PoolColumns),
 		},
 		{
-			TableName:        indexer.PoolPointsByHolderProductionTableName,
-			PrimaryKey:       []string{"chain_id", "address", "pool_id"},
+			TableName: indexer.PoolPointsByHolderProductionTableName,
+			// ORDER BY: pool_id before address (lower cardinality first)
+			// Matches local table optimization for consistent access patterns
+			PrimaryKey:       []string{"chain_id", "pool_id", "address"},
 			HasAddressColumn: true,
 			SchemaSQL:        indexer.ColumnsToSchemaSQL(indexer.FilterCrossChainColumns(indexer.PoolPointsByHolderColumns)),
 			ColumnNames:      indexer.GetCrossChainColumnNames(indexer.PoolPointsByHolderColumns),

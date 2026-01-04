@@ -19,7 +19,7 @@ var OrderColumns = []ColumnDef{
 	{Name: "order_id", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
 	{Name: "height_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
-	{Name: "committee", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
+	{Name: "committee", Type: "UInt16", Codec: "Delta, ZSTD(1)"},
 	{Name: "data", Type: "String", Codec: "ZSTD(1)"},
 	{Name: "amount_for_sale", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "requested_amount", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
@@ -53,7 +53,7 @@ type Order struct {
 	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
 
 	// Order Details
-	Committee            uint64 `ch:"committee" json:"committee"`                           // Committee ID for the order
+	Committee            uint16 `ch:"committee" json:"committee"`                           // Committee ID for the order
 	Data                 string `ch:"data" json:"data"`                                     // Generic data field for committee-specific functionality
 	AmountForSale        uint64 `ch:"amount_for_sale" json:"amount_for_sale"`               // Amount being sold
 	RequestedAmount      uint64 `ch:"requested_amount" json:"requested_amount"`             // Amount requested in return

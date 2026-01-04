@@ -11,16 +11,17 @@ import (
 
 // ProposalFields holds extracted fields from a proposal JSON message.
 // Proposals are governance messages (changeParameter, daoTransfer) that require validator approval.
+// Uses value types with defaults (0, ”) to match non-Nullable ClickHouse columns.
 type ProposalFields struct {
-	ProposalType       string  // Message type: changeParameter, daoTransfer
-	Signer             string  // Signer address (hex)
-	StartHeight        uint64  // Proposal start height
-	EndHeight          uint64  // Proposal end height
-	ParameterSpace     *string // For changeParameter: fee, val, cons, gov
-	ParameterKey       *string // For changeParameter: parameter name
-	ParameterValue     *string // For changeParameter: parameter value as string
-	DaoTransferAddress *string // For daoTransfer: recipient address
-	DaoTransferAmount  *uint64 // For daoTransfer: amount
+	ProposalType       string // Message type: changeParameter, daoTransfer
+	Signer             string // Signer address (hex)
+	StartHeight        uint64 // Proposal start height
+	EndHeight          uint64 // Proposal end height
+	ParameterSpace     string // For changeParameter: fee, val, cons, gov
+	ParameterKey       string // For changeParameter: parameter name
+	ParameterValue     string // For changeParameter: parameter value as string
+	DaoTransferAddress string // For daoTransfer: recipient address
+	DaoTransferAmount  uint64 // For daoTransfer: amount
 }
 
 // ExtractProposalFields parses a proposal JSON (from fsm.GovProposalWithVote.Proposal)
@@ -56,6 +57,7 @@ func ExtractProposalFields(proposalJSON json.RawMessage) (*ProposalFields, error
 	}
 
 	// Extract fields based on message type
+	// Uses value assignments (not pointers) to match non-Nullable ClickHouse columns.
 	switch proposalWrapper.Type {
 	case "changeParameter":
 		var msg fsm.MessageChangeParameter
@@ -66,15 +68,14 @@ func ExtractProposalFields(proposalJSON json.RawMessage) (*ProposalFields, error
 		fields.Signer = hex.EncodeToString(msg.Signer)
 		fields.StartHeight = msg.StartHeight
 		fields.EndHeight = msg.EndHeight
-		fields.ParameterSpace = &msg.ParameterSpace
-		fields.ParameterKey = &msg.ParameterKey
+		fields.ParameterSpace = msg.ParameterSpace
+		fields.ParameterKey = msg.ParameterKey
 
 		// Extract ParameterValue from Any type as JSON string
 		if msg.ParameterValue != nil {
 			paramValueJSON, err := protojson.Marshal(msg.ParameterValue)
 			if err == nil {
-				paramValueStr := string(paramValueJSON)
-				fields.ParameterValue = &paramValueStr
+				fields.ParameterValue = string(paramValueJSON)
 			}
 		}
 
@@ -87,9 +88,8 @@ func ExtractProposalFields(proposalJSON json.RawMessage) (*ProposalFields, error
 		fields.Signer = hex.EncodeToString(msg.Address) // For daoTransfer, the signer is the address field
 		fields.StartHeight = msg.StartHeight
 		fields.EndHeight = msg.EndHeight
-		daoAddress := hex.EncodeToString(msg.Address)
-		fields.DaoTransferAddress = &daoAddress
-		fields.DaoTransferAmount = &msg.Amount
+		fields.DaoTransferAddress = hex.EncodeToString(msg.Address)
+		fields.DaoTransferAmount = msg.Amount
 
 	default:
 		// Unknown proposal type - extract common fields only

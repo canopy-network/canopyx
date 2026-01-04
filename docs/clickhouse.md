@@ -1,3 +1,7 @@
+# Follow best practices for ClickHouse query optimization
+
+https://clickhouse.com/resources/engineering/clickhouse-query-optimisation-definitive-guide
+
 # ClickHouse Engine Decision: ReplacingMergeTree
 
 ## Decision

@@ -133,7 +133,7 @@ func convertRpcParamsToEntity(rpcParams *fsm.Params, height uint64, blockTime ti
 	if rpcParams.Consensus != nil {
 		params.BlockSize = rpcParams.Consensus.BlockSize
 		params.ProtocolVersion = rpcParams.Consensus.ProtocolVersion
-		params.RootChainID = rpcParams.Consensus.RootChainId
+		params.RootChainID = uint16(rpcParams.Consensus.RootChainId)
 		params.Retired = rpcParams.Consensus.Retired
 	}
 

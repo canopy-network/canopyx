@@ -363,6 +363,33 @@ func Count() int {
 	return len(allEntities)
 }
 
+// entitiesWithoutStaging lists entities that don't use the staging pattern.
+// These are time-based snapshots captured via scheduled workflows, not height-based indexing.
+var entitiesWithoutStaging = map[Entity]bool{
+	PollSnapshots: true, // Time-based snapshots, no staging table
+	// ProposalSnapshots uses staging pattern (height-based)
+}
+
+// AllWithStaging returns entities that use the staging table pattern.
+// Use this for batch cleanup operations that target staging tables.
+//
+// Excludes:
+// - PollSnapshots: Time-based snapshots captured via scheduled workflow
+func AllWithStaging() []Entity {
+	result := make([]Entity, 0, len(allEntities))
+	for _, e := range allEntities {
+		if !entitiesWithoutStaging[e] {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+// HasStaging returns true if this entity uses the staging table pattern.
+func (e Entity) HasStaging() bool {
+	return !entitiesWithoutStaging[e]
+}
+
 // validEntitiesString returns a comma-separated list of valid entity names.
 // Used for error messages.
 func validEntitiesString() string {

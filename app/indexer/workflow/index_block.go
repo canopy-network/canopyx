@@ -8,7 +8,6 @@ import (
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
-	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
@@ -383,27 +382,10 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	dataReleaseElapsed := dataReleaseEnd.Sub(dataReleaseStart)
 	timings["data_release"] = float64(dataReleaseElapsed.Milliseconds())
 
-	// Phase 4: Trigger async cleanup workflow (fire-and-forget)
-	// Cleanup runs on ops queue to avoid blocking indexing queue
-	cleanupWorkflowID := wc.TemporalClient.GetCleanupStagingWorkflowID(wc.ChainID, in.Height)
-	opsQueue := wc.TemporalClient.GetIndexerOpsQueue(wc.ChainID)
-
-	childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-		WorkflowID:        cleanupWorkflowID,
-		TaskQueue:         opsQueue,
-		ParentClosePolicy: enums.PARENT_CLOSE_POLICY_ABANDON, // Let cleanup continue after the parent completes
-	})
-
-	// Start cleanup workflow and wait only for it to start, not complete
-	cleanupFuture := workflow.ExecuteChildWorkflow(childCtx, wc.CleanupStagingWorkflow, types.WorkflowCleanupStagingInput{
-		Height: in.Height,
-	})
-
-	// Wait for cleanup workflow to start (not complete)
-	if err := cleanupFuture.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
-		// Log warning but don't fail - cleanup is non-critical
-		workflow.GetLogger(ctx).Warn("Failed to start cleanup workflow", "error", err)
-	}
+	// NOTE: Per-block cleanup removed - staging cleanup now runs as a periodic batch workflow
+	// (CleanupStagingWorkflow in cleanup_staging.go) that runs hourly and cleans all
+	// heights indexed more than 1 hour ago. This reduces mutation count from
+	// ~20 per block to ~20 per hour (one batch DELETE per table).
 
 	// Calculate total indexing time (sum of critical path activities only)
 	// Only sum wall-clock measurements, not individual parallel activity times
@@ -429,63 +411,4 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	}
 
 	return workflow.ExecuteActivity(ctx, wc.ActivityContext.RecordIndexed, recordInput).Get(ctx, nil)
-}
-
-// CleanupStagingWorkflow asynchronously cleans up staging data for all entities after promotion.
-// This workflow runs on the ops queue to avoid blocking the indexing queue.
-// It iterates through all entities and removes promoted data from their staging tables.
-//
-// Design Philosophy:
-// - Fire-and-forget: Parent workflow doesn't wait for cleanup to complete
-// - Non-critical: Failures are logged but don't affect indexing
-// - Idempotent: Safe to retry or run multiple times
-// - Async: Runs on ops queue to avoid blocking high-throughput indexing queue
-func (wc *Context) CleanupStagingWorkflow(ctx workflow.Context, input types.WorkflowCleanupStagingInput) error {
-	// Use LOCAL ACTIVITY for batch cleanup with PARALLEL WITH
-	// This executes all DELETE statements in a single batch for maximum performance
-	localActivityOpts := workflow.LocalActivityOptions{
-		StartToCloseTimeout: 10 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			InitialInterval:    500 * time.Millisecond,
-			BackoffCoefficient: 1.5,
-			MaximumInterval:    10 * time.Second,
-			MaximumAttempts:    3, // Limited retries for cleanup
-		},
-	}
-	ctx = workflow.WithLocalActivityOptions(ctx, localActivityOpts)
-
-	workflow.GetLogger(ctx).Info("Starting staging cleanup with PARALLEL WITH",
-		"chainId", wc.ChainID,
-		"height", input.Height,
-		"numEntities", len(stagingEntities))
-
-	// Execute batch cleanup using PARALLEL WITH
-	// This executes all DELETE statements in a single ClickHouse query:
-	//   DELETE FROM "chain_5"."accounts_staging" WHERE height = 100
-	//   PARALLEL WITH
-	//   DELETE FROM "chain_5"."events_staging" WHERE height = 100
-	//   PARALLEL WITH
-	//   ...
-	var output types.ActivityCleanAllPromotedDataOutput
-	err := workflow.ExecuteLocalActivity(ctx, wc.ActivityContext.CleanAllPromotedData, types.ActivityCleanAllPromotedDataInput{
-		Entities: stagingEntities,
-		Height:   input.Height,
-	}).Get(ctx, &output)
-
-	if err != nil {
-		workflow.GetLogger(ctx).Warn("Failed to clean staging data (batch)",
-			"chainId", wc.ChainID,
-			"height", input.Height,
-			"error", err)
-		// Always return nil - cleanup failures are non-critical
-		return nil
-	}
-
-	workflow.GetLogger(ctx).Info("Completed staging cleanup with PARALLEL WITH",
-		"chainId", wc.ChainID,
-		"height", input.Height,
-		"entity_count", output.EntityCount,
-		"durationMs", output.DurationMs)
-
-	return nil
 }

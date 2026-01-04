@@ -44,7 +44,7 @@ func (ac *Context) StartReindexWorkflowBatch(ctx context.Context, in types.Activ
 	}
 
 	// All reindex workflows go to dedicated reindex queue
-	reindexQueue := ac.TemporalClient.GetIndexerReindexQueue(in.ChainID)
+	reindexQueue := ac.ChainClient.ReindexQueue
 
 	logger.Info("Batch routing to reindex queue",
 		zap.String("task_queue", reindexQueue),
@@ -86,7 +86,7 @@ func (ac *Context) scheduleReindexBatchToQueue(ctx context.Context, in types.Act
 			}
 
 			// Use deterministic workflow ID to prevent duplicate reindex workflows
-			wfID := ac.TemporalClient.GetReindexBlockWorkflowId(in.ChainID, h, in.RequestID)
+			wfID := ac.ChainClient.GetReindexBlockWorkflowID(h, in.RequestID)
 			options := client.StartWorkflowOptions{
 				ID:        wfID,
 				TaskQueue: taskQueue, // Reindex queue
@@ -103,7 +103,7 @@ func (ac *Context) scheduleReindexBatchToQueue(ctx context.Context, in types.Act
 				},
 			}
 
-			_, err := ac.TemporalClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
+			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
 				Height:  h,
 				Reindex: true, // Mark as reindex operation
 			})

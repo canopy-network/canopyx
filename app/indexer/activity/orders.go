@@ -11,6 +11,7 @@ import (
 	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	indexer "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.uber.org/zap"
 )
@@ -109,25 +110,23 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 		prevMap[hex.EncodeToString(order.Id)] = order
 	}
 
-	// Query order lifecycle events from staging table (event-driven state tracking)
+	// Query order lifecycle events from staging table using lightweight query (event-driven state tracking)
 	// EventOrderBookSwap events indicate when an order transitions to "filled" state
-	orderEvents, err := chainDb.GetEventsByTypeAndHeight(
-		ctx, input.Height, true,
-		string(lib.EventTypeOrderBookSwap),
-	)
+	// Returns only 3 columns (height, event_type, order_id) instead of 21 (~85% reduction)
+	orderEvents, err := chainDb.GetOrderBookSwapEvents(ctx, input.Height, true)
 	if err != nil {
 		return types.ActivityIndexOrdersOutput{}, fmt.Errorf("query order events at height %d: %w", input.Height, err)
 	}
 
 	// Build event map by order ID for O(1) lookup
-	swapEvents := make(map[string]*indexer.Event)
-	for _, event := range orderEvents {
-		// Events have nullable OrderID field
-		if event.OrderID == nil {
+	swapEvents := make(map[string]*chainstore.EventWithOrderID)
+	for i := range orderEvents {
+		event := &orderEvents[i]
+		// Skip events with empty order ID (default value)
+		if event.OrderID == "" {
 			continue
 		}
-		orderID := *event.OrderID
-		swapEvents[orderID] = event
+		swapEvents[event.OrderID] = event
 	}
 
 	// Compare and collect changed orders
@@ -172,7 +171,7 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 				OrderID:              currID,
 				Height:               input.Height,
 				HeightTime:           input.BlockTime,
-				Committee:            curr.Committee,
+				Committee:            uint16(curr.Committee),
 				Data:                 hex.EncodeToString(curr.Data),
 				AmountForSale:        curr.AmountForSale,
 				RequestedAmount:      curr.RequestedAmount,
@@ -209,7 +208,7 @@ func (ac *Context) IndexOrders(ctx context.Context, input types.ActivityIndexAtH
 					OrderID:              prevID,
 					Height:               input.Height,
 					HeightTime:           input.BlockTime,
-					Committee:            prevOrder.Committee,
+					Committee:            uint16(prevOrder.Committee),
 					Data:                 hex.EncodeToString(prevOrder.Data),
 					AmountForSale:        prevOrder.AmountForSale,
 					RequestedAmount:      prevOrder.RequestedAmount,

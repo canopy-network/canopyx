@@ -7,6 +7,6 @@ import (
 
 // Context holds dependencies for admin maintenance workflows.
 type Context struct {
-	TemporalClient  *temporal.Client
+	TemporalManager *temporal.ClientManager
 	ActivityContext *activity.Context
 }

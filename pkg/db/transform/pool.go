@@ -18,11 +18,11 @@ func Pool(rp *fsm.Pool, height uint64) *indexer.Pool {
 	chainID := indexer.ExtractChainIDFromPoolID(rp.Id)
 
 	return &indexer.Pool{
-		PoolID:      rp.Id,
+		PoolID:      uint32(rp.Id), // Pool IDs fit in uint32 (max ~65536)
 		Height:      height,
-		ChainID:     chainID,
+		ChainID:     uint16(chainID),
 		Amount:      rp.Amount,
 		TotalPoints: rp.TotalPoolPoints,
-		LPCount:     uint32(len(rp.Points)),
+		LPCount:     uint16(len(rp.Points)),
 	}
 }

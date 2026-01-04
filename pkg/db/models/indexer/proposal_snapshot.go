@@ -9,6 +9,7 @@ const ProposalSnapshotsProductionTableName = "proposal_snapshots"
 // ProposalSnapshotColumns defines the schema for the proposal_snapshots table.
 // NOTE: Proposal snapshots are NOT height-based since /v1/gov/proposals endpoint doesn't support height queries.
 // Snapshots are time-based and inserted via scheduled workflow every 5 minutes.
+// Uses non-Nullable types with defaults to avoid UInt8 null-mask overhead per column.
 // Codecs are optimized for compression:
 // - DoubleDelta,LZ4 for monotonic timestamps
 // - ZSTD(1) for strings (proposal hash and JSON data)
@@ -25,11 +26,11 @@ var ProposalSnapshotColumns = []ColumnDef{
 	{Name: "signer", Type: "String", Codec: "ZSTD(1)"},                               // Proposal signer address
 	{Name: "start_height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},                // Proposal start height
 	{Name: "end_height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},                  // Proposal end height
-	{Name: "parameter_space", Type: "Nullable(String)", Codec: "ZSTD(1)"},            // For changeParameter: fee, val, cons, gov
-	{Name: "parameter_key", Type: "Nullable(String)", Codec: "ZSTD(1)"},              // For changeParameter: parameter name
-	{Name: "parameter_value", Type: "Nullable(String)", Codec: "ZSTD(1)"},            // For changeParameter: parameter value as string
-	{Name: "dao_transfer_address", Type: "Nullable(String)", Codec: "ZSTD(1)"},       // For daoTransfer: recipient address
-	{Name: "dao_transfer_amount", Type: "Nullable(UInt64)", Codec: "Delta, ZSTD(3)"}, // For daoTransfer: amount
+	{Name: "parameter_space", Type: "String DEFAULT ''", Codec: "ZSTD(1)"},           // For changeParameter: fee, val, cons, gov
+	{Name: "parameter_key", Type: "String DEFAULT ''", Codec: "ZSTD(1)"},             // For changeParameter: parameter name
+	{Name: "parameter_value", Type: "String DEFAULT ''", Codec: "ZSTD(1)"},           // For changeParameter: parameter value as string
+	{Name: "dao_transfer_address", Type: "String DEFAULT ''", Codec: "ZSTD(1)"},      // For daoTransfer: recipient address
+	{Name: "dao_transfer_amount", Type: "UInt64 DEFAULT 0", Codec: "Delta, ZSTD(3)"}, // For daoTransfer: amount
 }
 
 // ProposalSnapshot stores time-series snapshots of governance proposals.
@@ -38,6 +39,7 @@ var ProposalSnapshotColumns = []ColumnDef{
 //
 // Snapshots are captured via a scheduled workflow that runs every 5 minutes.
 // ReplacingMergeTree deduplicates by (proposal_hash, snapshot_time), keeping the latest state.
+// Uses non-Nullable types with defaults (0, ”) to avoid UInt8 null-mask overhead.
 //
 // Query patterns:
 //   - Latest proposal state: SELECT * FROM proposal_snapshots FINAL WHERE proposal_hash = ? ORDER BY snapshot_time DESC LIMIT 1
@@ -57,13 +59,13 @@ type ProposalSnapshot struct {
 	SnapshotTime time.Time `ch:"snapshot_time" json:"snapshot_time"` // When this snapshot was captured
 
 	// Exploded proposal fields for efficient querying (extracted from the Proposal JSON)
-	ProposalType       string  `ch:"proposal_type" json:"proposal_type"`                         // Message type (changeParameter, daoTransfer)
-	Signer             string  `ch:"signer" json:"signer"`                                       // Proposal signer address (hex)
-	StartHeight        uint64  `ch:"start_height" json:"start_height"`                           // Proposal start height
-	EndHeight          uint64  `ch:"end_height" json:"end_height"`                               // Proposal end height
-	ParameterSpace     *string `ch:"parameter_space" json:"parameter_space,omitempty"`           // For changeParameter: fee, val, cons, gov
-	ParameterKey       *string `ch:"parameter_key" json:"parameter_key,omitempty"`               // For changeParameter: parameter name
-	ParameterValue     *string `ch:"parameter_value" json:"parameter_value,omitempty"`           // For changeParameter: parameter value as string
-	DaoTransferAddress *string `ch:"dao_transfer_address" json:"dao_transfer_address,omitempty"` // For daoTransfer: recipient address
-	DaoTransferAmount  *uint64 `ch:"dao_transfer_amount" json:"dao_transfer_amount,omitempty"`   // For daoTransfer: amount
+	ProposalType       string `ch:"proposal_type" json:"proposal_type"`                         // Message type (changeParameter, daoTransfer)
+	Signer             string `ch:"signer" json:"signer"`                                       // Proposal signer address (hex)
+	StartHeight        uint64 `ch:"start_height" json:"start_height"`                           // Proposal start height
+	EndHeight          uint64 `ch:"end_height" json:"end_height"`                               // Proposal end height
+	ParameterSpace     string `ch:"parameter_space" json:"parameter_space,omitempty"`           // For changeParameter: fee, val, cons, gov
+	ParameterKey       string `ch:"parameter_key" json:"parameter_key,omitempty"`               // For changeParameter: parameter name
+	ParameterValue     string `ch:"parameter_value" json:"parameter_value,omitempty"`           // For changeParameter: parameter value as string
+	DaoTransferAddress string `ch:"dao_transfer_address" json:"dao_transfer_address,omitempty"` // For daoTransfer: recipient address
+	DaoTransferAmount  uint64 `ch:"dao_transfer_amount" json:"dao_transfer_amount,omitempty"`   // For daoTransfer: amount
 }

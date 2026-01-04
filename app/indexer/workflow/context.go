@@ -16,7 +16,7 @@ type Config struct {
 // Context holds the workflow context.
 type Context struct {
 	ChainID         uint64
-	TemporalClient  *temporal.Client
+	ChainClient     *temporal.ChainClient
 	ActivityContext *activity.Context
 	Config          Config
 }

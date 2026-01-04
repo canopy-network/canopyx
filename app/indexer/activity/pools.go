@@ -37,12 +37,12 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 
 	// Phase 1: Parallel RPC workers - fetch all data concurrently
 	var (
-		rpcPools      []*fsm.Pool
-		previousPools []*fsm.Pool
-		poolEvents    []*indexer.Event
-		rpcPoolsErr   error
-		prevPoolsErr  error
-		eventsErr     error
+		rpcPools       []*fsm.Pool
+		previousPools  []*fsm.Pool
+		eventCounts    map[string]uint64
+		rpcPoolsErr    error
+		prevPoolsErr   error
+		eventCountsErr error
 	)
 
 	// Get a subgroup from the shared worker pool for parallel RPC fetching
@@ -70,16 +70,17 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 		previousPools, prevPoolsErr = cli.PoolsByHeight(groupCtx, in.Height-1)
 	})
 
-	// Worker 3: Query pool events from staging table (event-driven correlation)
-	// These events provide context for pool state changes:
+	// Worker 3: Query pool event counts from staging table using lightweight query
+	// These counts provide metrics for pool state changes:
 	// - EventDexLiquidityDeposit: LP adds liquidity
 	// - EventDexLiquidityWithdraw: LP removes liquidity
 	// - EventDexSwap: Swap executes affecting pool balances
+	// Returns only counts instead of full event data (~95% reduction)
 	group.Submit(func() {
 		if err := groupCtx.Err(); err != nil {
 			return
 		}
-		poolEvents, eventsErr = chainDb.GetEventsByTypeAndHeight(
+		eventCounts, eventCountsErr = chainDb.GetEventCountsByType(
 			groupCtx, in.Height, true,
 			string(lib.EventTypeDexLiquidityDeposit),
 			string(lib.EventTypeDexLiquidityWithdraw),
@@ -103,12 +104,12 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 	if prevPoolsErr != nil {
 		return types.ActivityIndexPoolsOutput{}, fmt.Errorf("fetch previous pools at height %d: %w", in.Height-1, prevPoolsErr)
 	}
-	if eventsErr != nil {
-		return types.ActivityIndexPoolsOutput{}, fmt.Errorf("query pool events at height %d: %w", in.Height, eventsErr)
+	if eventCountsErr != nil {
+		return types.ActivityIndexPoolsOutput{}, fmt.Errorf("query pool event counts at height %d: %w", in.Height, eventCountsErr)
 	}
 
 	// Build previous pools map for H-1 delta calculation
-	prevPoolsMap := make(map[uint64]*indexer.Pool, len(previousPools))
+	prevPoolsMap := make(map[uint32]*indexer.Pool, len(previousPools))
 	for _, prevPool := range previousPools {
 		dbPool := transform.Pool(prevPool, in.Height-1)
 		prevPoolsMap[dbPool.PoolID] = dbPool
@@ -130,7 +131,7 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 		if prevPool, exists := prevPoolsMap[pool.PoolID]; exists {
 			pool.AmountDelta = int64(pool.Amount) - int64(prevPool.Amount)
 			pool.TotalPointsDelta = int64(pool.TotalPoints) - int64(prevPool.TotalPoints)
-			pool.LPCountDelta = int32(pool.LPCount) - int32(prevPool.LPCount)
+			pool.LPCountDelta = int16(pool.LPCount) - int16(prevPool.LPCount)
 		} else {
 			// No previous state (new pool or height 1), deltas are zero
 			pool.AmountDelta = 0
@@ -143,34 +144,11 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 	}
 
 	numPools := uint32(len(pools))
-	numDeposits := 0
-	numWithdrawals := 0
-	numSwaps := 0
 
-	// Count event types for metrics
-	for _, event := range poolEvents {
-		switch event.EventType {
-		case string(lib.EventTypeDexLiquidityDeposit):
-			numDeposits++
-		case string(lib.EventTypeDexLiquidityWithdraw):
-			numWithdrawals++
-		case string(lib.EventTypeDexSwap):
-			numSwaps++
-		}
-	}
-
-	ac.Logger.Info("Indexed pools",
-		zap.Uint64("chainId", ac.ChainID),
-		zap.Uint64("height", in.Height),
-		zap.Uint32("numPools", numPools),
-		zap.Int("depositEvents", numDeposits),
-		zap.Int("withdrawalEvents", numWithdrawals),
-		zap.Int("swapEvents", numSwaps))
-
-	// Insert pools to staging table (two-phase commit pattern)
-	if err := chainDb.InsertPoolsStaging(ctx, pools); err != nil {
-		return types.ActivityIndexPoolsOutput{}, err
-	}
+	// Get event counts directly from the lightweight query results
+	numDeposits := eventCounts[string(lib.EventTypeDexLiquidityDeposit)]
+	numWithdrawals := eventCounts[string(lib.EventTypeDexLiquidityWithdraw)]
+	numSwaps := eventCounts[string(lib.EventTypeDexSwap)]
 
 	// Phase 3: Process pool holders (snapshot-on-change with TotalPoolPoints tracking)
 	// Build previous holder map for O(1) lookups
@@ -226,30 +204,76 @@ func (ac *Context) IndexPools(ctx context.Context, in types.ActivityIndexAtHeigh
 
 				holder := &indexer.PoolPointsByHolder{
 					Address:             address,
-					PoolID:              rpcPool.Id,
+					PoolID:              uint32(rpcPool.Id),
 					Height:              in.Height,
 					HeightTime:          in.BlockTime,
-					Committee:           chainID,
+					Committee:           uint16(chainID),
 					Points:              pointEntry.Points,
 					LiquidityPoolPoints: rpcPool.TotalPoolPoints, // Store pool's total points
-					LiquidityPoolID:     liquidityPoolID,
+					LiquidityPoolID:     uint32(liquidityPoolID),
+					PoolAmount:          rpcPool.Amount, // Denormalized: enables value calculation without JOIN
 				}
 				changedHolders = append(changedHolders, holder)
 			}
 		}
 	}
 
-	// Insert changed holders to staging table
-	if len(changedHolders) > 0 {
-		if err := chainDb.InsertPoolPointsByHolderStaging(ctx, changedHolders); err != nil {
-			return types.ActivityIndexPoolsOutput{}, err
-		}
-	}
-
-	ac.Logger.Info("Indexed pool point holders (snapshot-on-change)",
+	ac.Logger.Info("Indexed pools",
 		zap.Uint64("chainId", ac.ChainID),
 		zap.Uint64("height", in.Height),
+		zap.Uint32("numPools", numPools),
+		zap.Uint64("depositEvents", numDeposits),
+		zap.Uint64("withdrawalEvents", numWithdrawals),
+		zap.Uint64("swapEvents", numSwaps),
 		zap.Int("changedHolders", len(changedHolders)))
+
+	// Insert pools and pool holders to staging tables in PARALLEL
+	// Each insert goes to a different table, so no conflicts
+	insertPool := ac.WorkerPool(2) // 2 workers for 2 parallel inserts
+	insertGroup := insertPool.NewGroupContext(ctx)
+	insertCtx := insertGroup.Context()
+
+	var (
+		poolsErr   error
+		holdersErr error
+	)
+
+	// Worker 1: Insert pools
+	if len(pools) > 0 {
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			poolsErr = chainDb.InsertPoolsStaging(insertCtx, pools)
+		})
+	}
+
+	// Worker 2: Insert pool holders
+	if len(changedHolders) > 0 {
+		insertGroup.Submit(func() {
+			if err := insertCtx.Err(); err != nil {
+				return
+			}
+			holdersErr = chainDb.InsertPoolPointsByHolderStaging(insertCtx, changedHolders)
+		})
+	}
+
+	// Wait for all inserts to complete
+	if err := insertGroup.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
+		ac.Logger.Warn("parallel insert encountered error",
+			zap.Uint64("chainId", ac.ChainID),
+			zap.Uint64("height", in.Height),
+			zap.Error(err),
+		)
+	}
+
+	// Check for insert errors
+	if poolsErr != nil {
+		return types.ActivityIndexPoolsOutput{}, fmt.Errorf("insert pools staging: %w", poolsErr)
+	}
+	if holdersErr != nil {
+		return types.ActivityIndexPoolsOutput{}, fmt.Errorf("insert pool holders staging: %w", holdersErr)
+	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
 	return types.ActivityIndexPoolsOutput{

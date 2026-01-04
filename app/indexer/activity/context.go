@@ -28,7 +28,7 @@ type Context struct {
 	RPCFactory rpc.Factory
 	RPCOpts    rpc.Opts
 	// For scheduling workflows
-	TemporalClient *temporalclient.Client
+	ChainClient *temporalclient.ChainClient
 	// For publishing real-time events
 	RedisClient *redis.Client
 	// WorkerMaxParallelism allows overriding the default worker pool size.
@@ -47,9 +47,10 @@ func (ac *Context) GetChainDb(ctx context.Context, chainID uint64) (chainstore.S
 }
 
 // rpcClient creates and returns an RPC client using the provided endpoints and the context's RPCFactory or default factory.
+// Uses lightweight GetChainRPCEndpoints query (2 columns instead of 25).
 func (ac *Context) rpcClient(ctx context.Context) (rpc.Client, error) {
-	// Get chain metadata
-	ch, err := ac.AdminDB.GetChain(ctx, ac.ChainID)
+	// Get chain RPC endpoints only (lightweight query)
+	ch, err := ac.AdminDB.GetChainRPCEndpoints(ctx, ac.ChainID)
 	if err != nil {
 		return nil, err
 	}

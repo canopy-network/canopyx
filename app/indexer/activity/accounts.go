@@ -11,6 +11,7 @@ import (
 	"github.com/canopy-network/canopy/fsm"
 	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.uber.org/zap"
 )
@@ -110,14 +111,11 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 		prevMap[hex.EncodeToString(acc.Address)] = acc.Amount
 	}
 
-	// Query account-related events from a staging table (event-driven correlation)
-	// These events provide context for account balance changes:
+	// Query account-related events from staging table using lightweight query
+	// Returns only 4 columns (height, address, event_type, amount) instead of 21 (~80% reduction)
 	// - EventReward: Validator receives block rewards
 	// - EventSlash: Validator slashed for Byzantine behavior
-	accountEvents, err := chainDb.GetEventsByTypeAndHeight(ctx, input.Height, true,
-		string(lib.EventTypeReward),
-		string(lib.EventTypeSlash),
-	)
+	accountEvents, err := chainDb.GetRewardSlashEvents(ctx, input.Height, true)
 	if err != nil {
 		return types.ActivityIndexAccountsOutput{}, fmt.Errorf("query account events at height %d: %w", input.Height, err)
 	}
@@ -129,27 +127,32 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 	)
 
 	// Build event maps by address for O(1) lookup
-	rewardEvents := make(map[string]*indexer.Event)
-	slashEvents := make(map[string]*indexer.Event)
+	rewardEvents := make(map[string]*chainstore.EventRewardSlash)
+	slashEvents := make(map[string]*chainstore.EventRewardSlash)
 
-	for _, event := range accountEvents {
-		// Events have an Address field which corresponds to account/validator address
+	for i := range accountEvents {
+		event := &accountEvents[i]
 		addr := event.Address
 
 		switch event.EventType {
 		case string(lib.EventTypeReward):
 			rewardEvents[addr] = event
-			ac.Logger.Info("Found reward event",
-				zap.String("address", addr),
-				zap.Uint64("amount", *event.Amount),
-				zap.Uint64("height", input.Height))
+			if event.Amount > 0 {
+				ac.Logger.Info("Found reward event",
+					zap.String("address", addr),
+					zap.Uint64("amount", event.Amount),
+					zap.Uint64("height", input.Height))
+			}
 		case string(lib.EventTypeSlash):
 			slashEvents[addr] = event
-			ac.Logger.Info("Found slash event",
-				zap.String("address", addr),
-				zap.Uint64("amount", *event.Amount),
-				zap.Uint64("height", input.Height))
+			if event.Amount > 0 {
+				ac.Logger.Info("Found slash event",
+					zap.String("address", addr),
+					zap.Uint64("amount", event.Amount),
+					zap.Uint64("height", input.Height))
+			}
 		default:
+			// should not happen but who knows
 			ac.Logger.Warn("Unexpected event type", zap.String("type", event.EventType))
 		}
 	}
@@ -165,9 +168,9 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 		// Calculate cumulative rewards and slashes from events
 		var cumulativeRewards, cumulativeSlashes uint64
 		if rewardEvent, hasReward := rewardEvents[addrHex]; hasReward {
-			// Parse reward amount from the event
-			if rewardEvent.Amount != nil {
-				cumulativeRewards = *rewardEvent.Amount
+			// Get reward amount from the event (0 means no reward)
+			cumulativeRewards = rewardEvent.Amount
+			if cumulativeRewards > 0 {
 				ac.Logger.Debug("Account matched reward event",
 					zap.String("address", addrHex),
 					zap.Uint64("reward", cumulativeRewards),
@@ -175,9 +178,9 @@ func (ac *Context) IndexAccounts(ctx context.Context, input types.ActivityIndexA
 			}
 		}
 		if slashEvent, hasSlash := slashEvents[addrHex]; hasSlash {
-			// Parse slash amount from event
-			if slashEvent.Amount != nil {
-				cumulativeSlashes = *slashEvent.Amount
+			// Get slash amount from event (0 means no slash)
+			cumulativeSlashes = slashEvent.Amount
+			if cumulativeSlashes > 0 {
 				ac.Logger.Debug("Account matched slash event",
 					zap.String("address", addrHex),
 					zap.Uint64("slash", cumulativeSlashes),

@@ -78,7 +78,7 @@ func (wc *Context) LPSnapshotWorkflow(ctx workflow.Context) (types.ActivityCompu
 			MaximumInterval:    10 * time.Second,
 			MaximumAttempts:    3, // Limited retries - if snapshot fails, wait for next scheduled run
 		},
-		TaskQueue: wc.TemporalClient.GetIndexerLiveQueue(wc.ChainID),
+		TaskQueue: wc.ChainClient.LiveQueue,
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 

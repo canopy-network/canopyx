@@ -12,6 +12,9 @@ const CommitteeValidatorStagingTableName = "committee_validators_staging"
 // - DoubleDelta,LZ4 for sequential/monotonic values (height, timestamps)
 // - ZSTD(1) for strings and booleans
 // - Delta,ZSTD(3) for gradually changing amounts
+//
+// Denormalized fields from Committee entity enable queries like
+// "show all validators in subsidized committees" without JOIN.
 var CommitteeValidatorColumns = []ColumnDef{
 	{Name: "committee_id", Type: "UInt64", Codec: "Delta, ZSTD(3)"},
 	{Name: "validator_address", Type: "String", Codec: "ZSTD(1)", CrossChainRename: "address"},
@@ -21,6 +24,9 @@ var CommitteeValidatorColumns = []ColumnDef{
 	{Name: "compound", Type: "Bool", Codec: "ZSTD(1)"},
 	{Name: "height", Type: "UInt64", Codec: "DoubleDelta, LZ4"},
 	{Name: "height_time", Type: "DateTime64(3)", Codec: "DoubleDelta, LZ4"},
+	// Denormalized from Committee - enables filtering by committee status without JOIN
+	{Name: "subsidized", Type: "Bool", Codec: "ZSTD(1)"},
+	{Name: "retired", Type: "Bool", Codec: "ZSTD(1)"},
 }
 
 // CommitteeValidator represents the junction table between committees and validators.
@@ -53,4 +59,9 @@ type CommitteeValidator struct {
 	// Version tracking - every membership change creates a new snapshot
 	Height     uint64    `ch:"height" json:"height"`           // Height at which this snapshot was created
 	HeightTime time.Time `ch:"height_time" json:"height_time"` // Block timestamp for time-range queries
+
+	// Committee metadata (denormalized for query efficiency)
+	// Enables queries like "show all validators in subsidized committees" without JOIN
+	Subsidized bool `ch:"subsidized" json:"subsidized"` // Whether committee is subsidized (from Committee entity)
+	Retired    bool `ch:"retired" json:"retired"`       // Whether committee is retired (from Committee entity)
 }

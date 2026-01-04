@@ -1,13 +1,13 @@
 package chain
 
 import (
-    "context"
-    "fmt"
+	"context"
+	"fmt"
 
-    "github.com/canopy-network/canopyx/pkg/db/clickhouse"
+	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 
-    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-    indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 )
 
 // initProposalSnapshots creates the proposal_snapshots table with ReplacingMergeTree engine.
@@ -23,20 +23,20 @@ import (
 // the /v1/gov/proposals RPC endpoint does not support historical queries. Instead, snapshots
 // are captured via a scheduled workflow that runs every 5 minutes. No staging table is used.
 func (db *DB) initProposalSnapshots(ctx context.Context) error {
-    schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ProposalSnapshotColumns)
+	schemaSQL := indexermodels.ColumnsToSchemaSQL(indexermodels.ProposalSnapshotColumns)
 
-    query := fmt.Sprintf(`
+	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS "%s"."%s" (
 			%s
 		) ENGINE = %s
 		ORDER BY (proposal_hash, snapshot_time)
 	`, db.Name, indexermodels.ProposalSnapshotsProductionTableName, schemaSQL, clickhouse.ReplicatedEngine(clickhouse.ReplacingMergeTree, "snapshot_time"))
 
-    if err := db.Exec(ctx, query); err != nil {
-        return fmt.Errorf("create %s: %w", indexermodels.ProposalSnapshotsProductionTableName, err)
-    }
+	if err := db.Exec(ctx, query); err != nil {
+		return fmt.Errorf("create %s: %w", indexermodels.ProposalSnapshotsProductionTableName, err)
+	}
 
-    return nil
+	return nil
 }
 
 // InsertProposalSnapshots inserts proposal snapshots directly into the production proposal_snapshots table.
@@ -47,45 +47,45 @@ func (db *DB) initProposalSnapshots(ctx context.Context) error {
 // scheduled workflow. The RPC endpoint doesn't support historical queries, so we cannot
 // use the typical RPC(H) vs RPC(H-1) comparison pattern.
 func (db *DB) InsertProposalSnapshots(ctx context.Context, snapshots []*indexermodels.ProposalSnapshot) error {
-    if len(snapshots) == 0 {
-        return nil
-    }
+	if len(snapshots) == 0 {
+		return nil
+	}
 
-    query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
+	query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		proposal_hash, proposal, approve, snapshot_time,
 		proposal_type, signer, start_height, end_height,
 		parameter_space, parameter_key, parameter_value,
 		dao_transfer_address, dao_transfer_amount
 	) VALUES`, db.Name, indexermodels.ProposalSnapshotsProductionTableName)
 
-    batch, err := db.PrepareBatch(ctx, query)
-    if err != nil {
-        return err
-    }
-    defer func(batch driver.Batch) {
-        _ = batch.Abort()
-    }(batch)
+	batch, err := db.PrepareBatch(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer func(batch driver.Batch) {
+		_ = batch.Abort()
+	}(batch)
 
-    for _, snapshot := range snapshots {
-        err = batch.Append(
-            snapshot.ProposalHash,
-            snapshot.Proposal,
-            snapshot.Approve,
-            snapshot.SnapshotTime,
-            snapshot.ProposalType,
-            snapshot.Signer,
-            snapshot.StartHeight,
-            snapshot.EndHeight,
-            snapshot.ParameterSpace,
-            snapshot.ParameterKey,
-            snapshot.ParameterValue,
-            snapshot.DaoTransferAddress,
-            snapshot.DaoTransferAmount,
-        )
-        if err != nil {
-            return err
-        }
-    }
+	for _, snapshot := range snapshots {
+		err = batch.Append(
+			snapshot.ProposalHash,
+			snapshot.Proposal,
+			snapshot.Approve,
+			snapshot.SnapshotTime,
+			snapshot.ProposalType,
+			snapshot.Signer,
+			snapshot.StartHeight,
+			snapshot.EndHeight,
+			snapshot.ParameterSpace,
+			snapshot.ParameterKey,
+			snapshot.ParameterValue,
+			snapshot.DaoTransferAddress,
+			snapshot.DaoTransferAmount,
+		)
+		if err != nil {
+			return err
+		}
+	}
 
-    return batch.Send()
+	return batch.Send()
 }
