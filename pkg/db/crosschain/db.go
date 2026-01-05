@@ -86,9 +86,13 @@ func (db *DB) InitializeDB(ctx context.Context) error {
 		return err
 	}
 
+	if err := db.initTVLSnapshots(ctx); err != nil {
+		return err
+	}
+
 	db.Logger.Info("Cross-chain schema initialization complete",
 		zap.String("database", db.Name),
-		zap.Int("total", len(configs)+1)) // +1 for LP position snapshots table
+		zap.Int("total", len(configs)+2)) // +2 for LP position snapshots and TVL snapshots tables
 
 	return nil
 }
