@@ -387,6 +387,22 @@ func (wc *Context) IndexBlockWorkflow(ctx workflow.Context, in types.WorkflowInd
 	// heights indexed more than 1 hour ago. This reduces mutation count from
 	// ~20 per block to ~20 per hour (one batch DELETE per table).
 
+	// Phase 4: Update TVL snapshot for the current hour
+	// This runs after promotions so it captures the just-indexed data.
+	// ReplacingMergeTree handles repeated updates to the same hour.
+	var tvlSnapshotOut types.ActivityUpdateTVLSnapshotOutput
+	tvlInput := types.ActivityUpdateTVLSnapshotInput{
+		Height:    in.Height,
+		BlockTime: heightTime,
+	}
+	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.UpdateTVLSnapshot, tvlInput).Get(ctx, &tvlSnapshotOut); err != nil {
+		// Log but don't fail the workflow - TVL snapshot is non-critical
+		// The next block will update the snapshot anyway
+		timings["tvl_snapshot_error"] = 1
+	} else {
+		timings["tvl_snapshot_ms"] = tvlSnapshotOut.DurationMs
+	}
+
 	// Calculate total indexing time (sum of critical path activities only)
 	// Only sum wall-clock measurements, not individual parallel activity times
 	totalMs := timings["prepare_index_ms"] +

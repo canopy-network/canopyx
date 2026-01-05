@@ -59,4 +59,5 @@ type Store interface {
 	// --- Inserts
 
 	InsertLPPositionSnapshots(ctx context.Context, snapshots []*indexermodels.LPPositionSnapshot) error
+	InsertTVLSnapshots(ctx context.Context, snapshots []*indexermodels.TVLSnapshot) error
 }

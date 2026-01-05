@@ -68,6 +68,14 @@ type Store interface {
 	DeleteBlock(ctx context.Context, height uint64) error
 	DeleteTransactions(ctx context.Context, height uint64) error
 
+	// --- TVL queries (for snapshot computation)
+
+	SumAccountBalances(ctx context.Context) (uint64, error)
+	SumPoolAmounts(ctx context.Context) (uint64, error)
+	SumValidatorStakes(ctx context.Context) (uint64, error)
+	SumOpenOrderAmounts(ctx context.Context) (uint64, error)
+	SumActiveDexOrderAmounts(ctx context.Context) (uint64, error)
+
 	// --- Meta / Help queries
 
 	Exec(ctx context.Context, query string, args ...any) error
