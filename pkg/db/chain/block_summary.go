@@ -49,6 +49,7 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 		INSERT INTO "%s"."%s" (
 			height,
 			height_time,
+			total_transactions,
 			num_txs,
 			num_txs_send,
 			num_txs_stake,
@@ -134,6 +135,7 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 	err = batch.Append(
 		summary.Height,
 		summary.HeightTime,
+		summary.TotalTransactions,
 		summary.NumTxs,
 		summary.NumTxsSend,
 		summary.NumTxsStake,
