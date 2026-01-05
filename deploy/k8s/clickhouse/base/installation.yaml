@@ -6,38 +6,18 @@ metadata:
 spec:
   configuration:
     # User profiles (performance settings)
-    # Sized for 2-3 chains doing parallel initial sync (1k blocks each)
     profiles:
       default/do_not_merge_across_partitions_select_final: "1"
       default/optimize_aggregation_in_order: "1"
-      default/max_threads: "8"              # Match CPU limit (8 cores)
-      default/max_insert_threads: "4"       # Half of max_threads for INSERTs
-
-      # Async INSERT - batch small inserts together (critical for high-frequency indexing)
-      default/async_insert: "1"
-      default/wait_for_async_insert: "1"           # MUST wait - otherwise RecordIndexed can't find promoted data
-      default/async_insert_max_data_size: "10485760"  # Flush at 10MB
-      default/async_insert_busy_timeout_ms: "200"     # Or flush every 200ms
-      # Memory settings - tuned for 12GB container limit (development profile)
-      # max_memory_usage: 8GB allows room for multiple concurrent queries + OS/caches
-      default/max_memory_usage: "8589934592"  # 8GB (leaves 4GB for OS/caches)
-      # External aggregation: Spill to disk at 4GB (50% of max_memory_usage)
-      # Higher threshold = faster queries, fewer disk spills
-      default/max_bytes_before_external_group_by: "4294967296"  # 4GB
-      default/max_bytes_before_external_sort: "4294967296"  # 4GB
-      # Memory-efficient distributed aggregation
-      default/distributed_aggregation_memory_efficient: "1"
-      default/aggregation_memory_efficient_merge_threads: "4"  # Match max_insert_threads
+      default/max_threads: "16"
+      default/max_insert_threads: "8"
+      default/max_memory_usage: "14000000000"  # 14GB
       # Distributed DDL timeout - ON CLUSTER operations
       # Default 180s is too long; 30s is reasonable for small clusters
       default/distributed_ddl_task_timeout: "30000"  # 30s for ON CLUSTER DDL operations
       # Enable lightweight DELETE for fast, non-blocking deletes (ClickHouse 23.3+)
       # Replaces slow ALTER TABLE DELETE mutations with instant deletes
       default/allow_experimental_lightweight_delete: "1"
-
-      # NOTE: insert_quorum removed - not needed when using single replica connection
-      # and wait_for_async_insert=1. The async insert wait ensures data is committed
-      # before INSERT returns, which is sufficient for RecordIndexed to find the block.
 
     # Users configuration
     users:
@@ -63,12 +43,9 @@ spec:
       compression/case/min_part_size: "10485760"  # 10MB
       compression/case/min_part_size_ratio: "0.01"
 
-      # Background thread pools - tuned for dev (4 cores)
-      # Rule: background_pool_size * ratio must be >= 20 (for mutations)
-      background_pool_size: "16"                             # Reduced from 32
-      background_merges_mutations_concurrency_ratio: "2"     # Reduced from 4 (16*2=32 >= 20)
-      background_fetches_pool_size: "4"                      # Reduce fetch threads
-      max_parts_merged_at_once: "100"                        # Was 150
+      background_pool_size: "32"
+      background_merges_mutations_concurrency_ratio: "4"
+      max_parts_merged_at_once: "150"
 
       # Background merge optimization (reduces FINAL query overhead)
       merge_tree/max_bytes_to_merge_at_min_space_in_pool: "1073741824"  # 1GB
@@ -83,13 +60,12 @@ spec:
       config.d/server-limits.xml: |
         <clickhouse>
           <!-- Connection pool optimization - Scaled for 100+ chains -->
-          <!-- Indexer formula: (live+hist+reindex blocks) × 20 activities × 8 conns + 100 buffer -->
-          <!-- Per chain: (2+5+5) × 20 × 8 + 100 = 2,020 connections -->
-          <!-- 100 chains × 2,020 = 202,000 + 20,000 buffer (query apps, admin) = 222,000 -->
-          <max_connections>250000</max_connections>
+          <!-- Calculation: 100 chains × 270 conns/chain = 27k connections -->
+          <!-- Formula per chain: (25 parallel blocks × 10 activities × 1 conn) + 20 buffer = 270 -->
+          <max_connections>50000</max_connections>
           <!-- Concurrent queries: Each INSERT/SELECT counts as 1 query -->
-          <!-- Peak: 100 chains × 12 parallel blocks × 50 concurrent activities = 60k queries -->
-          <max_concurrent_queries>100000</max_concurrent_queries>
+          <!-- 100 chains × 25 parallel blocks × 10 concurrent activities = 25k peak writes -->
+          <max_concurrent_queries>30000</max_concurrent_queries>
         </clickhouse>
 
       # HOSTALIAS FIX: Add cluster and namespace macros
@@ -98,7 +74,7 @@ spec:
         <clickhouse>
           <macros>
             <cluster>canopyx</cluster>
-            <namespace from_env="KUBERNETES_NAMESPACE" replace="1">default</namespace>
+            <namespace from_env="KUBERNETES_NAMESPACE" replace="1">dev</namespace>
           </macros>
         </clickhouse>
 
@@ -142,13 +118,13 @@ spec:
               <shard>
                 <internal_replication>true</internal_replication>
                 <replica>
-                  <host>chi-canopyx-canopyx-0-0.default.svc.cluster.local</host>
+                  <host>chi-canopyx-canopyx-0-0.dev.svc.cluster.local</host>
                   <port>9000</port>
                   <user>canopyx</user>
                   <password>canopyx</password>
                 </replica>
                 <replica>
-                  <host>chi-canopyx-canopyx-0-1.default.svc.cluster.local</host>
+                  <host>chi-canopyx-canopyx-0-1.dev.svc.cluster.local</host>
                   <port>9000</port>
                   <user>canopyx</user>
                   <password>canopyx</password>
@@ -249,7 +225,7 @@ spec:
         spec:
           containers:
             - name: clickhouse
-              image: clickhouse/clickhouse-server:25.8
+              image: clickhouse/clickhouse-server:24.8
               env:
                 # HOSTALIAS FIX: Expose namespace for FQDN macro
                 - name: KUBERNETES_NAMESPACE
@@ -272,14 +248,17 @@ spec:
                 - name: cold-volume
                   mountPath: /var/lib/clickhouse/cold
               resources:
-                # Sized for 2-3 chains doing parallel initial sync
-                # 8 CPU cores, 12GB RAM for handling concurrent INSERTs
+                # NOTE: Local/dev resources (for testing)
+                # Production spec (infrastructure-plan.md): 24 physical cores (48 vCPUs), 128GB RAM
+                # Adjust these values based on your environment:
+                #   - Local/dev: 4Gi/16Gi memory, 2-4 CPU cores
+                #   - Production: 64Gi/128Gi memory, 16-24 CPU cores
                 requests:
                   memory: "4Gi"
                   cpu: "2000m"
                 limits:
-                  memory: "12Gi"
-                  cpu: "8000m"    # 8 cores to match max_threads=8
+                  memory: "16Gi"
+                  cpu: "4000m"
 
     # Volume claim templates for tiered storage
     # Based on infrastructure-plan.md: 25.9TB total per node (1.9TB hot + 4TB warm + 20TB cold)
