@@ -43,6 +43,15 @@ func (db *DB) initDexOrders(ctx context.Context) error {
 
 // InsertDexOrdersStaging persists staged DEX order snapshots for the chain.
 func (db *DB) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodels.DexOrder) error {
+	return db.insertDexOrders(ctx, indexermodels.DexOrdersStagingTableName, orders)
+}
+
+// InsertDexOrdersProduction persists DEX order snapshots into the production table.
+func (db *DB) InsertDexOrdersProduction(ctx context.Context, orders []*indexermodels.DexOrder) error {
+	return db.insertDexOrders(ctx, indexermodels.DexOrdersProductionTableName, orders)
+}
+
+func (db *DB) insertDexOrders(ctx context.Context, tableName string, orders []*indexermodels.DexOrder) error {
 	if len(orders) == 0 {
 		return nil
 	}
@@ -51,7 +60,7 @@ func (db *DB) InsertDexOrdersStaging(ctx context.Context, orders []*indexermodel
 		order_id, height, height_time, committee, address,
 		amount_for_sale, requested_amount, state, success,
 		sold_amount, bought_amount, local_origin, locked_height
-	) VALUES`, db.Name, indexermodels.DexOrdersStagingTableName)
+	) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

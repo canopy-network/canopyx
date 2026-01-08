@@ -43,6 +43,15 @@ func (db *DB) initOrders(ctx context.Context) error {
 
 // InsertOrdersStaging persists staged order snapshots for the chain.
 func (db *DB) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.Order) error {
+	return db.insertOrders(ctx, indexermodels.OrdersStagingTableName, orders)
+}
+
+// InsertOrdersProduction persists order snapshots into the production table.
+func (db *DB) InsertOrdersProduction(ctx context.Context, orders []*indexermodels.Order) error {
+	return db.insertOrders(ctx, indexermodels.OrdersProductionTableName, orders)
+}
+
+func (db *DB) insertOrders(ctx context.Context, tableName string, orders []*indexermodels.Order) error {
 	if len(orders) == 0 {
 		return nil
 	}
@@ -50,7 +59,7 @@ func (db *DB) InsertOrdersStaging(ctx context.Context, orders []*indexermodels.O
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (order_id, height, height_time, committee, data, amount_for_sale, requested_amount, seller_receive_address, buyer_send_address, buyer_receive_address, buyer_chain_deadline, sellers_send_address, status) VALUES`,
 		db.Name,
-		indexermodels.OrdersStagingTableName,
+		tableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

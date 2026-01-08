@@ -69,6 +69,15 @@ func (db *DB) initCommitteeCreatedHeightView(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // Committees are only inserted when their data differs from the previous height.
 func (db *DB) InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error {
+	return db.insertCommittees(ctx, indexermodels.CommitteeStagingTableName, committees)
+}
+
+// InsertCommitteesProduction persists committees into the committees production table.
+func (db *DB) InsertCommitteesProduction(ctx context.Context, committees []*indexermodels.Committee) error {
+	return db.insertCommittees(ctx, indexermodels.CommitteeProductionTableName, committees)
+}
+
+func (db *DB) insertCommittees(ctx context.Context, tableName string, committees []*indexermodels.Committee) error {
 	if len(committees) == 0 {
 		return nil
 	}
@@ -76,7 +85,7 @@ func (db *DB) InsertCommitteesStaging(ctx context.Context, committees []*indexer
 	query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		chain_id, last_root_height_updated, last_chain_height_updated,
 		number_of_samples, subsidized, retired, height, height_time
-	) VALUES`, db.Name, indexermodels.CommitteeStagingTableName)
+	) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

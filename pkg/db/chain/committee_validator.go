@@ -47,13 +47,22 @@ func (db *DB) initCommitteeValidators(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // Relationships are only inserted when validator committee membership changes.
 func (db *DB) InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error {
+	return db.insertCommitteeValidators(ctx, indexermodels.CommitteeValidatorStagingTableName, cvs)
+}
+
+// InsertCommitteeValidatorsProduction inserts committee-validator relationships into the production table.
+func (db *DB) InsertCommitteeValidatorsProduction(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error {
+	return db.insertCommitteeValidators(ctx, indexermodels.CommitteeValidatorProductionTableName, cvs)
+}
+
+func (db *DB) insertCommitteeValidators(ctx context.Context, tableName string, cvs []*indexermodels.CommitteeValidator) error {
 	if len(cvs) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		committee_id, validator_address, staked_amount, status, delegate, compound, height, height_time, subsidized, retired
-	) VALUES`, db.Name, indexermodels.CommitteeValidatorStagingTableName)
+	) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

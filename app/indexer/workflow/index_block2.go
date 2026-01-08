@@ -37,11 +37,15 @@ func (wc *Context) IndexBlockWorkflow2(ctx workflow.Context, in types.WorkflowIn
 
 	// 1. PrepareIndexBlock - check if block needs indexing TODO durability plan required for partial writes (2 phase commitment doesn't fix that)
 	var prepareOut types.ActivityPrepareIndexBlockOutput
-	if err := workflow.ExecuteActivity(ctx, wc.ActivityContext.PrepareIndexBlock, types.ActivityIndexBlockInput{
+	localPrepareCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
+		StartToCloseTimeout: 1 * time.Minute,
+		RetryPolicy:         retry,
+	})
+	if err := workflow.ExecuteLocalActivity(localPrepareCtx, wc.ActivityContext.PrepareIndexBlock, types.ActivityIndexBlockInput{
 		Height:      in.Height,
 		PriorityKey: in.PriorityKey,
 		Reindex:     in.Reindex,
-	}).Get(ctx, &prepareOut); err != nil {
+	}).Get(localPrepareCtx, &prepareOut); err != nil {
 		return err
 	}
 	timings["prepare_index_ms"] = prepareOut.DurationMs
@@ -55,7 +59,7 @@ func (wc *Context) IndexBlockWorkflow2(ctx workflow.Context, in types.WorkflowIn
 			IndexingTimeMs: prepareOut.DurationMs,
 			IndexingDetail: string(detailBytes),
 		}
-		return workflow.ExecuteActivity(ctx, wc.ActivityContext.RecordIndexed, recordInput).Get(ctx, nil)
+		return workflow.ExecuteLocalActivity(localPrepareCtx, wc.ActivityContext.RecordIndexed, recordInput).Get(localPrepareCtx, nil)
 	}
 
 	// 2. FetchBlock - fetch block from RPC (local activity for fast retries)
@@ -63,14 +67,13 @@ func (wc *Context) IndexBlockWorkflow2(ctx workflow.Context, in types.WorkflowIn
 	// NO TIMEOUT: We want unlimited retries since blocks MUST eventually be indexed
 	// The retry policy handles backoff, we just need to be patient
 	var fetchOut types.ActivityFetchBlobOutput
-	localActivityOpts := workflow.LocalActivityOptions{
+	localFetchCtx := workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
 		RetryPolicy:         retry,
-	}
-	localCtx := workflow.WithLocalActivityOptions(ctx, localActivityOpts)
-	if err := workflow.ExecuteLocalActivity(localCtx, wc.ActivityContext.FetchBlobFromRPC, types.ActivityFetchBlockInput{
+	})
+	if err := workflow.ExecuteLocalActivity(localFetchCtx, wc.ActivityContext.FetchBlobFromRPC, types.ActivityFetchBlockInput{
 		Height: in.Height,
-	}).Get(localCtx, &fetchOut); err != nil {
+	}).Get(localFetchCtx, &fetchOut); err != nil {
 		return err
 	}
 	timings["fetch_block_ms"] = fetchOut.DurationMs

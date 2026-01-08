@@ -9,6 +9,7 @@ import (
 
 	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
+	indexerworkflow "github.com/canopy-network/canopyx/pkg/temporal/indexer"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
@@ -103,7 +104,7 @@ func (ac *Context) scheduleReindexBatchToQueue(ctx context.Context, in types.Act
 				},
 			}
 
-			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
+			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, indexerworkflow.IndexBlockWorkflow2Name, types.WorkflowIndexBlockInput{
 				Height:  h,
 				Reindex: true, // Mark as reindex operation
 			})

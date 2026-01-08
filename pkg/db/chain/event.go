@@ -44,6 +44,15 @@ func (db *DB) initEvents(ctx context.Context) error {
 // InsertEventsStaging inserts events into the events_staging table.
 // This follows the two-phase commit pattern for data consistency.
 func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.Event) error {
+	return db.insertEvents(ctx, indexermodels.EventsStagingTableName, events)
+}
+
+// InsertEventsProduction inserts events into the events production table.
+func (db *DB) InsertEventsProduction(ctx context.Context, events []*indexermodels.Event) error {
+	return db.insertEvents(ctx, indexermodels.EventsProductionTableName, events)
+}
+
+func (db *DB) insertEvents(ctx context.Context, tableName string, events []*indexermodels.Event) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -54,7 +63,7 @@ func (db *DB) InsertEventsStaging(ctx context.Context, events []*indexermodels.E
 		success, local_origin, order_id, points_received, points_burned,
 		data, seller_receive_address, buyer_send_address, sellers_send_address,
 		msg, height_time
-	) VALUES`, db.Name, indexermodels.EventsStagingTableName)
+	) VALUES`, db.Name, tableName)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err

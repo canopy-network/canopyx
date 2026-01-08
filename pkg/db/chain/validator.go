@@ -53,13 +53,22 @@ func (db *DB) initValidators(ctx context.Context) error {
 // Staging tables are used for new data before promotion to production.
 // This follows the two-phase commit pattern for data consistency.
 func (db *DB) InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error {
+	return db.insertValidators(ctx, indexermodels.ValidatorsStagingTableName, validators)
+}
+
+// InsertValidatorsProduction inserts validator snapshots to the production table.
+func (db *DB) InsertValidatorsProduction(ctx context.Context, validators []*indexermodels.Validator) error {
+	return db.insertValidators(ctx, indexermodels.ValidatorsProductionTableName, validators)
+}
+
+func (db *DB) insertValidators(ctx context.Context, tableName string, validators []*indexermodels.Validator) error {
 	if len(validators) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (address, public_key, net_address, staked_amount, max_paused_height, unstaking_height, output, delegate, compound, status, height, height_time) VALUES`,
-		db.Name, indexermodels.ValidatorsStagingTableName,
+		db.Name, tableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

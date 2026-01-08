@@ -48,13 +48,22 @@ func (db *DB) initAccounts(ctx context.Context) error {
 // Staging tables are used for new data before promotion to production.
 // This follows the two-phase commit pattern for data consistency.
 func (db *DB) InsertAccountsStaging(ctx context.Context, accounts []*indexermodels.Account) error {
+	return db.insertAccounts(ctx, indexermodels.AccountsStagingTableName, accounts)
+}
+
+// InsertAccountsProduction inserts account snapshots to the production table.
+func (db *DB) InsertAccountsProduction(ctx context.Context, accounts []*indexermodels.Account) error {
+	return db.insertAccounts(ctx, indexermodels.AccountsProductionTableName, accounts)
+}
+
+func (db *DB) insertAccounts(ctx context.Context, tableName string, accounts []*indexermodels.Account) error {
 	if len(accounts) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (address, amount, rewards, slashes, height, height_time) VALUES`,
-		db.Name, indexermodels.AccountsStagingTableName,
+		db.Name, tableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

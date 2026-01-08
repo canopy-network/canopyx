@@ -13,6 +13,7 @@ import (
 	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
+	indexerworkflow "github.com/canopy-network/canopyx/pkg/temporal/indexer"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
@@ -271,7 +272,7 @@ func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityInde
 		}
 	}
 
-	_, err = ac.ChainClient.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", in)
+	_, err = ac.ChainClient.TClient.ExecuteWorkflow(ctx, options, indexerworkflow.IndexBlockWorkflow2Name, in)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if errors.As(err, &alreadyStarted) {
@@ -530,7 +531,7 @@ func (ac *Context) scheduleBatchToQueue(ctx context.Context, in types.ActivityBa
 				options.Priority = sdktemporal.Priority{PriorityKey: in.PriorityKey}
 			}
 
-			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
+			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, indexerworkflow.IndexBlockWorkflow2Name, types.WorkflowIndexBlockInput{
 				Height:      h,
 				PriorityKey: strconv.Itoa(in.PriorityKey),
 			})

@@ -51,13 +51,22 @@ func (db *DB) initPoolPointsByHolder(ctx context.Context) error {
 // InsertPoolPointsByHolderStaging inserts pool points snapshots to the staging table.
 // This follows the two-phase commit pattern for data consistency.
 func (db *DB) InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error {
+	return db.insertPoolPointsByHolder(ctx, indexermodels.PoolPointsByHolderStagingTableName, holders)
+}
+
+// InsertPoolPointsByHolderProduction inserts pool points snapshots to the production table.
+func (db *DB) InsertPoolPointsByHolderProduction(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error {
+	return db.insertPoolPointsByHolder(ctx, indexermodels.PoolPointsByHolderProductionTableName, holders)
+}
+
+func (db *DB) insertPoolPointsByHolder(ctx context.Context, tableName string, holders []*indexermodels.PoolPointsByHolder) error {
 	if len(holders) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (address, pool_id, height, height_time, committee, points, liquidity_pool_points, liquidity_pool_id, pool_amount) VALUES`,
-		db.Name, indexermodels.PoolPointsByHolderStagingTableName,
+		db.Name, tableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

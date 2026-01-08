@@ -45,6 +45,16 @@ func (db *DB) initBlockSummaries(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // All 16 entities are tracked with comprehensive field coverage.
 func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexermodels.BlockSummary) error {
+	return db.insertBlockSummaries(ctx, indexermodels.BlockSummariesStagingTableName, summary)
+}
+
+// InsertBlockSummariesProduction persists block summary data into the block_summaries production table.
+// All 16 entities are tracked with comprehensive field coverage.
+func (db *DB) InsertBlockSummariesProduction(ctx context.Context, summary *indexermodels.BlockSummary) error {
+	return db.insertBlockSummaries(ctx, indexermodels.BlockSummariesProductionTableName, summary)
+}
+
+func (db *DB) insertBlockSummaries(ctx context.Context, tableName string, summary *indexermodels.BlockSummary) error {
 	query := fmt.Sprintf(`
 		INSERT INTO "%s"."%s" (
 			height,
@@ -123,7 +133,7 @@ func (db *DB) InsertBlockSummariesStaging(ctx context.Context, summary *indexerm
 			supply_total,
 			supply_staked,
 			supply_delegated_only
-		) VALUES`, db.Name, indexermodels.BlockSummariesStagingTableName)
+		) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

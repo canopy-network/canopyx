@@ -53,13 +53,22 @@ func (db *DB) initValidatorNonSigningInfo(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // Removed trash properties: missed_blocks_window, start_height (per issues.md)
 func (db *DB) InsertValidatorNonSigningInfoStaging(ctx context.Context, nonSigningInfos []*indexermodels.ValidatorNonSigningInfo) error {
+	return db.insertValidatorNonSigningInfo(ctx, indexermodels.ValidatorNonSigningInfoStagingTableName, nonSigningInfos)
+}
+
+// InsertValidatorNonSigningInfoProduction inserts validator non-signing info snapshots to the production table.
+func (db *DB) InsertValidatorNonSigningInfoProduction(ctx context.Context, nonSigningInfos []*indexermodels.ValidatorNonSigningInfo) error {
+	return db.insertValidatorNonSigningInfo(ctx, indexermodels.ValidatorNonSigningInfoProductionTableName, nonSigningInfos)
+}
+
+func (db *DB) insertValidatorNonSigningInfo(ctx context.Context, tableName string, nonSigningInfos []*indexermodels.ValidatorNonSigningInfo) error {
 	if len(nonSigningInfos) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (address, missed_blocks_count, last_signed_height, height, height_time) VALUES`,
-		db.Name, indexermodels.ValidatorNonSigningInfoStagingTableName,
+		db.Name, tableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

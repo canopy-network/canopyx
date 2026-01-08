@@ -46,6 +46,15 @@ func (db *DB) initPools(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // Note: Calculated pool IDs should be set via pool.CalculatePoolIDs() before calling this method.
 func (db *DB) InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Pool) error {
+	return db.insertPools(ctx, indexermodels.PoolsStagingTableName, pools)
+}
+
+// InsertPoolsProduction inserts pools into the pools production table.
+func (db *DB) InsertPoolsProduction(ctx context.Context, pools []*indexermodels.Pool) error {
+	return db.insertPools(ctx, indexermodels.PoolsProductionTableName, pools)
+}
+
+func (db *DB) insertPools(ctx context.Context, tableName string, pools []*indexermodels.Pool) error {
 	if len(pools) == 0 {
 		return nil
 	}
@@ -53,7 +62,7 @@ func (db *DB) InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Poo
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (pool_id, height, chain_id, amount, total_points, lp_count, height_time, liquidity_pool_id, holding_pool_id, escrow_pool_id, reward_pool_id, amount_delta, total_points_delta, lp_count_delta) VALUES`,
 		db.Name,
-		indexermodels.PoolsStagingTableName,
+		tableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

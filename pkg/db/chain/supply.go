@@ -43,13 +43,22 @@ func (db *DB) initSupply(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // Only changed supply metrics are inserted (snapshot-on-change pattern).
 func (db *DB) InsertSupplyStaging(ctx context.Context, supplies []*indexermodels.Supply) error {
+	return db.insertSupply(ctx, indexermodels.SupplyStagingTableName, supplies)
+}
+
+// InsertSupplyProduction inserts supply snapshots to the production table.
+func (db *DB) InsertSupplyProduction(ctx context.Context, supplies []*indexermodels.Supply) error {
+	return db.insertSupply(ctx, indexermodels.SupplyProductionTableName, supplies)
+}
+
+func (db *DB) insertSupply(ctx context.Context, tableName string, supplies []*indexermodels.Supply) error {
 	if len(supplies) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (total, staked, delegated_only, height, height_time) VALUES`,
-		db.Name, indexermodels.SupplyStagingTableName,
+		db.Name, tableName,
 	)
 
 	batch, err := db.PrepareBatch(ctx, query)

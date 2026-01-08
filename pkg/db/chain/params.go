@@ -65,6 +65,15 @@ func (db *DB) initParamsChangeHeightView(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // Params are only inserted when they differ from the previous height.
 func (db *DB) InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error {
+	return db.insertParams(ctx, indexermodels.ParamsStagingTableName, params)
+}
+
+// InsertParamsProduction persists params into the params production table.
+func (db *DB) InsertParamsProduction(ctx context.Context, params *indexermodels.Params) error {
+	return db.insertParams(ctx, indexermodels.ParamsProductionTableName, params)
+}
+
+func (db *DB) insertParams(ctx context.Context, tableName string, params *indexermodels.Params) error {
 	query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		height, height_time,
 		block_size, protocol_version, root_chain_id, retired,
@@ -81,7 +90,7 @@ func (db *DB) InsertParamsStaging(ctx context.Context, params *indexermodels.Par
 		delete_order_fee, dex_limit_order_fee, dex_liquidity_deposit_fee,
 		dex_liquidity_withdraw_fee,
 		dao_reward_percentage
-	) VALUES`, db.Name, indexermodels.ParamsStagingTableName)
+	) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

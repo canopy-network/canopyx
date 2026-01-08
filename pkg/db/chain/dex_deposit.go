@@ -43,6 +43,15 @@ func (db *DB) initDexDeposits(ctx context.Context) error {
 
 // InsertDexDepositsStaging persists staged DEX deposit snapshots for the chain.
 func (db *DB) InsertDexDepositsStaging(ctx context.Context, deposits []*indexermodels.DexDeposit) error {
+	return db.insertDexDeposits(ctx, indexermodels.DexDepositsStagingTableName, deposits)
+}
+
+// InsertDexDepositsProduction persists DEX deposit snapshots into the production table.
+func (db *DB) InsertDexDepositsProduction(ctx context.Context, deposits []*indexermodels.DexDeposit) error {
+	return db.insertDexDeposits(ctx, indexermodels.DexDepositsProductionTableName, deposits)
+}
+
+func (db *DB) insertDexDeposits(ctx context.Context, tableName string, deposits []*indexermodels.DexDeposit) error {
 	if len(deposits) == 0 {
 		return nil
 	}
@@ -50,7 +59,7 @@ func (db *DB) InsertDexDepositsStaging(ctx context.Context, deposits []*indexerm
 	query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		order_id, height, height_time, committee, address,
 		amount, state, local_origin, points_received
-	) VALUES`, db.Name, indexermodels.DexDepositsStagingTableName)
+	) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

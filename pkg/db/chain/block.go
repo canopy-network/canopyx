@@ -78,11 +78,20 @@ func (db *DB) GetBlock(ctx context.Context, height uint64) (*indexermodels.Block
 // This follows the two-phase commit pattern for data consistency.
 // Consistency is guaranteed by ConnOpenInOrder: we always read from the same replica we wrote to.
 func (db *DB) InsertBlocksStaging(ctx context.Context, block *indexermodels.Block) error {
+	return db.insertBlocks(ctx, indexermodels.BlocksStagingTableName, block)
+}
+
+// InsertBlocksProduction persists blocks into the blocks production table.
+func (db *DB) InsertBlocksProduction(ctx context.Context, block *indexermodels.Block) error {
+	return db.insertBlocks(ctx, indexermodels.BlocksProductionTableName, block)
+}
+
+func (db *DB) insertBlocks(ctx context.Context, tableName string, block *indexermodels.Block) error {
 	query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		height, hash, time, network_id, parent_hash, proposer_address, size,
 		num_txs, total_txs, total_vdf_iterations,
 		state_root, transaction_root, validator_root, next_validator_root
-	) VALUES`, db.Name, indexermodels.BlocksStagingTableName)
+	) VALUES`, db.Name, tableName)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
 		return err

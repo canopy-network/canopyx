@@ -44,6 +44,15 @@ func (db *DB) initDexPrices(ctx context.Context) error {
 // InsertDexPricesStaging inserts DEX prices into the dex_prices_staging table.
 // This follows the two-phase commit pattern for data consistency.
 func (db *DB) InsertDexPricesStaging(ctx context.Context, prices []*indexermodels.DexPrice) error {
+	return db.insertDexPrices(ctx, indexermodels.DexPricesStagingTableName, prices)
+}
+
+// InsertDexPricesProduction inserts DEX prices into the dex_prices production table.
+func (db *DB) InsertDexPricesProduction(ctx context.Context, prices []*indexermodels.DexPrice) error {
+	return db.insertDexPrices(ctx, indexermodels.DexPricesProductionTableName, prices)
+}
+
+func (db *DB) insertDexPrices(ctx context.Context, tableName string, prices []*indexermodels.DexPrice) error {
 	if len(prices) == 0 {
 		return nil
 	}
@@ -51,7 +60,7 @@ func (db *DB) InsertDexPricesStaging(ctx context.Context, prices []*indexermodel
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (local_chain_id, remote_chain_id, height, local_pool, remote_pool, price_e6, height_time, price_delta, local_pool_delta, remote_pool_delta) VALUES`,
 		db.Name,
-		indexermodels.DexPricesStagingTableName,
+		tableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

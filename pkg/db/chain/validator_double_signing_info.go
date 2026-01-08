@@ -52,13 +52,22 @@ func (db *DB) initValidatorDoubleSigningInfo(ctx context.Context) error {
 // Staging tables are used for new data before promotion to production.
 // This follows the two-phase commit pattern for data consistency.
 func (db *DB) InsertValidatorDoubleSigningInfoStaging(ctx context.Context, doubleSigningInfos []*indexermodels.ValidatorDoubleSigningInfo) error {
+	return db.insertValidatorDoubleSigningInfo(ctx, indexermodels.ValidatorDoubleSigningInfoStagingTableName, doubleSigningInfos)
+}
+
+// InsertValidatorDoubleSigningInfoProduction inserts validator double signing info snapshots to the production table.
+func (db *DB) InsertValidatorDoubleSigningInfoProduction(ctx context.Context, doubleSigningInfos []*indexermodels.ValidatorDoubleSigningInfo) error {
+	return db.insertValidatorDoubleSigningInfo(ctx, indexermodels.ValidatorDoubleSigningInfoProductionTableName, doubleSigningInfos)
+}
+
+func (db *DB) insertValidatorDoubleSigningInfo(ctx context.Context, tableName string, doubleSigningInfos []*indexermodels.ValidatorDoubleSigningInfo) error {
 	if len(doubleSigningInfos) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(
 		`INSERT INTO "%s"."%s" (address, evidence_count, first_evidence_height, last_evidence_height, height, height_time) VALUES`,
-		db.Name, indexermodels.ValidatorDoubleSigningInfoStagingTableName,
+		db.Name, tableName,
 	)
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

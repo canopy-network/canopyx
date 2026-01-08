@@ -43,6 +43,15 @@ func (db *DB) initDexWithdrawals(ctx context.Context) error {
 
 // InsertDexWithdrawalsStaging persists staged DEX withdrawal snapshots for the chain.
 func (db *DB) InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error {
+	return db.insertDexWithdrawals(ctx, indexermodels.DexWithdrawalsStagingTableName, withdrawals)
+}
+
+// InsertDexWithdrawalsProduction persists DEX withdrawal snapshots into the production table.
+func (db *DB) InsertDexWithdrawalsProduction(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error {
+	return db.insertDexWithdrawals(ctx, indexermodels.DexWithdrawalsProductionTableName, withdrawals)
+}
+
+func (db *DB) insertDexWithdrawals(ctx context.Context, tableName string, withdrawals []*indexermodels.DexWithdrawal) error {
 	if len(withdrawals) == 0 {
 		return nil
 	}
@@ -50,7 +59,7 @@ func (db *DB) InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*in
 	query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		order_id, height, height_time, committee, address,
 		percent, state, local_amount, remote_amount, points_burned
-	) VALUES`, db.Name, indexermodels.DexWithdrawalsStagingTableName)
+	) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

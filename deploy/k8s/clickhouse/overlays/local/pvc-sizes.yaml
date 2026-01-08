@@ -1,5 +1,5 @@
 # Auto-generated patch from tilt-config.yaml
-# Profile: development | CPU: 2000m/8000m | Memory: 4Gi/12Gi
+# Profile: development | CPU: 1000m/2000m | Memory: 2Gi/4Gi
 # Storage: Hot=2Gi | Warm=2Gi | Cold=5Gi | Log=1Gi
 apiVersion: clickhouse.altinity.com/v1
 kind: ClickHouseInstallation
@@ -27,11 +27,11 @@ spec:
                   mountPath: /var/lib/clickhouse/cold
               resources:
                 requests:
+                  memory: 2Gi
+                  cpu: 1000m
+                limits:
                   memory: 4Gi
                   cpu: 2000m
-                limits:
-                  memory: 12Gi
-                  cpu: 8000m
   defaults:
     templates:
       volumeClaimTemplates:

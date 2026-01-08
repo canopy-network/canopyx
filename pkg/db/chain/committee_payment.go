@@ -52,13 +52,22 @@ func (db *DB) initCommitteePayments(ctx context.Context) error {
 // InsertCommitteePaymentsStaging inserts committee payment records to the staging table.
 // Uses two-phase commit pattern: insert to staging, then promote to production after block is fully indexed.
 func (db *DB) InsertCommitteePaymentsStaging(ctx context.Context, payments []*indexermodels.CommitteePayment) error {
+	return db.insertCommitteePayments(ctx, indexermodels.CommitteePaymentsStagingTableName, payments)
+}
+
+// InsertCommitteePaymentsProduction inserts committee payment records to the production table.
+func (db *DB) InsertCommitteePaymentsProduction(ctx context.Context, payments []*indexermodels.CommitteePayment) error {
+	return db.insertCommitteePayments(ctx, indexermodels.CommitteePaymentsProductionTableName, payments)
+}
+
+func (db *DB) insertCommitteePayments(ctx context.Context, tableName string, payments []*indexermodels.CommitteePayment) error {
 	if len(payments) == 0 {
 		return nil
 	}
 
 	query := fmt.Sprintf(`INSERT INTO "%s"."%s" (
 		committee_id, address, percent, height, height_time
-	) VALUES`, db.Name, indexermodels.CommitteePaymentsStagingTableName)
+	) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {

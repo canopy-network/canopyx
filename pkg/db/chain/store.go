@@ -23,27 +23,47 @@ type Store interface {
 	// --- Insert entities (staging-first pattern: InsertXStaging + PromoteEntity)
 
 	InsertAccountsStaging(ctx context.Context, accounts []*indexermodels.Account) error
+	InsertAccountsProduction(ctx context.Context, accounts []*indexermodels.Account) error
 	InsertBlocksStaging(ctx context.Context, block *indexermodels.Block) error
+	InsertBlocksProduction(ctx context.Context, block *indexermodels.Block) error
 	InsertTransactionsStaging(ctx context.Context, txs []*indexermodels.Transaction) error
+	InsertTransactionsProduction(ctx context.Context, txs []*indexermodels.Transaction) error
 	InsertBlockSummariesStaging(ctx context.Context, summary *indexermodels.BlockSummary) error
+	InsertBlockSummariesProduction(ctx context.Context, summary *indexermodels.BlockSummary) error
 	InsertEventsStaging(ctx context.Context, events []*indexermodels.Event) error
+	InsertEventsProduction(ctx context.Context, events []*indexermodels.Event) error
 	InsertDexPricesStaging(ctx context.Context, prices []*indexermodels.DexPrice) error
+	InsertDexPricesProduction(ctx context.Context, prices []*indexermodels.DexPrice) error
 	InsertPoolsStaging(ctx context.Context, pools []*indexermodels.Pool) error
+	InsertPoolsProduction(ctx context.Context, pools []*indexermodels.Pool) error
 	InsertOrdersStaging(ctx context.Context, orders []*indexermodels.Order) error
+	InsertOrdersProduction(ctx context.Context, orders []*indexermodels.Order) error
 	InsertDexOrdersStaging(ctx context.Context, orders []*indexermodels.DexOrder) error
+	InsertDexOrdersProduction(ctx context.Context, orders []*indexermodels.DexOrder) error
 	InsertDexDepositsStaging(ctx context.Context, deposits []*indexermodels.DexDeposit) error
+	InsertDexDepositsProduction(ctx context.Context, deposits []*indexermodels.DexDeposit) error
 	InsertDexWithdrawalsStaging(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error
+	InsertDexWithdrawalsProduction(ctx context.Context, withdrawals []*indexermodels.DexWithdrawal) error
 	InsertPoolPointsByHolderStaging(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error
+	InsertPoolPointsByHolderProduction(ctx context.Context, holders []*indexermodels.PoolPointsByHolder) error
 	InsertParamsStaging(ctx context.Context, params *indexermodels.Params) error
+	InsertParamsProduction(ctx context.Context, params *indexermodels.Params) error
 	InsertValidatorsStaging(ctx context.Context, validators []*indexermodels.Validator) error
+	InsertValidatorsProduction(ctx context.Context, validators []*indexermodels.Validator) error
 	InsertValidatorNonSigningInfoStaging(ctx context.Context, nonSigningInfos []*indexermodels.ValidatorNonSigningInfo) error
+	InsertValidatorNonSigningInfoProduction(ctx context.Context, nonSigningInfos []*indexermodels.ValidatorNonSigningInfo) error
 	InsertValidatorDoubleSigningInfoStaging(ctx context.Context, doubleSigningInfos []*indexermodels.ValidatorDoubleSigningInfo) error
+	InsertValidatorDoubleSigningInfoProduction(ctx context.Context, doubleSigningInfos []*indexermodels.ValidatorDoubleSigningInfo) error
 	InsertCommitteesStaging(ctx context.Context, committees []*indexermodels.Committee) error
+	InsertCommitteesProduction(ctx context.Context, committees []*indexermodels.Committee) error
 	InsertCommitteeValidatorsStaging(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error
+	InsertCommitteeValidatorsProduction(ctx context.Context, cvs []*indexermodels.CommitteeValidator) error
 	InsertCommitteePaymentsStaging(ctx context.Context, payments []*indexermodels.CommitteePayment) error
+	InsertCommitteePaymentsProduction(ctx context.Context, payments []*indexermodels.CommitteePayment) error
 	InsertPollSnapshots(ctx context.Context, snapshots []*indexermodels.PollSnapshot) error
 	InsertProposalSnapshots(ctx context.Context, snapshots []*indexermodels.ProposalSnapshot) error
 	InsertSupplyStaging(ctx context.Context, supplies []*indexermodels.Supply) error
+	InsertSupplyProduction(ctx context.Context, supplies []*indexermodels.Supply) error
 
 	// --- Query entities
 

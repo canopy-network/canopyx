@@ -40,6 +40,16 @@ func (db *DB) initTransactions(ctx context.Context) error {
 // This follows the two-phase commit pattern for data consistency.
 // IMPORTANT: Must include all 33 columns to match the staging table schema.
 func (db *DB) InsertTransactionsStaging(ctx context.Context, txs []*indexermodels.Transaction) error {
+	return db.insertTransactions(ctx, indexermodels.TxsStagingTableName, txs)
+}
+
+// InsertTransactionsProduction persists transactions into the txs production table.
+// IMPORTANT: Must include all 33 columns to match the production table schema.
+func (db *DB) InsertTransactionsProduction(ctx context.Context, txs []*indexermodels.Transaction) error {
+	return db.insertTransactions(ctx, indexermodels.TxsProductionTableName, txs)
+}
+
+func (db *DB) insertTransactions(ctx context.Context, tableName string, txs []*indexermodels.Transaction) error {
 	if len(txs) == 0 {
 		return nil
 	}
@@ -51,7 +61,7 @@ func (db *DB) InsertTransactionsStaging(ctx context.Context, txs []*indexermodel
 		order_id, price, param_key, param_value, committee_id, recipient, poll_hash,
 		buyer_receive_address, buyer_send_address, buyer_chain_deadline,
 		msg, public_key, signature
-	) VALUES`, db.Name, indexermodels.TxsStagingTableName)
+	) VALUES`, db.Name, tableName)
 
 	batch, err := db.PrepareBatch(ctx, query)
 	if err != nil {
