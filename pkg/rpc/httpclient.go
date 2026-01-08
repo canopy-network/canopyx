@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"sync"
@@ -217,6 +218,80 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, payload an
 		if cerr := utils.DrainAndClose(resp.Body); cerr != nil {
 			return cerr
 		}
+		return nil
+	}
+
+	return lastErr
+}
+
+// doProtobuf sends an HTTP request and unmarshals a protobuf wire response into out.
+func (c *HTTPClient) doProtobuf(ctx context.Context, method, path string, payload any, out proto.Message) error {
+	if len(c.endpoints) == 0 {
+		return fmt.Errorf("no endpoints configured")
+	}
+
+	var lastErr error
+	for i := 0; i < len(c.endpoints); i++ {
+		ep := c.endpoints[i%len(c.endpoints)]
+		if c.isOpen(ep) {
+			continue
+		}
+
+		c.acquire()
+
+		var body *bytes.Reader
+		if payload != nil {
+			b, mErr := json.Marshal(payload)
+			if mErr != nil {
+				return mErr
+			}
+			body = bytes.NewReader(b)
+		} else {
+			body = bytes.NewReader(nil)
+		}
+
+		req, reqErr := http.NewRequestWithContext(ctx, method, ep+path, body)
+		if reqErr != nil {
+			return reqErr
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/x-protobuf")
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			lastErr = err
+			c.noteFailure(ep)
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("server %d", resp.StatusCode)
+			c.noteFailure(ep)
+			_ = utils.DrainAndClose(resp.Body)
+			continue
+		}
+		if resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("http %d", resp.StatusCode)
+			_ = utils.DrainAndClose(resp.Body)
+			continue
+		}
+
+		bz, readErr := io.ReadAll(resp.Body)
+		if cerr := utils.DrainAndClose(resp.Body); cerr != nil && readErr == nil {
+			readErr = cerr
+		}
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+
+		if out != nil {
+			if err := lib.Unmarshal(bz, out); err != nil {
+				lastErr = err
+				continue
+			}
+		}
+
 		return nil
 	}
 

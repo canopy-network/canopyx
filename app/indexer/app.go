@@ -357,12 +357,19 @@ func Initialize(ctx context.Context) *App {
 				Name: indexer.IndexBlockWorkflowName,
 			},
 		)
+		w.RegisterWorkflowWithOptions(
+			workflowContext.IndexBlockWorkflow2,
+			temporalworkflow.RegisterOptions{
+				Name: indexer.IndexBlockWorkflow2Name,
+			},
+		)
 	}
 
 	// Register all IndexBlock activities on live, historical, and reindex workers
 	for _, w := range []worker.Worker{liveWorker, historicalWorker, reindexWorker} {
 		w.RegisterActivity(activityContext.PrepareIndexBlock)
 		w.RegisterActivity(activityContext.FetchBlockFromRPC)
+		w.RegisterActivity(activityContext.FetchBlobFromRPC)
 		w.RegisterActivity(activityContext.SaveBlock)
 		w.RegisterActivity(activityContext.IndexTransactions)
 		w.RegisterActivity(activityContext.IndexAccounts)
@@ -378,6 +385,7 @@ func Initialize(ctx context.Context) *App {
 		w.RegisterActivity(activityContext.SaveBlockSummary)
 		w.RegisterActivity(activityContext.PromoteData)
 		w.RegisterActivity(activityContext.RecordIndexed)
+		w.RegisterActivity(activityContext.IndexBlockFromBlob)
 	}
 
 	// Ops worker configuration - optimized for HeadScan, GapScan, Scheduler workflows
