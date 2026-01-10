@@ -1,11 +1,11 @@
 package workflow
 
 import (
-    "time"
+	"time"
 
-    "github.com/canopy-network/canopyx/app/indexer/types"
-    sdktemporal "go.temporal.io/sdk/temporal"
-    "go.temporal.io/sdk/workflow"
+	"github.com/canopy-network/canopyx/app/indexer/types"
+	sdktemporal "go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/workflow"
 )
 
 // ProposalSnapshotWorkflow runs on a schedule (every 5 minutes) to capture snapshots of governance proposals.
@@ -23,30 +23,30 @@ import (
 //   - Exponential backoff (500ms initial, 2.0 coefficient, 5s max)
 //   - 30-second timeout per activity execution
 func (wc *Context) ProposalSnapshotWorkflow(ctx workflow.Context) (types.ActivityIndexProposalsOutput, error) {
-    logger := workflow.GetLogger(ctx)
-    logger.Info("Starting proposal snapshot workflow")
+	logger := workflow.GetLogger(ctx)
+	logger.Info("Starting proposal snapshot workflow")
 
-    ao := workflow.LocalActivityOptions{
-        StartToCloseTimeout: 30 * time.Second,
-        RetryPolicy: &sdktemporal.RetryPolicy{
-            InitialInterval:    500 * time.Millisecond,
-            BackoffCoefficient: 2.0,
-            MaximumInterval:    5 * time.Second,
-            MaximumAttempts:    5, // Limited retries (snapshot can wait for the next run)
-        },
-    }
+	ao := workflow.LocalActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &sdktemporal.RetryPolicy{
+			InitialInterval:    500 * time.Millisecond,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    5 * time.Second,
+			MaximumAttempts:    5, // Limited retries (snapshot can wait for the next run)
+		},
+	}
 
-    ctx = workflow.WithLocalActivityOptions(ctx, ao)
+	ctx = workflow.WithLocalActivityOptions(ctx, ao)
 
-    // Execute the IndexProposals activity
-    var result types.ActivityIndexProposalsOutput
-    if err := workflow.ExecuteLocalActivity(ctx, wc.ActivityContext.IndexProposals).Get(ctx, &result); err != nil {
-        return types.ActivityIndexProposalsOutput{}, err
-    }
+	// Execute the IndexProposals activity
+	var result types.ActivityIndexProposalsOutput
+	if err := workflow.ExecuteLocalActivity(ctx, wc.ActivityContext.IndexProposals).Get(ctx, &result); err != nil {
+		return types.ActivityIndexProposalsOutput{}, err
+	}
 
-    logger.Info("Proposal snapshot workflow completed",
-        "num_proposals", result.NumProposals,
-        "duration_ms", result.DurationMs)
+	logger.Info("Proposal snapshot workflow completed",
+		"num_proposals", result.NumProposals,
+		"duration_ms", result.DurationMs)
 
-    return result, nil
+	return result, nil
 }

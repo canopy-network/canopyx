@@ -1,23 +1,23 @@
 package admin
 
 import (
-    "context"
-    "time"
+	"context"
+	"time"
 
-    "github.com/canopy-network/canopyx/app/admin/activity"
-    "github.com/canopy-network/canopyx/app/admin/types"
-    "github.com/canopy-network/canopyx/app/admin/workflow"
-    adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
-    "github.com/canopy-network/canopyx/pkg/db/clickhouse"
-    globalstore "github.com/canopy-network/canopyx/pkg/db/global"
-    "github.com/canopy-network/canopyx/pkg/logging"
-    "github.com/canopy-network/canopyx/pkg/redis"
-    "github.com/canopy-network/canopyx/pkg/temporal"
-    temporaladmin "github.com/canopy-network/canopyx/pkg/temporal/admin"
-    "github.com/canopy-network/canopyx/pkg/utils"
-    "go.temporal.io/sdk/worker"
-    temporalworkflow "go.temporal.io/sdk/workflow"
-    "go.uber.org/zap"
+	"github.com/canopy-network/canopyx/app/admin/activity"
+	"github.com/canopy-network/canopyx/app/admin/types"
+	"github.com/canopy-network/canopyx/app/admin/workflow"
+	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
+	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
+	"github.com/canopy-network/canopyx/pkg/logging"
+	"github.com/canopy-network/canopyx/pkg/redis"
+	"github.com/canopy-network/canopyx/pkg/temporal"
+	temporaladmin "github.com/canopy-network/canopyx/pkg/temporal/admin"
+	"github.com/canopy-network/canopyx/pkg/utils"
+	"go.temporal.io/sdk/worker"
+	temporalworkflow "go.temporal.io/sdk/workflow"
+	"go.uber.org/zap"
 )
 
 // ========================================================================
@@ -29,167 +29,167 @@ import (
 // Formula: (max_activities × connections_per_activity) + buffer
 
 const (
-    maintenanceMaxActivities = 10 // Maintenance worker concurrent activities
-    connectionsPerActivity   = 2  // Max ClickHouse connections per activity
-    bufferConnections        = 10 // Buffer for web UI queries
+	maintenanceMaxActivities = 10 // Maintenance worker concurrent activities
+	connectionsPerActivity   = 2  // Max ClickHouse connections per activity
+	bufferConnections        = 10 // Buffer for web UI queries
 )
 
 func Initialize(ctx context.Context) *types.App {
-    logger, err := logging.New()
-    if err != nil {
-        // nothing else to do here, we'll just log to stderr'
-        panic(err)
-    }
+	logger, err := logging.New()
+	if err != nil {
+		// nothing else to do here, we'll just log to stderr'
+		panic(err)
+	}
 
-    // Calculate required connection pool sizes
-    adminIdleConns := maintenanceMaxActivities * connectionsPerActivity
-    adminMaxConns := adminIdleConns + bufferConnections
+	// Calculate required connection pool sizes
+	adminIdleConns := maintenanceMaxActivities * connectionsPerActivity
+	adminMaxConns := adminIdleConns + bufferConnections
 
-    // Configure pool sizes for an admin database (low throughput)
-    // This single pool is shared by admin DB and global DB
-    adminPoolConfig := clickhouse.PoolConfig{
-        MaxOpenConns:    adminMaxConns,
-        MaxIdleConns:    adminIdleConns,
-        ConnMaxLifetime: clickhouse.ParseConnMaxLifetime(utils.Env("CLICKHOUSE_CONN_MAX_LIFETIME", "1h")),
-        Component:       "admin",
-    }
+	// Configure pool sizes for an admin database (low throughput)
+	// This single pool is shared by admin DB and global DB
+	adminPoolConfig := clickhouse.PoolConfig{
+		MaxOpenConns:    adminMaxConns,
+		MaxIdleConns:    adminIdleConns,
+		ConnMaxLifetime: clickhouse.ParseConnMaxLifetime(utils.Env("CLICKHOUSE_CONN_MAX_LIFETIME", "1h")),
+		Component:       "admin",
+	}
 
-    logger.Info("Admin parallelism configuration",
-        zap.Int("maintenance_max_activities", maintenanceMaxActivities),
-        zap.Int("connections_per_activity", connectionsPerActivity),
-        zap.Int("total_max_connections", adminMaxConns),
-    )
+	logger.Info("Admin parallelism configuration",
+		zap.Int("maintenance_max_activities", maintenanceMaxActivities),
+		zap.Int("connections_per_activity", connectionsPerActivity),
+		zap.Int("total_max_connections", adminMaxConns),
+	)
 
-    indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
+	indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
 
-    indexerDb, err := adminstore.NewWithPoolConfig(ctx, logger, indexerDbName, adminPoolConfig)
-    if err != nil {
-        logger.Fatal("Unable to initialize indexer database", zap.Error(err))
-    }
+	indexerDb, err := adminstore.NewWithPoolConfig(ctx, logger, indexerDbName, adminPoolConfig)
+	if err != nil {
+		logger.Fatal("Unable to initialize indexer database", zap.Error(err))
+	}
 
-    // Initialize a global database (single-DB architecture)
-    // Uses chainID=0 for admin (no specific chain context needed for reads)
-    globalDBName := utils.Env("GLOBAL_DB", globalstore.DefaultGlobalDBName)
-    globalDB := globalstore.NewWithSharedClient(indexerDb.Client, globalDBName, 0)
-    if dbErr := globalDB.InitializeDB(ctx); dbErr != nil {
-        logger.Fatal("Global database initialization failed",
-            zap.Error(dbErr))
-    }
-    logger.Info("Global database initialized successfully",
-        zap.String("database", globalDB.Name))
+	// Initialize a global database (single-DB architecture)
+	// Uses chainID=0 for admin (no specific chain context needed for reads)
+	globalDBName := utils.Env("GLOBAL_DB", globalstore.DefaultGlobalDBName)
+	globalDB := globalstore.NewWithSharedClient(indexerDb.Client, globalDBName, 0)
+	if dbErr := globalDB.InitializeDB(ctx); dbErr != nil {
+		logger.Fatal("Global database initialization failed",
+			zap.Error(dbErr))
+	}
+	logger.Info("Global database initialized successfully",
+		zap.String("database", globalDB.Name))
 
-    // Create a multi-namespace Temporal client manager
-    temporalManager, err := temporal.NewClientManager(ctx, logger)
-    if err != nil {
-        logger.Fatal("Unable to create temporal manager", zap.Error(err))
-    }
+	// Create a multi-namespace Temporal client manager
+	temporalManager, err := temporal.NewClientManager(ctx, logger)
+	if err != nil {
+		logger.Fatal("Unable to create temporal manager", zap.Error(err))
+	}
 
-    // Get admin client and ensure namespace exists
-    adminClient, err := temporalManager.GetAdminClient(ctx)
-    if err != nil {
-        logger.Fatal("Unable to get admin temporal client", zap.Error(err))
-    }
+	// Get admin client and ensure namespace exists
+	adminClient, err := temporalManager.GetAdminClient(ctx)
+	if err != nil {
+		logger.Fatal("Unable to get admin temporal client", zap.Error(err))
+	}
 
-    err = adminClient.EnsureNamespace(ctx, 7*24*time.Hour)
-    if err != nil {
-        logger.Fatal("Unable to ensure admin temporal namespace", zap.Error(err))
-    }
-    logger.Info("Admin Temporal namespace ready", zap.String("namespace", adminClient.Namespace))
+	err = adminClient.EnsureNamespace(ctx, 7*24*time.Hour)
+	if err != nil {
+		logger.Fatal("Unable to ensure admin temporal namespace", zap.Error(err))
+	}
+	logger.Info("Admin Temporal namespace ready", zap.String("namespace", adminClient.Namespace))
 
-    // Initialize Redis client for real-time WebSocket events (optional)
-    var redisClient *redis.Client
-    if utils.Env("REDIS_ENABLED", "false") == "true" {
-        redisClient, err = redis.NewClient(ctx, logger)
-        if err != nil {
-            logger.Warn("Failed to initialize Redis client - WebSocket real-time events will be disabled",
-                zap.Error(err))
-            redisClient = nil
-        } else {
-            logger.Info("Redis client initialized for WebSocket real-time events")
-        }
-    } else {
-        logger.Info("Redis disabled - WebSocket real-time events will not be available")
-    }
+	// Initialize Redis client for real-time WebSocket events (optional)
+	var redisClient *redis.Client
+	if utils.Env("REDIS_ENABLED", "false") == "true" {
+		redisClient, err = redis.NewClient(ctx, logger)
+		if err != nil {
+			logger.Warn("Failed to initialize Redis client - WebSocket real-time events will be disabled",
+				zap.Error(err))
+			redisClient = nil
+		} else {
+			logger.Info("Redis client initialized for WebSocket real-time events")
+		}
+	} else {
+		logger.Info("Redis disabled - WebSocket real-time events will not be available")
+	}
 
-    app := &types.App{
-        // Database initialization
-        AdminDB:  indexerDb,
-        GlobalDB: globalDB,
+	app := &types.App{
+		// Database initialization
+		AdminDB:  indexerDb,
+		GlobalDB: globalDB,
 
-        // Temporal initialization (multi-namespace support)
-        TemporalManager: temporalManager,
+		// Temporal initialization (multi-namespace support)
+		TemporalManager: temporalManager,
 
-        // Redis initialization
-        RedisClient: redisClient,
+		// Redis initialization
+		RedisClient: redisClient,
 
-        // Logger initialization
-        Logger: logger,
+		// Logger initialization
+		Logger: logger,
 
-        // Queue stats cache initialization (30s TTL to reduce Temporal API rate limiting)
-        QueueStatsCache: types.NewQueueStatsCache(),
-    }
+		// Queue stats cache initialization (30s TTL to reduce Temporal API rate limiting)
+		QueueStatsCache: types.NewQueueStatsCache(),
+	}
 
-    logger.Info("Admin app initialized",
-        zap.Bool("global_db_initialized", app.GlobalDB != nil),
-        zap.Bool("admin_db_initialized", app.AdminDB != nil))
+	logger.Info("Admin app initialized",
+		zap.Bool("global_db_initialized", app.GlobalDB != nil),
+		zap.Bool("admin_db_initialized", app.AdminDB != nil))
 
-    // Initialize Temporal maintenance worker for global table compaction
-    activityContext := &activity.Context{
-        Logger:          logger,
-        AdminDB:         indexerDb,
-        GlobalDB:        globalDB,
-        TemporalManager: temporalManager,
-    }
-    workflowContext := workflow.Context{
-        TemporalManager: temporalManager,
-        ActivityContext: activityContext,
-    }
+	// Initialize Temporal maintenance worker for global table compaction
+	activityContext := &activity.Context{
+		Logger:          logger,
+		AdminDB:         indexerDb,
+		GlobalDB:        globalDB,
+		TemporalManager: temporalManager,
+	}
+	workflowContext := workflow.Context{
+		TemporalManager: temporalManager,
+		ActivityContext: activityContext,
+	}
 
-    // Create a maintenance worker on admin namespace
-    maintenanceWorker := worker.New(
-        adminClient.TClient,
-        adminClient.MaintenanceQueue, // "maintenance" (simplified)
-        worker.Options{
-            MaxConcurrentWorkflowTaskPollers:       5,
-            MaxConcurrentActivityTaskPollers:       5,
-            MaxConcurrentWorkflowTaskExecutionSize: 10,
-            MaxConcurrentActivityExecutionSize:     10,
-            WorkerStopTimeout:                      1 * time.Minute,
-        },
-    )
+	// Create a maintenance worker on admin namespace
+	maintenanceWorker := worker.New(
+		adminClient.TClient,
+		adminClient.MaintenanceQueue, // "maintenance" (simplified)
+		worker.Options{
+			MaxConcurrentWorkflowTaskPollers:       5,
+			MaxConcurrentActivityTaskPollers:       5,
+			MaxConcurrentWorkflowTaskExecutionSize: 10,
+			MaxConcurrentActivityExecutionSize:     10,
+			WorkerStopTimeout:                      1 * time.Minute,
+		},
+	)
 
-    // Register a compaction workflow for global tables
-    maintenanceWorker.RegisterWorkflowWithOptions(
-        workflowContext.CompactGlobalTablesWorkflow,
-        temporalworkflow.RegisterOptions{
-            Name: temporaladmin.CompactGlobalTablesWorkflowName,
-        },
-    )
+	// Register a compaction workflow for global tables
+	maintenanceWorker.RegisterWorkflowWithOptions(
+		workflowContext.CompactGlobalTablesWorkflow,
+		temporalworkflow.RegisterOptions{
+			Name: temporaladmin.CompactGlobalTablesWorkflowName,
+		},
+	)
 
-    // Register delete chain workflow
-    maintenanceWorker.RegisterWorkflowWithOptions(
-        workflowContext.DeleteChainWorkflow,
-        temporalworkflow.RegisterOptions{
-            Name: temporaladmin.DeleteChainWorkflowName,
-        },
-    )
+	// Register delete chain workflow
+	maintenanceWorker.RegisterWorkflowWithOptions(
+		workflowContext.DeleteChainWorkflow,
+		temporalworkflow.RegisterOptions{
+			Name: temporaladmin.DeleteChainWorkflowName,
+		},
+	)
 
-    // Register compaction activities
-    maintenanceWorker.RegisterActivity(activityContext.CompactGlobalTable)
-    maintenanceWorker.RegisterActivity(activityContext.CompactAllGlobalTables)
-    maintenanceWorker.RegisterActivity(activityContext.LogCompactionSummary)
+	// Register compaction activities
+	maintenanceWorker.RegisterActivity(activityContext.CompactGlobalTable)
+	maintenanceWorker.RegisterActivity(activityContext.CompactAllGlobalTables)
+	maintenanceWorker.RegisterActivity(activityContext.LogCompactionSummary)
 
-    // Register delete chain activities
-    maintenanceWorker.RegisterActivity(activityContext.DeleteChainData)
-    maintenanceWorker.RegisterActivity(activityContext.CleanAdminTables)
+	// Register delete chain activities
+	maintenanceWorker.RegisterActivity(activityContext.DeleteChainData)
+	maintenanceWorker.RegisterActivity(activityContext.CleanAdminTables)
 
-    app.MaintenanceWorker = maintenanceWorker
-    logger.Info("Maintenance worker initialized successfully")
+	app.MaintenanceWorker = maintenanceWorker
+	logger.Info("Maintenance worker initialized successfully")
 
-    err = app.ReconcileSchedules(ctx)
-    if err != nil {
-        logger.Fatal("Unable to reconcile schedules", zap.Error(err))
-    }
+	err = app.ReconcileSchedules(ctx)
+	if err != nil {
+		logger.Fatal("Unable to reconcile schedules", zap.Error(err))
+	}
 
-    return app
+	return app
 }

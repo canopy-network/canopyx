@@ -1,12 +1,12 @@
 package workflow
 
 import (
-    "time"
+	"time"
 
-    "github.com/canopy-network/canopyx/app/indexer/types"
+	"github.com/canopy-network/canopyx/app/indexer/types"
 
-    sdktemporal "go.temporal.io/sdk/temporal"
-    "go.temporal.io/sdk/workflow"
+	sdktemporal "go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/workflow"
 )
 
 // PollSnapshotWorkflow runs on a schedule (every 5 minutes) to capture snapshots of governance polls.
@@ -24,31 +24,31 @@ import (
 //   - Exponential backoff (500ms initial, 2.0 coefficient, 5s max)
 //   - 30-second timeout per activity execution
 func (wc *Context) PollSnapshotWorkflow(ctx workflow.Context) (types.ActivityIndexPollOutput, error) {
-    logger := workflow.GetLogger(ctx)
-    logger.Info("Starting poll snapshot workflow")
+	logger := workflow.GetLogger(ctx)
+	logger.Info("Starting poll snapshot workflow")
 
-    // Activity options for poll snapshot
-    // Allow up to 30 seconds for the RPC call and database insert
-    ao := workflow.LocalActivityOptions{
-        StartToCloseTimeout: 30 * time.Second,
-        RetryPolicy: &sdktemporal.RetryPolicy{
-            InitialInterval:    500 * time.Millisecond,
-            BackoffCoefficient: 2.0,
-            MaximumInterval:    5 * time.Second,
-            MaximumAttempts:    5, // Limited retries - if the snapshot fails, wait for the next scheduled run
-        },
-    }
-    ctx = workflow.WithLocalActivityOptions(ctx, ao)
+	// Activity options for poll snapshot
+	// Allow up to 30 seconds for the RPC call and database insert
+	ao := workflow.LocalActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &sdktemporal.RetryPolicy{
+			InitialInterval:    500 * time.Millisecond,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    5 * time.Second,
+			MaximumAttempts:    5, // Limited retries - if the snapshot fails, wait for the next scheduled run
+		},
+	}
+	ctx = workflow.WithLocalActivityOptions(ctx, ao)
 
-    // Execute poll snapshot activity
-    var result types.ActivityIndexPollOutput
-    if err := workflow.ExecuteLocalActivity(ctx, wc.ActivityContext.IndexPoll).Get(ctx, &result); err != nil {
-        return types.ActivityIndexPollOutput{}, err
-    }
+	// Execute poll snapshot activity
+	var result types.ActivityIndexPollOutput
+	if err := workflow.ExecuteLocalActivity(ctx, wc.ActivityContext.IndexPoll).Get(ctx, &result); err != nil {
+		return types.ActivityIndexPollOutput{}, err
+	}
 
-    logger.Info("Poll snapshot workflow completed",
-        "num_proposals", result.NumProposals,
-        "duration_ms", result.DurationMs)
+	logger.Info("Poll snapshot workflow completed",
+		"num_proposals", result.NumProposals,
+		"duration_ms", result.DurationMs)
 
-    return result, nil
+	return result, nil
 }

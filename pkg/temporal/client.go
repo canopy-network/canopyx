@@ -94,11 +94,11 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		IndexerReindexQueue:    "chain:%d:reindex",
 		AdminMaintenanceQueue:  "admin:maintenance",
 		// schedule IDs
-		HeadScheduleID:                 "chain:%d:headscan",
-		GapScanScheduleID:              "chain:%d:gapscan",
-		PollSnapshotScheduleID:         "chain:%d:pollsnapshot",
-		ProposalSnapshotScheduleID:     "chain:%d:proposalsnapshot",
-		LPSnapshotScheduleID:           "chain:%d:lpsnapshot",
+		HeadScheduleID:             "chain:%d:headscan",
+		GapScanScheduleID:          "chain:%d:gapscan",
+		PollSnapshotScheduleID:     "chain:%d:pollsnapshot",
+		ProposalSnapshotScheduleID: "chain:%d:proposalsnapshot",
+		LPSnapshotScheduleID:       "chain:%d:lpsnapshot",
 		GlobalCompactionScheduleID: "global:compaction",
 		// workflow IDs
 		IndexBlockWorkflowId: "chain:%d:index:%d",

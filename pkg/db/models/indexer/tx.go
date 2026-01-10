@@ -80,8 +80,8 @@ type Transaction struct {
 	Commission       float64 `ch:"commission" json:"commission,omitempty"`
 
 	// DEX-related (dexLimitOrder, dexLiquidityDeposit, dexLiquidityWithdraw)
-	ChainID   uint16 `ch:"chain_id" json:"chain_id,omitempty"`
-	TxChainID uint16 `ch:"tx_chain_id" json:"tx_chain_id"`
+	ChainID          uint16 `ch:"chain_id" json:"chain_id,omitempty"`
+	TxChainID        uint16 `ch:"tx_chain_id" json:"tx_chain_id"`
 	SellAmount       uint64 `ch:"sell_amount" json:"sell_amount,omitempty"`
 	BuyAmount        uint64 `ch:"buy_amount" json:"buy_amount,omitempty"`
 	LiquidityAmt     uint64 `ch:"liquidity_amount" json:"liquidity_amount,omitempty"`   // For dexLiquidityDeposit

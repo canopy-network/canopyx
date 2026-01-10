@@ -63,25 +63,25 @@ type IndexProgress struct {
 }
 
 type ProgressPoint struct {
-	TimeBucket    time.Time `ch:"time_bucket"`
-	MaxHeight     uint64    `ch:"max_height"`
+	TimeBucket     time.Time `ch:"time_bucket"`
+	MaxHeight      uint64    `ch:"max_height"`
 	AvgTotalTimeMs float64   `ch:"avg_total_time_ms"` // Average total workflow time in milliseconds
-	BlocksIndexed uint64    `ch:"blocks_indexed"`
+	BlocksIndexed  uint64    `ch:"blocks_indexed"`
 
 	// Individual timing averages (milliseconds)
-	AvgFetchBlockMs       float64 `ch:"avg_fetch_block_ms"`
-	AvgPrepareIndexMs     float64 `ch:"avg_prepare_index_ms"`
-	AvgIndexAccountsMs    float64 `ch:"avg_index_accounts_ms"`
-	AvgIndexCommitteesMs  float64 `ch:"avg_index_committees_ms"`
-	AvgIndexDexBatchMs    float64 `ch:"avg_index_dex_batch_ms"`
-	AvgIndexDexPricesMs   float64 `ch:"avg_index_dex_prices_ms"`
-	AvgIndexEventsMs      float64 `ch:"avg_index_events_ms"`
-	AvgIndexOrdersMs      float64 `ch:"avg_index_orders_ms"`
-	AvgIndexParamsMs      float64 `ch:"avg_index_params_ms"`
-	AvgIndexPoolsMs       float64 `ch:"avg_index_pools_ms"`
-	AvgIndexSupplyMs      float64 `ch:"avg_index_supply_ms"`
+	AvgFetchBlockMs        float64 `ch:"avg_fetch_block_ms"`
+	AvgPrepareIndexMs      float64 `ch:"avg_prepare_index_ms"`
+	AvgIndexAccountsMs     float64 `ch:"avg_index_accounts_ms"`
+	AvgIndexCommitteesMs   float64 `ch:"avg_index_committees_ms"`
+	AvgIndexDexBatchMs     float64 `ch:"avg_index_dex_batch_ms"`
+	AvgIndexDexPricesMs    float64 `ch:"avg_index_dex_prices_ms"`
+	AvgIndexEventsMs       float64 `ch:"avg_index_events_ms"`
+	AvgIndexOrdersMs       float64 `ch:"avg_index_orders_ms"`
+	AvgIndexParamsMs       float64 `ch:"avg_index_params_ms"`
+	AvgIndexPoolsMs        float64 `ch:"avg_index_pools_ms"`
+	AvgIndexSupplyMs       float64 `ch:"avg_index_supply_ms"`
 	AvgIndexTransactionsMs float64 `ch:"avg_index_transactions_ms"`
-	AvgIndexValidatorsMs  float64 `ch:"avg_index_validators_ms"`
-	AvgSaveBlockMs        float64 `ch:"avg_save_block_ms"`
-	AvgSaveBlockSummaryMs float64 `ch:"avg_save_block_summary_ms"`
+	AvgIndexValidatorsMs   float64 `ch:"avg_index_validators_ms"`
+	AvgSaveBlockMs         float64 `ch:"avg_save_block_ms"`
+	AvgSaveBlockSummaryMs  float64 `ch:"avg_save_block_summary_ms"`
 }

@@ -35,4 +35,3 @@ type EntityGetRequest struct {
 	Height     *uint64 `json:"height,omitempty"` // Optional - if 0 or omitted, get latest; if specified, get at that exact height
 	UseStaging bool    `json:"use_staging"`
 }
-

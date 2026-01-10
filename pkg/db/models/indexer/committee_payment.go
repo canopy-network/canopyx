@@ -26,7 +26,7 @@ type CommitteePayment struct {
 	// Chain context (for global single-DB architecture)
 	ChainID uint64 `ch:"chain_id" json:"chain_id"`
 
-	CommitteeID uint64 `ch:"committee_id" json:"committee_id"` // Committee/chain ID
+	CommitteeID uint64    `ch:"committee_id" json:"committee_id"` // Committee/chain ID
 	Address     string    `ch:"address" json:"address"`           // Recipient address (validator/delegate)
 	Percent     uint64    `ch:"percent" json:"percent"`           // Percentage share (0-100)
 	Height      uint64    `ch:"height" json:"height"`             // Block height when this payment config was active

@@ -49,13 +49,13 @@ func GetGlobalTableConfigs() []TableConfig {
 			HasStaging:        true,
 		},
 		{
-			TableName:         indexer.TxsProductionTableName,
-			ProductionOrderBy: []string{"chain_id", "tx_hash", "height"},
-			StagingOrderBy:    []string{"height", "chain_id", "tx_hash"},
-			HasAddressColumn:  false,
+			TableName:           indexer.TxsProductionTableName,
+			ProductionOrderBy:   []string{"chain_id", "tx_hash", "height"},
+			StagingOrderBy:      []string{"height", "chain_id", "tx_hash"},
+			HasAddressColumn:    false,
 			UseCrossChainRename: true, // tx_chain_id rename
-			Columns:           indexer.TransactionColumns,
-			HasStaging:        true,
+			Columns:             indexer.TransactionColumns,
+			HasStaging:          true,
 		},
 		{
 			TableName:         indexer.AccountsProductionTableName,
@@ -66,21 +66,21 @@ func GetGlobalTableConfigs() []TableConfig {
 			HasStaging:        true,
 		},
 		{
-			TableName:         indexer.EventsProductionTableName,
-			ProductionOrderBy: []string{"chain_id", "event_type", "address", "reference", "height"},
-			StagingOrderBy:    []string{"height", "chain_id", "event_type", "address", "reference"},
-			HasAddressColumn:  true,
+			TableName:           indexer.EventsProductionTableName,
+			ProductionOrderBy:   []string{"chain_id", "event_type", "address", "reference", "height"},
+			StagingOrderBy:      []string{"height", "chain_id", "event_type", "address", "reference"},
+			HasAddressColumn:    true,
 			UseCrossChainRename: true, // event_chain_id rename
-			Columns:           indexer.EventColumns,
-			HasStaging:        true,
+			Columns:             indexer.EventColumns,
+			HasStaging:          true,
 		},
 		{
-			TableName:           indexer.BlockSummariesProductionTableName,
-			ProductionOrderBy:   []string{"chain_id", "height"},
-			StagingOrderBy:      []string{"height", "chain_id"},
-			HasAddressColumn:    false,
-			Columns:             indexer.BlockSummaryColumns,
-			HasStaging:          true,
+			TableName:         indexer.BlockSummariesProductionTableName,
+			ProductionOrderBy: []string{"chain_id", "height"},
+			StagingOrderBy:    []string{"height", "chain_id"},
+			HasAddressColumn:  false,
+			Columns:           indexer.BlockSummaryColumns,
+			HasStaging:        true,
 		},
 		{
 			TableName:         indexer.ParamsProductionTableName,
@@ -102,13 +102,13 @@ func GetGlobalTableConfigs() []TableConfig {
 
 		// --- Pool entities ---
 		{
-			TableName:         indexer.PoolsProductionTableName,
-			ProductionOrderBy: []string{"chain_id", "pool_id", "height"},
-			StagingOrderBy:    []string{"height", "chain_id", "pool_id"},
-			HasAddressColumn:  false,
+			TableName:           indexer.PoolsProductionTableName,
+			ProductionOrderBy:   []string{"chain_id", "pool_id", "height"},
+			StagingOrderBy:      []string{"height", "chain_id", "pool_id"},
+			HasAddressColumn:    false,
 			UseCrossChainRename: true, // pool_chain_id rename
-			Columns:           indexer.PoolColumns,
-			HasStaging:        true,
+			Columns:             indexer.PoolColumns,
+			HasStaging:          true,
 		},
 		{
 			TableName:         indexer.PoolPointsByHolderProductionTableName,
@@ -195,23 +195,23 @@ func GetGlobalTableConfigs() []TableConfig {
 
 		// --- Committee entities ---
 		{
-			TableName:         indexer.CommitteeProductionTableName,
-			ProductionOrderBy: []string{"chain_id", "committee_chain_id", "height"},
-			StagingOrderBy:    []string{"height", "chain_id", "committee_chain_id"},
-			HasAddressColumn:  false,
+			TableName:           indexer.CommitteeProductionTableName,
+			ProductionOrderBy:   []string{"chain_id", "committee_chain_id", "height"},
+			StagingOrderBy:      []string{"height", "chain_id", "committee_chain_id"},
+			HasAddressColumn:    false,
 			UseCrossChainRename: true, // committee_chain_id rename
-			Columns:           indexer.CommitteeColumns,
-			HasStaging:        true,
+			Columns:             indexer.CommitteeColumns,
+			HasStaging:          true,
 		},
 		{
-			TableName:         indexer.CommitteeValidatorProductionTableName,
-			ProductionOrderBy: []string{"chain_id", "committee_id", "validator_address", "height"},
-			StagingOrderBy:    []string{"height", "chain_id", "committee_id", "validator_address"},
-			HasAddressColumn:  true,
+			TableName:           indexer.CommitteeValidatorProductionTableName,
+			ProductionOrderBy:   []string{"chain_id", "committee_id", "validator_address", "height"},
+			StagingOrderBy:      []string{"height", "chain_id", "committee_id", "validator_address"},
+			HasAddressColumn:    true,
 			UseCrossChainRename: true,
-			Columns:           indexer.CommitteeValidatorColumns,
-			HasStaging:        true,
-			CustomSettings:    "SETTINGS index_granularity = 8192",
+			Columns:             indexer.CommitteeValidatorColumns,
+			HasStaging:          true,
+			CustomSettings:      "SETTINGS index_granularity = 8192",
 		},
 		{
 			TableName:         indexer.CommitteePaymentsProductionTableName,

@@ -32,7 +32,7 @@ type Supply struct {
 	ChainID uint64 `ch:"chain_id" json:"chain_id"`
 
 	// Supply metrics
-	Total         uint64 `ch:"total" json:"total"` // Total tokens in the system (minted - burned)
+	Total         uint64 `ch:"total" json:"total"`                   // Total tokens in the system (minted - burned)
 	Staked        uint64 `ch:"staked" json:"staked"`                 // Total locked tokens (includes delegated)
 	DelegatedOnly uint64 `ch:"delegated_only" json:"delegated_only"` // Total delegated tokens only
 

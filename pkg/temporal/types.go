@@ -32,11 +32,11 @@ const (
 
 // Schedule IDs (simplified - namespace provides chain context)
 const (
-	ScheduleHeadScan          = "headscan"
-	ScheduleGapScan           = "gapscan"
-	SchedulePollSnapshot      = "pollsnapshot"
-	ScheduleProposalSnapshot  = "proposalsnapshot"
-	ScheduleLPSnapshot        = "lpsnapshot"
+	ScheduleHeadScan         = "headscan"
+	ScheduleGapScan          = "gapscan"
+	SchedulePollSnapshot     = "pollsnapshot"
+	ScheduleProposalSnapshot = "proposalsnapshot"
+	ScheduleLPSnapshot       = "lpsnapshot"
 	ScheduleGlobalCompaction = "global:compaction"
 )
 

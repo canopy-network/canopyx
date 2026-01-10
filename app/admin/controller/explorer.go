@@ -514,7 +514,8 @@ func (c *Controller) queryGlobalEntityData(
 	if err != nil {
 		return nil, nil, fmt.Errorf("query failed: %w", err)
 	}
-	defer rows.Close()
+
+	defer func() { _ = rows.Close() }()
 
 	// Get column names
 	columnNames := rows.Columns()

@@ -28,21 +28,19 @@ func (c *HTTPClient) DexPricesByHeight(ctx context.Context, height uint64) ([]*l
 	}
 
 	// Try to unmarshal as an array first
-	var rpcPrices []lib.DexPrice
+	var rpcPrices []*lib.DexPrice
 	if err := json.Unmarshal(raw, &rpcPrices); err != nil {
 		// If that fails, try as a single object
 		var singlePrice lib.DexPrice
 		if err := json.Unmarshal(raw, &singlePrice); err != nil {
 			return nil, fmt.Errorf("unmarshal dex prices: %w", err)
 		}
-		rpcPrices = []lib.DexPrice{singlePrice}
+		rpcPrices = []*lib.DexPrice{&singlePrice}
 	}
 
 	// Return lib types - callers will transform to DB models
 	result := make([]*lib.DexPrice, 0, len(rpcPrices))
-	for i := range rpcPrices {
-		result = append(result, &rpcPrices[i])
-	}
+	result = append(result, rpcPrices...)
 
 	return result, nil
 }

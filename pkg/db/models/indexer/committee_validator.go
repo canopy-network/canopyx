@@ -50,7 +50,7 @@ type CommitteeValidator struct {
 	ChainID uint64 `ch:"chain_id" json:"chain_id"`
 
 	// Relationship
-	CommitteeID uint64 `ch:"committee_id" json:"committee_id"` // Committee (chain) ID
+	CommitteeID      uint64 `ch:"committee_id" json:"committee_id"`           // Committee (chain) ID
 	ValidatorAddress string `ch:"validator_address" json:"validator_address"` // Hex string representation of validator address
 
 	// Validator metadata (denormalized for query efficiency)
