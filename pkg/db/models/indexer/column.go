@@ -173,3 +173,58 @@ func ValidateColumns(columns []ColumnDef) error {
 	}
 	return nil
 }
+
+// GlobalChainIDColumn is the standard chain_id column for global tables.
+// This column identifies which chain the data belongs to in the single-database architecture.
+// Uses UInt64 for future-proofing chain ID growth.
+var GlobalChainIDColumn = ColumnDef{
+	Name:  "chain_id",
+	Type:  "UInt64",
+	Codec: "Delta, ZSTD(1)",
+}
+
+// ColumnsToGlobalSchemaSQL prepends the chain_id column to a list of ColumnDef
+// and returns the CREATE TABLE schema string for global tables.
+// This is used by the pkg/db/global package for single-database architecture.
+func ColumnsToGlobalSchemaSQL(columns []ColumnDef) string {
+	globalCols := make([]ColumnDef, 0, len(columns)+1)
+	globalCols = append(globalCols, GlobalChainIDColumn)
+	globalCols = append(globalCols, columns...)
+	return ColumnsToSchemaSQL(globalCols)
+}
+
+// ColumnsToGlobalCrossChainSchemaSQL prepends the chain_id column and applies
+// CrossChainRename transformations for tables that have semantic chain_id columns.
+// Example: For pools table, the original "chain_id" becomes "pool_chain_id".
+func ColumnsToGlobalCrossChainSchemaSQL(columns []ColumnDef) string {
+	globalCols := make([]ColumnDef, 0, len(columns)+1)
+	globalCols = append(globalCols, GlobalChainIDColumn)
+	for _, col := range columns {
+		if col.ShouldSyncToCrossChain() {
+			// Apply to rename transformation if specified
+			if col.CrossChainRename != "" {
+				globalCols = append(globalCols, ColumnDef{
+					Name:  col.CrossChainRename,
+					Type:  col.Type,
+					Codec: col.Codec,
+				})
+			} else {
+				globalCols = append(globalCols, col)
+			}
+		}
+	}
+	return ColumnsToSchemaSQL(globalCols)
+}
+
+// GetGlobalColumnNames returns column names for global tables, prepending chain_id.
+// Handles CrossChainRename and excludes CrossChainSkip columns.
+func GetGlobalColumnNames(columns []ColumnDef) []string {
+	names := make([]string, 0, len(columns)+1)
+	names = append(names, GlobalChainIDColumn.Name)
+	for _, col := range columns {
+		if name := col.GetCrossChainName(); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}

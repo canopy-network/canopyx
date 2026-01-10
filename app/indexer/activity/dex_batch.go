@@ -3,121 +3,45 @@ package activity
 import (
 	"context"
 	"encoding/hex"
-	"errors"
-	"fmt"
 	"time"
 
-	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"
-	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/rpc"
-	"go.temporal.io/sdk/temporal"
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
+	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.uber.org/zap"
 )
 
-// IndexDexBatch indexes DEX orders, deposits, and withdrawals for a given block height.
-// This activity follows the events-first architecture and RPC(H-1) pattern.
-//
-// Core Algorithm:
-// 1. Parallel RPC fetch: Query DexBatch(H) and NextDexBatch(H) simultaneously
-// 2. Query events from staging: Get DEX-related events at height H
-// 3. Create order snapshots:
-//   - DexBatch orders → state="locked"
-//   - NextDexBatch orders → state="future"
-//   - Update orders from EventDexSwap events (state="complete")
-//
-// 4. Create deposit snapshots:
-//   - Initial state="pending"
-//   - Update from EventDexLiquidityDeposit events (state="complete")
-//
-// 5. Create withdrawal snapshots:
-//   - Initial state="pending"
-//   - Update from EventDexLiquidityWithdrawal events (state="complete")
-//
-// 6. Insert all entities to staging tables
-//
-// Event Processing Pattern:
-// Events at height H describe entities from height H-1. When processing EventDexSwap at H,
-// we query DexBatch at H-1 to find the order that was executed. The snapshot we create
-// uses height H (when the event occurred), but entity data comes from RPC(H-1).
-//
-// Performance:
-// - Parallel RPC fetching reduces latency by ~50% (4 concurrent requests)
-// - Events are queried from staging DB (already indexed by IndexEvents activity)
-// - Only changed entities are stored (snapshot-on-change pattern)
-func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexDexBatchOutput, error) {
+// indexDexBatchFromBlob indexes DEX orders, deposits, and withdrawals for a given block height.
+func (ac *Context) indexDexBatchFromBlob(ctx context.Context, chainDb globalstore.Store, height uint64, heightTime time.Time, currentData *blobData, previousData *blobData, events *blobEventMaps) (types.ActivityIndexDexBatchOutput, float64, error) {
 	start := time.Now()
-
-	// Get RPC client with height-aware endpoint selection
-	cli, err := ac.rpcClientForHeight(ctx, in.Height)
-	if err != nil {
-		return types.ActivityIndexDexBatchOutput{}, err
-	}
-
-	// Acquire chain database
-	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
-	if err != nil {
-		return types.ActivityIndexDexBatchOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
-	}
-
-	// Fetch batch data from RPC (H and H-1) in parallel
-	currentBatchesH1, nextBatchesH1, currentBatches, nextBatches, err := ac.fetchBatchData(ctx, cli, in.Height)
-	if err != nil {
-		return types.ActivityIndexDexBatchOutput{}, err
-	}
-
-	// Query and build event maps
-	swapEvents, depositEvents, withdrawalEvents, err := ac.buildEventMaps(ctx, chainDb, in.Height)
-	if err != nil {
-		return types.ActivityIndexDexBatchOutput{}, err
-	}
-
-	// Build H-1 comparison maps for change detection
-	h1Maps := ac.buildH1ComparisonMaps(currentBatchesH1, nextBatchesH1)
-
-	// Initialize collections and counters
-	orders := make([]*indexer.DexOrder, 0)
-	deposits := make([]*indexer.DexDeposit, 0)
-	withdrawals := make([]*indexer.DexWithdrawal, 0)
+	h1Maps := ac.buildH1ComparisonMaps(previousData.dexBatches, previousData.nextDexBatches)
+	orders := make([]*indexermodels.DexOrder, 0)
+	deposits := make([]*indexermodels.DexDeposit, 0)
+	withdrawals := make([]*indexermodels.DexWithdrawal, 0)
 	counters := &dexBatchCounters{}
 
-	// Process complete items (from H-1 batch with completion events)
-	ac.processCompleteItems(
-		currentBatchesH1, swapEvents, depositEvents, withdrawalEvents,
-		in.Height, in.BlockTime, &orders, &deposits, &withdrawals, counters,
-	)
+	ac.processCompleteItems(previousData.dexBatches, events.dexSwap, events.dexDeposit, events.dexWithdrawal, height, heightTime, &orders, &deposits, &withdrawals, counters)
+	ac.processLockedItems(currentData.dexBatches, h1Maps, height, heightTime, &orders, &deposits, &withdrawals, counters)
+	ac.processPendingItems(currentData.nextDexBatches, h1Maps, height, heightTime, &orders, &deposits, &withdrawals, counters)
 
-	// Process locked items (from current batch with change detection)
-	ac.processLockedItems(
-		currentBatches, h1Maps, in.Height, in.BlockTime,
-		&orders, &deposits, &withdrawals, counters,
-	)
-
-	// Process pending items (from next batch with change detection)
-	ac.processPendingItems(
-		nextBatches, h1Maps, in.Height, in.BlockTime,
-		&orders, &deposits, &withdrawals, counters,
-	)
-
-	// Insert to staging tables
-	if err := ac.insertDexBatchData(ctx, chainDb, orders, deposits, withdrawals); err != nil {
-		return types.ActivityIndexDexBatchOutput{}, err
+	if len(orders) > 0 {
+		if err := chainDb.InsertDexOrders(ctx, orders); err != nil {
+			return types.ActivityIndexDexBatchOutput{}, 0, err
+		}
+	}
+	if len(deposits) > 0 {
+		if err := chainDb.InsertDexDeposits(ctx, deposits); err != nil {
+			return types.ActivityIndexDexBatchOutput{}, 0, err
+		}
+	}
+	if len(withdrawals) > 0 {
+		if err := chainDb.InsertDexWithdrawals(ctx, withdrawals); err != nil {
+			return types.ActivityIndexDexBatchOutput{}, 0, err
+		}
 	}
 
-	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-
-	ac.Logger.Info("Indexed DEX batches (all committees)",
-		zap.Uint64("chainId", ac.ChainID),
-		zap.Uint64("height", in.Height),
-		zap.Int("committees", len(currentBatches)+len(nextBatches)),
-		zap.Int("orders", len(orders)),
-		zap.Int("deposits", len(deposits)),
-		zap.Int("withdrawals", len(withdrawals)),
-		zap.Float64("durationMs", durationMs))
-
-	return types.ActivityIndexDexBatchOutput{
+	out := types.ActivityIndexDexBatchOutput{
 		NumOrders:              uint32(len(orders)),
 		NumOrdersFuture:        counters.NumOrdersFuture,
 		NumOrdersLocked:        counters.NumOrdersLocked,
@@ -132,8 +56,9 @@ func (ac *Context) IndexDexBatch(ctx context.Context, in types.ActivityIndexAtHe
 		NumWithdrawalsPending:  counters.NumWithdrawalsPending,
 		NumWithdrawalsLocked:   counters.NumWithdrawalsLocked,
 		NumWithdrawalsComplete: counters.NumWithdrawalsComplete,
-		DurationMs:             durationMs,
-	}, nil
+	}
+	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+	return out, durationMs, nil
 }
 
 // dexBatchCounters holds counters for different states and outcomes of DEX batch items
@@ -171,131 +96,6 @@ type h1ComparisonMaps struct {
 	DepositsPending    map[string]*lib.DexLiquidityDeposit
 	WithdrawalsLocked  map[string]*lib.DexLiquidityWithdraw
 	WithdrawalsPending map[string]*lib.DexLiquidityWithdraw
-}
-
-// fetchBatchData fetches all batch data from RPC in parallel (H and H-1)
-func (ac *Context) fetchBatchData(ctx context.Context, cli rpc.Client, height uint64) (
-	currentBatchesH1, nextBatchesH1, currentBatches, nextBatches []*lib.DexBatch, err error,
-) {
-	var (
-		currentH1Err error
-		nextH1Err    error
-		currentErr   error
-		nextErr      error
-	)
-
-	// Get a subgroup from the shared worker pool for parallel RPC fetching
-	pool := ac.WorkerPool(4)
-	group := pool.NewGroupContext(ctx)
-	groupCtx := group.Context()
-
-	// Worker 1: Fetch ALL current batches (locked orders across all committees)
-	group.Submit(func() {
-		if err := groupCtx.Err(); err != nil {
-			return
-		}
-		currentBatches, currentErr = cli.AllDexBatchesByHeight(groupCtx, height)
-	})
-
-	// Worker 2: Fetch ALL next batches (future orders across all committees)
-	group.Submit(func() {
-		if err := groupCtx.Err(); err != nil {
-			return
-		}
-		nextBatches, nextErr = cli.AllNextDexBatchesByHeight(groupCtx, height)
-	})
-
-	// Worker 3: Fetch current batches at H-1 for event processing and change detection
-	group.Submit(func() {
-		if err := groupCtx.Err(); err != nil {
-			return
-		}
-		if height <= 1 {
-			currentBatchesH1 = make([]*lib.DexBatch, 0)
-			return
-		}
-		currentBatchesH1, currentH1Err = cli.AllDexBatchesByHeight(groupCtx, height-1)
-	})
-
-	// Worker 4: Fetch next batches at H-1 for change detection
-	group.Submit(func() {
-		if err := groupCtx.Err(); err != nil {
-			return
-		}
-		if height <= 1 {
-			nextBatchesH1 = make([]*lib.DexBatch, 0)
-			return
-		}
-		nextBatchesH1, nextH1Err = cli.AllNextDexBatchesByHeight(groupCtx, height-1)
-	})
-
-	// Wait for all workers to complete
-	if waitErr := group.Wait(); waitErr != nil && !errors.Is(waitErr, context.Canceled) && !errors.Is(waitErr, pond.ErrGroupStopped) {
-		ac.Logger.Warn("parallel RPC fetch encountered error",
-			zap.Uint64("chainId", ac.ChainID),
-			zap.Uint64("height", height),
-			zap.Error(waitErr),
-		)
-	}
-
-	// Check for errors (empty batches are acceptable - means no batches at this height)
-	if currentErr != nil {
-		return nil, nil, nil, nil, fmt.Errorf("fetch all dex batches at height %d: %w", height, currentErr)
-	}
-	if nextErr != nil {
-		return nil, nil, nil, nil, fmt.Errorf("fetch all next dex batches at height %d: %w", height, nextErr)
-	}
-	if currentH1Err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("fetch all dex batches at height %d: %w", height-1, currentH1Err)
-	}
-	if nextH1Err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("fetch all next dex batches at height %d: %w", height-1, nextH1Err)
-	}
-
-	return currentBatchesH1, nextBatchesH1, currentBatches, nextBatches, nil
-}
-
-// buildEventMaps queries events and builds lookup maps by orderID
-// Uses lightweight GetDexBatchEvents query (11 columns instead of 21, ~48% reduction)
-func (ac *Context) buildEventMaps(ctx context.Context, chainDb chainstore.Store, height uint64) (
-	swapEvents, depositEvents, withdrawalEvents map[string]*chainstore.EventDexBatch, err error,
-) {
-	// Query events from the staging table using lightweight query
-	events, err := chainDb.GetDexBatchEvents(ctx, height, true)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("query events at height %d: %w", height, err)
-	}
-
-	// Build event maps for O(1) lookups
-	swapEvents = make(map[string]*chainstore.EventDexBatch)
-	depositEvents = make(map[string]*chainstore.EventDexBatch)
-	withdrawalEvents = make(map[string]*chainstore.EventDexBatch)
-
-	for i := range events {
-		event := &events[i]
-		// Skip events with empty order ID (default value)
-		if event.OrderID == "" {
-			continue
-		}
-
-		switch event.EventType {
-		case string(lib.EventTypeDexSwap):
-			swapEvents[event.OrderID] = event
-		case string(lib.EventTypeDexLiquidityDeposit):
-			depositEvents[event.OrderID] = event
-		case string(lib.EventTypeDexLiquidityWithdraw):
-			withdrawalEvents[event.OrderID] = event
-		}
-	}
-
-	// Diagnostic logging for withdrawal events
-	if len(withdrawalEvents) > 0 {
-		ac.Logger.Info("Loaded DEX withdrawal events",
-			zap.Uint64("height", height),
-			zap.Int("count", len(withdrawalEvents)))
-	}
-
-	return swapEvents, depositEvents, withdrawalEvents, nil
 }
 
 // buildH1ComparisonMaps builds H-1 comparison maps for change detection
@@ -347,11 +147,11 @@ func (ac *Context) buildH1ComparisonMaps(currentBatchesH1, nextBatchesH1 []*lib.
 // processCompleteItems processes items from H-1 batch that have completion events
 func (ac *Context) processCompleteItems(
 	currentBatchesH1 []*lib.DexBatch,
-	swapEvents, depositEvents, withdrawalEvents map[string]*chainstore.EventDexBatch,
+	swapEvents, depositEvents, withdrawalEvents map[string]*globalstore.EventDexBatch,
 	height uint64, blockTime time.Time,
-	orders *[]*indexer.DexOrder,
-	deposits *[]*indexer.DexDeposit,
-	withdrawals *[]*indexer.DexWithdrawal,
+	orders *[]*indexermodels.DexOrder,
+	deposits *[]*indexermodels.DexDeposit,
+	withdrawals *[]*indexermodels.DexWithdrawal,
 	counters *dexBatchCounters,
 ) {
 	for _, currentBatchH1 := range currentBatchesH1 {
@@ -361,7 +161,7 @@ func (ac *Context) processCompleteItems(
 			address := hex.EncodeToString(rpcOrder.Address)
 
 			if swapEvent, exists := swapEvents[orderID]; exists {
-				order := &indexer.DexOrder{
+				order := &indexermodels.DexOrder{
 					OrderID:         orderID,
 					Height:          height,
 					HeightTime:      blockTime,
@@ -369,7 +169,7 @@ func (ac *Context) processCompleteItems(
 					Address:         address,
 					AmountForSale:   rpcOrder.AmountForSale,
 					RequestedAmount: rpcOrder.RequestedAmount,
-					State:           indexer.DexCompleteState,
+					State:           indexermodels.DexCompleteState,
 					LockedHeight:    currentBatchH1.LockedHeight,
 				}
 
@@ -394,14 +194,14 @@ func (ac *Context) processCompleteItems(
 			address := hex.EncodeToString(rpcDeposit.Address)
 
 			if depositEvent, exists := depositEvents[orderID]; exists {
-				deposit := &indexer.DexDeposit{
+				deposit := &indexermodels.DexDeposit{
 					OrderID:        orderID,
 					Height:         height,
 					HeightTime:     blockTime,
 					Committee:      uint16(currentBatchH1.Committee),
 					Address:        address,
 					Amount:         rpcDeposit.Amount,
-					State:          indexer.DexCompleteState,
+					State:          indexermodels.DexCompleteState,
 					LocalOrigin:    depositEvent.LocalOrigin,
 					PointsReceived: depositEvent.PointsReceived,
 				}
@@ -424,14 +224,14 @@ func (ac *Context) processCompleteItems(
 			if withdrawalEvent, exists := withdrawalEvents[orderID]; exists {
 				ac.Logger.Info("MATCHED: Withdrawal completed",
 					zap.String("orderID", orderID))
-				withdrawal := &indexer.DexWithdrawal{
+				withdrawal := &indexermodels.DexWithdrawal{
 					OrderID:      orderID,
 					Height:       height,
 					HeightTime:   blockTime,
 					Committee:    uint16(currentBatchH1.Committee),
 					Address:      address,
 					Percent:      rpcWithdrawal.Percent,
-					State:        indexer.DexCompleteState,
+					State:        indexermodels.DexCompleteState,
 					LocalAmount:  withdrawalEvent.LocalAmount,
 					RemoteAmount: withdrawalEvent.RemoteAmount,
 					PointsBurned: withdrawalEvent.PointsBurned,
@@ -453,9 +253,9 @@ func (ac *Context) processLockedItems(
 	currentBatches []*lib.DexBatch,
 	h1Maps *h1ComparisonMaps,
 	height uint64, blockTime time.Time,
-	orders *[]*indexer.DexOrder,
-	deposits *[]*indexer.DexDeposit,
-	withdrawals *[]*indexer.DexWithdrawal,
+	orders *[]*indexermodels.DexOrder,
+	deposits *[]*indexermodels.DexDeposit,
+	withdrawals *[]*indexermodels.DexWithdrawal,
 	counters *dexBatchCounters,
 ) {
 	for _, currentBatch := range currentBatches {
@@ -477,7 +277,7 @@ func (ac *Context) processLockedItems(
 			}
 
 			if orderChanged {
-				order := &indexer.DexOrder{
+				order := &indexermodels.DexOrder{
 					OrderID:         orderID,
 					Height:          height,
 					HeightTime:      blockTime,
@@ -485,7 +285,7 @@ func (ac *Context) processLockedItems(
 					Address:         address,
 					AmountForSale:   rpcOrder.AmountForSale,
 					RequestedAmount: rpcOrder.RequestedAmount,
-					State:           indexer.DexLockedState,
+					State:           indexermodels.DexLockedState,
 					LockedHeight:    currentBatch.LockedHeight,
 				}
 				counters.NumOrdersLocked++
@@ -511,14 +311,14 @@ func (ac *Context) processLockedItems(
 			}
 
 			if depositChanged {
-				deposit := &indexer.DexDeposit{
+				deposit := &indexermodels.DexDeposit{
 					OrderID:    orderID,
 					Height:     height,
 					HeightTime: blockTime,
 					Committee:  uint16(currentBatch.Committee),
 					Address:    address,
 					Amount:     rpcDeposit.Amount,
-					State:      indexer.DexLockedState,
+					State:      indexermodels.DexLockedState,
 				}
 				counters.NumDepositsLocked++
 				counters.DepositsLockedChanged++
@@ -543,14 +343,14 @@ func (ac *Context) processLockedItems(
 			}
 
 			if withdrawalChanged {
-				withdrawal := &indexer.DexWithdrawal{
+				withdrawal := &indexermodels.DexWithdrawal{
 					OrderID:    orderID,
 					Height:     height,
 					HeightTime: blockTime,
 					Committee:  uint16(currentBatch.Committee),
 					Address:    address,
 					Percent:    rpcWithdrawal.Percent,
-					State:      indexer.DexLockedState,
+					State:      indexermodels.DexLockedState,
 				}
 				counters.NumWithdrawalsLocked++
 				counters.WithdrawalsLockedChanged++
@@ -565,9 +365,9 @@ func (ac *Context) processPendingItems(
 	nextBatches []*lib.DexBatch,
 	h1Maps *h1ComparisonMaps,
 	height uint64, blockTime time.Time,
-	orders *[]*indexer.DexOrder,
-	deposits *[]*indexer.DexDeposit,
-	withdrawals *[]*indexer.DexWithdrawal,
+	orders *[]*indexermodels.DexOrder,
+	deposits *[]*indexermodels.DexDeposit,
+	withdrawals *[]*indexermodels.DexWithdrawal,
 	counters *dexBatchCounters,
 ) {
 	for _, nextBatch := range nextBatches {
@@ -587,7 +387,7 @@ func (ac *Context) processPendingItems(
 			}
 
 			if orderChanged {
-				order := &indexer.DexOrder{
+				order := &indexermodels.DexOrder{
 					OrderID:         orderID,
 					Height:          height,
 					HeightTime:      blockTime,
@@ -595,7 +395,7 @@ func (ac *Context) processPendingItems(
 					Address:         address,
 					AmountForSale:   rpcOrder.AmountForSale,
 					RequestedAmount: rpcOrder.RequestedAmount,
-					State:           indexer.DexPendingState,
+					State:           indexermodels.DexPendingState,
 					LockedHeight:    0,
 				}
 				counters.NumOrdersFuture++
@@ -619,14 +419,14 @@ func (ac *Context) processPendingItems(
 			}
 
 			if depositChanged {
-				deposit := &indexer.DexDeposit{
+				deposit := &indexermodels.DexDeposit{
 					OrderID:    orderID,
 					Height:     height,
 					HeightTime: blockTime,
 					Committee:  uint16(nextBatch.Committee),
 					Address:    address,
 					Amount:     rpcDeposit.Amount,
-					State:      indexer.DexPendingState,
+					State:      indexermodels.DexPendingState,
 				}
 				counters.NumDepositsPending++
 				counters.DepositsPendingChanged++
@@ -649,14 +449,14 @@ func (ac *Context) processPendingItems(
 			}
 
 			if withdrawalChanged {
-				withdrawal := &indexer.DexWithdrawal{
+				withdrawal := &indexermodels.DexWithdrawal{
 					OrderID:    orderID,
 					Height:     height,
 					HeightTime: blockTime,
 					Committee:  uint16(nextBatch.Committee),
 					Address:    address,
 					Percent:    rpcWithdrawal.Percent,
-					State:      indexer.DexPendingState,
+					State:      indexermodels.DexPendingState,
 				}
 				counters.NumWithdrawalsPending++
 				counters.WithdrawalsPendingChanged++
@@ -680,71 +480,4 @@ func (ac *Context) processPendingItems(
 		zap.Int("withdrawals_locked_unchanged", counters.WithdrawalsLockedUnchanged),
 		zap.Int("withdrawals_pending_changed", counters.WithdrawalsPendingChanged),
 		zap.Int("withdrawals_pending_unchanged", counters.WithdrawalsPendingUnchanged))
-}
-
-// insertDexBatchData inserts all DEX batch data to staging tables in PARALLEL
-func (ac *Context) insertDexBatchData(
-	ctx context.Context,
-	chainDb chainstore.Store,
-	orders []*indexer.DexOrder,
-	deposits []*indexer.DexDeposit,
-	withdrawals []*indexer.DexWithdrawal,
-) error {
-	// Insert to staging tables in PARALLEL using worker pool
-	// Each insert goes to a different table, so no conflicts
-	insertPool := ac.WorkerPool(3) // 3 workers for 3 parallel inserts
-	insertGroup := insertPool.NewGroupContext(ctx)
-	insertCtx := insertGroup.Context()
-
-	var (
-		ordersErr      error
-		depositsErr    error
-		withdrawalsErr error
-	)
-
-	// Worker 1: Insert DEX orders
-	if len(orders) > 0 {
-		insertGroup.Submit(func() {
-			if err := insertCtx.Err(); err != nil {
-				return
-			}
-			ordersErr = chainDb.InsertDexOrdersStaging(insertCtx, orders)
-		})
-	}
-
-	// Worker 2: Insert DEX deposits
-	if len(deposits) > 0 {
-		insertGroup.Submit(func() {
-			if err := insertCtx.Err(); err != nil {
-				return
-			}
-			depositsErr = chainDb.InsertDexDepositsStaging(insertCtx, deposits)
-		})
-	}
-
-	// Worker 3: Insert DEX withdrawals
-	if len(withdrawals) > 0 {
-		insertGroup.Submit(func() {
-			if err := insertCtx.Err(); err != nil {
-				return
-			}
-			withdrawalsErr = chainDb.InsertDexWithdrawalsStaging(insertCtx, withdrawals)
-		})
-	}
-
-	// Wait for all inserts to complete (ignore pool errors, check individual errors below)
-	_ = insertGroup.Wait()
-
-	// Check for insert errors
-	if ordersErr != nil {
-		return fmt.Errorf("insert dex orders staging: %w", ordersErr)
-	}
-	if depositsErr != nil {
-		return fmt.Errorf("insert dex deposits staging: %w", depositsErr)
-	}
-	if withdrawalsErr != nil {
-		return fmt.Errorf("insert dex withdrawals staging: %w", withdrawalsErr)
-	}
-
-	return nil
 }

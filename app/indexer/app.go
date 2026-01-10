@@ -8,9 +8,8 @@ import (
 	"github.com/canopy-network/canopyx/app/indexer/activity"
 	"github.com/canopy-network/canopyx/app/indexer/workflow"
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
-	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
-	crosschainstore "github.com/canopy-network/canopyx/pkg/db/crosschain"
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/rpc"
@@ -31,9 +30,10 @@ const (
 	// Parallelism calculation constants - single source of truth
 	// These constants define the resource requirements per block workflow
 	// TODO: Tuneup this numbers better base on experience.
-	peakConcurrentActivitiesPerBlock = 20  // Actual peak during PromoteData phase (20 stagingEntities)
-	connectionsPerActivity           = 8   // Each activity uses parallel workers: 4-8 RPC + 2-4 INSERT goroutines
-	bufferConnections                = 100 // Buffer for ops workflows + parallel cleanup workflows (20 activities × ~10 concurrent cleanups)
+	// app/indexer/activity/blob.go:125 -> 10 concurrent + 2 individual which could be parallel too + 2 buffer
+	peakConcurrentActivitiesPerBlock = 4
+	connectionsPerActivity           = 14
+	bufferConnections                = 50 // Buffer for ops workflows
 
 	// Default parallel block limits per worker type
 	// These match the deployed values in deploy/k8s/controller/base/deployment.yaml
@@ -43,19 +43,17 @@ const (
 )
 
 type App struct {
-	LiveWorker        worker.Worker // NEW: Live block indexing (optimized for low-latency)
-	HistoricalWorker  worker.Worker // NEW: Historical block indexing (optimized for throughput)
-	ReindexWorker     worker.Worker // NEW: Reindex block processing (optimized for throughput, dedicated queue)
-	OpsWorker         worker.Worker // Operations (headscan, gapscan, scheduler)
-	MaintenanceWorker worker.Worker // Maintenance (cleanup workflows - separate from ops to avoid blocking)
-	ChainClient       *temporal.ChainClient
-	Logger            *zap.Logger
+	LiveWorker       worker.Worker // Live block indexing (optimized for low-latency)
+	HistoricalWorker worker.Worker // Historical block indexing (optimized for throughput)
+	ReindexWorker    worker.Worker // Reindex block processing (optimized for throughput, dedicated queue)
+	OpsWorker        worker.Worker // Operations (headscan, gapscan, scheduler)
+	ChainClient      *temporal.ChainClient
+	Logger           *zap.Logger
 
 	// Database connections (need to be closed on shutdown)
-	IndexerDB    adminstore.Store
-	ChainDB      chainstore.Store
-	CrossChainDB crosschainstore.Store
-	RedisClient  *redis.Client
+	IndexerDB   adminstore.Store
+	GlobalDB    globalstore.Store // New single-DB architecture (replaces per-chain DB)
+	RedisClient *redis.Client
 }
 
 // Start starts the worker and blocks until the context is canceled.
@@ -72,9 +70,6 @@ func (a *App) Start(ctx context.Context) {
 	if err := a.OpsWorker.Start(); err != nil {
 		a.Logger.Fatal("Unable to start operations worker", zap.Error(err))
 	}
-	if err := a.MaintenanceWorker.Start(); err != nil {
-		a.Logger.Fatal("Unable to start maintenance worker", zap.Error(err))
-	}
 	<-ctx.Done()
 	a.Stop()
 }
@@ -85,7 +80,6 @@ func (a *App) Stop() {
 	a.HistoricalWorker.Stop()
 	a.ReindexWorker.Stop()
 	a.OpsWorker.Stop()
-	a.MaintenanceWorker.Stop()
 	time.Sleep(200 * time.Millisecond)
 
 	// Close database connections to prevent connection pool leaks
@@ -94,14 +88,9 @@ func (a *App) Stop() {
 			a.Logger.Error("Failed to close indexer DB connection", zap.Error(err))
 		}
 	}
-	if a.ChainDB != nil {
-		if err := a.ChainDB.Close(); err != nil {
-			a.Logger.Error("Failed to close chain DB connection", zap.Error(err))
-		}
-	}
-	if a.CrossChainDB != nil {
-		if err := a.CrossChainDB.Close(); err != nil {
-			a.Logger.Error("Failed to close cross-chain DB connection", zap.Error(err))
+	if a.GlobalDB != nil {
+		if err := a.GlobalDB.Close(); err != nil {
+			a.Logger.Error("Failed to close global DB connection", zap.Error(err))
 		}
 	}
 	if a.RedisClient != nil {
@@ -182,19 +171,6 @@ func Initialize(ctx context.Context) *App {
 		Component:       "indexer_admin",
 	}
 
-	// Configure pool sizes for a cross-chain database (medium throughput)
-	// Cross-chain writes happen via materialized views when chain data is inserted
-	// Estimate: 2 connections per parallel block (less frequent than direct chain writes)
-	crosschainIdleConns := totalParallelBlocks * 2
-	crosschainMaxConns := crosschainIdleConns + 10 // Small buffer for maintenance operations
-
-	crosschainPoolConfig := clickhouse.PoolConfig{
-		MaxOpenConns:    crosschainMaxConns,
-		MaxIdleConns:    crosschainIdleConns,
-		ConnMaxLifetime: clickhouse.ParseConnMaxLifetime(utils.Env("CLICKHOUSE_CONN_MAX_LIFETIME", "1h")),
-		Component:       "indexer_crosschain",
-	}
-
 	logger.Info("Parallelism configuration",
 		zap.Int("live_parallel_blocks", liveParallelBlocks),
 		zap.Int("live_max_workflows", liveMaxWorkflows),
@@ -208,8 +184,6 @@ func Initialize(ctx context.Context) *App {
 		zap.Int("chain_idle_connections", chainIdleConns),
 		zap.Int("chain_max_connections", chainMaxConns),
 		zap.Int("admin_max_connections", adminPoolConfig.MaxOpenConns),
-		zap.Int("crosschain_idle_connections", crosschainIdleConns),
-		zap.Int("crosschain_max_connections", crosschainMaxConns),
 		zap.Int("peak_concurrent_activities_per_block", peakConcurrentActivitiesPerBlock),
 		zap.Int("connections_per_activity", connectionsPerActivity),
 	)
@@ -221,30 +195,32 @@ func Initialize(ctx context.Context) *App {
 		logger.Fatal("Unable to initialize indexer database", zap.Error(err))
 	}
 
-	chainDb, chainDbErr := chainstore.NewWithPoolConfig(ctx, logger, chainIDUint, chainPoolConfig)
-	if chainDbErr != nil {
-		logger.Fatal("Unable to initialize chain database", zap.Error(chainDbErr))
+	// Initialize a global database with chain ID context (new single-DB architecture)
+	globalDBName := utils.Env("GLOBAL_DB", globalstore.DefaultGlobalDBName)
+	globalDb, globalDbErr := globalstore.NewWithPoolConfig(ctx, logger, globalDBName, chainIDUint, chainPoolConfig)
+	if globalDbErr != nil {
+		logger.Fatal("Unable to initialize global database", zap.Error(globalDbErr))
+	}
+	logger.Info("Global database initialized",
+		zap.String("database", globalDb.Name),
+		zap.Uint64("chain_id", chainIDUint))
+
+	// Fetch namespace info from database to get the unique namespace UID
+	// This ensures we connect to the correct namespace after chain recreation
+	nsInfo, err := indexerDb.GetChainNamespaceInfo(ctx, chainIDUint)
+	if err != nil {
+		logger.Fatal("Unable to get chain namespace info", zap.Error(err))
 	}
 
-	crossChainDbName := utils.Env("CROSSCHAIN_DB", "canopyx_cross_chain")
-	crossChainDb, crossChainDbErr := crosschainstore.NewWithPoolConfig(ctx, logger, crossChainDbName, crosschainPoolConfig)
-	if crossChainDbErr != nil {
-		logger.Fatal("Unable to initialize cross-chain database", zap.Error(crossChainDbErr))
-	}
+	// Build namespace name with UID: "{chain_id}-{namespace_uid}" (e.g., "5-a1b2c3")
+	nsConfig := temporal.DefaultNamespaceConfig()
+	namespace := nsConfig.ChainNamespaceWithUID(chainIDUint, nsInfo.NamespaceUID)
+	logger.Info("Using Temporal namespace",
+		zap.Uint64("chain_id", chainIDUint),
+		zap.String("namespace_uid", nsInfo.NamespaceUID),
+		zap.String("namespace", namespace))
 
-	// Set up cross-chain sync now that the chain database is fully initialized
-	// This creates materialized views that automatically sync new data to global tables
-	if setupErr := crossChainDb.SetupChainSync(ctx, chainIDUint); setupErr != nil {
-		// Non-fatal: log warning and continue (manual setup via admin API is still possible)
-		logger.Warn("Failed to setup cross-chain sync - cross-chain queries may be incomplete",
-			zap.Uint64("chain_id", chainIDUint),
-			zap.Error(setupErr),
-			zap.String("note", "You can manually trigger sync via admin API"))
-	} else {
-		logger.Info("Cross-chain sync setup complete", zap.Uint64("chain_id", chainIDUint))
-	}
-
-	chainClient, err := temporal.NewChainClient(ctx, logger, chainIDUint)
+	chainClient, err := temporal.NewChainClientWithNamespace(ctx, logger, chainIDUint, namespace)
 	if err != nil {
 		logger.Fatal("Unable to establish temporal connection", zap.Error(err))
 	}
@@ -289,8 +265,7 @@ func Initialize(ctx context.Context) *App {
 		ChainID:              chainIDUint,
 		Logger:               logger,
 		AdminDB:              indexerDb,
-		ChainDB:              chainDb,
-		CrossChainDB:         crossChainDb,
+		GlobalDB:             globalDb,
 		RPCFactory:           rpc.NewHTTPFactory(rpcOpts),
 		RPCOpts:              rpcOpts,
 		ChainClient:          chainClient,
@@ -311,12 +286,17 @@ func Initialize(ctx context.Context) *App {
 	}
 
 	// Create Live Worker - optimized for low-latency, high-priority blocks
+	logger.Info("Creating live worker",
+		zap.String("namespace", chainClient.Namespace),
+		zap.String("queue", chainClient.LiveQueue),
+		zap.Uint64("chain_id", chainIDUint),
+	)
 	liveWorker := worker.New(
 		chainClient.TClient,
 		chainClient.LiveQueue,
 		worker.Options{
-			MaxConcurrentWorkflowTaskPollers:       liveParallelBlocks,
-			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock,
+			MaxConcurrentWorkflowTaskPollers:       liveParallelBlocks * 2,
+			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock * 2,
 			MaxConcurrentWorkflowTaskExecutionSize: liveMaxWorkflows,
 			MaxConcurrentActivityExecutionSize:     liveMaxActivities,
 			WorkerStopTimeout:                      1 * time.Minute,
@@ -324,12 +304,17 @@ func Initialize(ctx context.Context) *App {
 	)
 
 	// Create Historical Worker - optimized for high-throughput batch processing
+	logger.Info("Creating historical worker",
+		zap.String("namespace", chainClient.Namespace),
+		zap.String("queue", chainClient.HistoricalQueue),
+		zap.Uint64("chain_id", chainIDUint),
+	)
 	historicalWorker := worker.New(
 		chainClient.TClient,
 		chainClient.HistoricalQueue,
 		worker.Options{
-			MaxConcurrentWorkflowTaskPollers:       historicalMaxWorkflows,
-			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock,
+			MaxConcurrentWorkflowTaskPollers:       historicalMaxWorkflows * 2,
+			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock * 2,
 			MaxConcurrentWorkflowTaskExecutionSize: historicalMaxWorkflows,
 			MaxConcurrentActivityExecutionSize:     historicalMaxActivities,
 			WorkerStopTimeout:                      1 * time.Minute,
@@ -337,12 +322,17 @@ func Initialize(ctx context.Context) *App {
 	)
 
 	// Create Reindex Worker - optimized for high-throughput reindex processing
+	logger.Info("Creating reindex worker",
+		zap.String("namespace", chainClient.Namespace),
+		zap.String("queue", chainClient.ReindexQueue),
+		zap.Uint64("chain_id", chainIDUint),
+	)
 	reindexWorker := worker.New(
 		chainClient.TClient,
 		chainClient.ReindexQueue,
 		worker.Options{
-			MaxConcurrentWorkflowTaskPollers:       reindexMaxWorkflows,
-			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock,
+			MaxConcurrentWorkflowTaskPollers:       reindexMaxWorkflows * 2,
+			MaxConcurrentActivityTaskPollers:       peakConcurrentActivitiesPerBlock * 2,
 			MaxConcurrentWorkflowTaskExecutionSize: reindexMaxWorkflows,
 			MaxConcurrentActivityExecutionSize:     reindexMaxActivities,
 			WorkerStopTimeout:                      1 * time.Minute,
@@ -362,26 +352,11 @@ func Initialize(ctx context.Context) *App {
 	// Register all IndexBlock activities on live, historical, and reindex workers
 	for _, w := range []worker.Worker{liveWorker, historicalWorker, reindexWorker} {
 		w.RegisterActivity(activityContext.PrepareIndexBlock)
-		w.RegisterActivity(activityContext.FetchBlockFromRPC)
-		w.RegisterActivity(activityContext.SaveBlock)
-		w.RegisterActivity(activityContext.IndexTransactions)
-		w.RegisterActivity(activityContext.IndexAccounts)
-		w.RegisterActivity(activityContext.IndexEvents)
-		w.RegisterActivity(activityContext.IndexPools)
-		w.RegisterActivity(activityContext.IndexOrders)
-		w.RegisterActivity(activityContext.IndexDexPrices)
-		w.RegisterActivity(activityContext.IndexParams)
-		w.RegisterActivity(activityContext.IndexValidators)
-		w.RegisterActivity(activityContext.IndexCommittees)
-		w.RegisterActivity(activityContext.IndexDexBatch)
-		w.RegisterActivity(activityContext.IndexSupply)
-		w.RegisterActivity(activityContext.SaveBlockSummary)
-		w.RegisterActivity(activityContext.PromoteData)
 		w.RegisterActivity(activityContext.RecordIndexed)
+		w.RegisterActivity(activityContext.IndexBlockFromBlob)
 	}
 
 	// Ops worker configuration - optimized for HeadScan, GapScan, Scheduler workflows
-	// Note: Cleanup workflows moved to the maintenance queue to avoid blocking ops workflows
 	opsMaxWorkflows := 20  // HeadScan, GapScan, Scheduler, Snapshot workflows
 	opsMaxActivities := 50 // Activities for HeadScan, GapScan, Scheduler, Snapshots
 
@@ -430,8 +405,6 @@ func Initialize(ctx context.Context) *App {
 		workflowContext.LPSnapshotWorkflow,
 		temporalworkflow.RegisterOptions{Name: indexer.LPSnapshotWorkflowName},
 	)
-	// NOTE: Poll/Proposal/LP snapshot workflows moved to live/historical/reindex workers
-	// to avoid congestion from cleanup workflows on ops queue
 	opsWorker.RegisterActivity(activityContext.GetLatestHead)
 	opsWorker.RegisterActivity(activityContext.GetLastIndexed)
 	opsWorker.RegisterActivity(activityContext.FindGaps)
@@ -439,55 +412,19 @@ func Initialize(ctx context.Context) *App {
 	opsWorker.RegisterActivity(activityContext.StartIndexWorkflowBatch)
 	opsWorker.RegisterActivity(activityContext.StartReindexWorkflowBatch)
 	opsWorker.RegisterActivity(activityContext.IsSchedulerWorkflowRunning)
-	opsWorker.RegisterActivity(activityContext.CleanPromotedData)
 	opsWorker.RegisterActivity(activityContext.IndexPoll)
 	opsWorker.RegisterActivity(activityContext.IndexProposals)
 	opsWorker.RegisterActivity(activityContext.ComputeLPSnapshots)
 
-	// Maintenance worker configuration - handles cleanup workflows separately from ops
-	// CleanupStagingWorkflow triggers after each indexed block, so peak cleanup concurrency
-	// equals total parallel blocks across all workers (live + historical + reindex)
-	maintenanceMaxWorkflows := totalParallelBlocks * 2 // 2x buffer for burst scenarios
-
-	logger.Info("Maintenance worker configuration",
-		zap.Int("total_parallel_blocks", totalParallelBlocks),
-		zap.Int("maintenance_max_workflows", maintenanceMaxWorkflows),
-	)
-
-	maintenanceWorker := worker.New(
-		chainClient.TClient,
-		chainClient.MaintenanceQueue,
-		worker.Options{
-			// Cleanup workflows use local activities - need high workflow task poller count
-			MaxConcurrentWorkflowTaskPollers:       maintenanceMaxWorkflows,
-			MaxConcurrentActivityTaskPollers:       maintenanceMaxWorkflows,
-			MaxConcurrentWorkflowTaskExecutionSize: maintenanceMaxWorkflows,
-			MaxConcurrentActivityExecutionSize:     maintenanceMaxWorkflows * 2,
-			WorkerStopTimeout:                      1 * time.Minute,
-		},
-	)
-
-	maintenanceWorker.RegisterWorkflowWithOptions(
-		workflowContext.CleanupStagingWorkflow,
-		temporalworkflow.RegisterOptions{Name: indexer.CleanupStagingWorkflowName},
-	)
-	// Batch cleanup activities for hourly staging cleanup workflow
-	maintenanceWorker.RegisterActivity(activityContext.GetCleanableHeights)
-	maintenanceWorker.RegisterActivity(activityContext.CleanStagingBatch)
-	// Legacy: CleanAllPromotedData kept for backwards compatibility but no longer used
-	maintenanceWorker.RegisterActivity(activityContext.CleanAllPromotedData)
-
 	return &App{
-		LiveWorker:        liveWorker,
-		HistoricalWorker:  historicalWorker,
-		ReindexWorker:     reindexWorker,
-		OpsWorker:         opsWorker,
-		MaintenanceWorker: maintenanceWorker,
-		ChainClient:       chainClient,
-		Logger:            logger,
-		IndexerDB:         indexerDb,
-		ChainDB:           chainDb,
-		CrossChainDB:      crossChainDb,
-		RedisClient:       redisClient,
+		LiveWorker:       liveWorker,
+		HistoricalWorker: historicalWorker,
+		ReindexWorker:    reindexWorker,
+		OpsWorker:        opsWorker,
+		ChainClient:      chainClient,
+		Logger:           logger,
+		IndexerDB:        indexerDb,
+		GlobalDB:         globalDb,
+		RedisClient:      redisClient,
 	}
 }

@@ -42,6 +42,13 @@ print("Tilt Profile: %s" % profile)
 print("Tilt Mode: %s" % mode)
 print("Components enabled: %s" % ', '.join([k for k, v in components.items() if v]))
 
+# Ensure kind local registry is available for localhost:5001 images.
+local_resource(
+  'kind-registry-ready',
+  'set -e; if kubectl config current-context 2>/dev/null | grep -q "^kind-"; then make kind-ensure-registry kind-link-registry kind-doc-registry; else echo "Skipping kind registry setup (non-kind kubecontext)"; fi',
+  labels=['infra']
+)
+
 # Helper function to get port from config with default fallback
 def get_port(service, default):
     return ports.get(service, default)
@@ -1138,7 +1145,7 @@ if canopy_enabled and os.path.exists(canopy_rpc_mock_path):
         # Wait for mock RPC chain %d
         echo "Waiting for %s on port %d..."
         for i in {1..30}; do
-          if curl -f http://canopy-rpc-mock.default.svc.cluster.local:%d/v1/ 2>/dev/null; then
+          if kubectl get endpoints canopy-rpc-mock -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null | grep -q .; then
             echo "✓ %s is ready"
             break
           fi
@@ -1151,12 +1158,12 @@ if canopy_enabled and os.path.exists(canopy_rpc_mock_path):
         if curl -X POST -f http://localhost:3000/api/chains \\
           -H 'Authorization: Bearer devtoken' \\
           -H 'Content-Type: application/json' \\
-          -d '{"chain_id":%d,"chain_name":"%s","rpc_endpoints":["http://canopy-rpc-mock.default.svc.cluster.local:%d"],"image":"localhost:5001/canopyx-indexer:dev","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
+          -d '{"chain_id":%d,"chain_name":"%s","rpc_endpoints":["http://canopy-rpc-mock.default.svc.cluster.local:%d"],"image":"%s","min_replicas":1,"max_replicas":2}' 2>/dev/null; then
           echo "✓ Successfully registered %s"
         else
           echo "✗ Failed to register %s (may already exist or still starting)"
         fi
-        """ % (chain_id, chain_name, chain_port, chain_port, chain_name, chain_name, chain_name, chain_id, chain_name, chain_port, chain_name, chain_name))
+        """ % (chain_id, chain_name, chain_port, chain_name, chain_name, chain_name, chain_id, chain_name, chain_port, idx_repo, chain_name, chain_name))
 
         registration_cmds.append("""
         echo ""

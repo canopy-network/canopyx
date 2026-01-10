@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
-	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
@@ -36,7 +35,7 @@ func (ac *Context) ComputeLPSnapshots(ctx context.Context, input types.ActivityC
 	logger.Info("Starting LP snapshot computation")
 
 	// Get chain database connection
-	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
+	chainDb, err := ac.GetGlobalDb(ctx)
 	if err != nil {
 		return types.ActivityComputeLPSnapshotsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
 	}
@@ -66,7 +65,7 @@ func (ac *Context) ComputeLPSnapshots(ctx context.Context, input types.ActivityC
 		zap.Time("block_time", snapshotBlock.Time))
 
 	// Query pool points at snapshot height
-	poolPoints, err := ac.queryPoolPointsAtHeight(ctx, chainDb, snapshotHeight)
+	poolPoints, err := ac.queryPoolPointsAtHeight(ctx, ac.ChainID, snapshotHeight)
 	if err != nil {
 		return types.ActivityComputeLPSnapshotsOutput{}, temporal.NewApplicationErrorWithCause("failed to query pool points", "pool_points_error", err)
 	}
@@ -86,14 +85,14 @@ func (ac *Context) ComputeLPSnapshots(ctx context.Context, input types.ActivityC
 		zap.Int("count", len(poolPoints)))
 
 	// Get pool total points for percentage calculation
-	poolTotalPoints, err := ac.queryPoolTotalPoints(ctx, chainDb, snapshotHeight, poolPoints)
+	poolTotalPoints, err := ac.queryPoolTotalPoints(ctx, ac.ChainID, snapshotHeight, poolPoints)
 	if err != nil {
 		return types.ActivityComputeLPSnapshotsOutput{}, temporal.NewApplicationErrorWithCause("failed to query pool total points", "pool_total_points_error", err)
 	}
 	activity.RecordHeartbeat(ctx, "queried_pool_total_points")
 
 	// Get position lifecycle data (created dates)
-	positionCreatedDates, err := ac.queryPositionCreatedDates(ctx, chainDb)
+	positionCreatedDates, err := ac.queryPositionCreatedDates(ctx, ac.ChainID)
 	if err != nil {
 		logger.Warn("Failed to query position created dates, using defaults", zap.Error(err))
 		// Continue with empty map - will use safe defaults
@@ -130,8 +129,8 @@ func (ac *Context) ComputeLPSnapshots(ctx context.Context, input types.ActivityC
 		// Position is active if points > 0
 		isActive := pp.Points > 0
 		// Default closed date to epoch (1970-01-01) for active positions
-		// Set to snapshot date when position is closed (points = 0)
-		closedDate := time.Time{} // Zero time is epoch in ClickHouse
+		// Set to snapshot date when the position is closed (points = 0)
+		closedDate := time.Time{} // Zero time is an epoch in ClickHouse
 		if !isActive {
 			closedDate = input.TargetDate
 		}
@@ -139,7 +138,7 @@ func (ac *Context) ComputeLPSnapshots(ctx context.Context, input types.ActivityC
 		snapshot := &indexer.LPPositionSnapshot{
 			SourceChainID:       uint16(ac.ChainID),
 			Address:             pp.Address,
-			PoolID:              uint32(pp.PoolID),
+			PoolID:              pp.PoolID,
 			SnapshotDate:        input.TargetDate,
 			SnapshotHeight:      snapshotHeight,
 			SnapshotBalance:     pp.LiquidityPoolPoints, // Pre-calculated balance
@@ -157,13 +156,7 @@ func (ac *Context) ComputeLPSnapshots(ctx context.Context, input types.ActivityC
 	logger.Info("Built snapshots",
 		zap.Int("count", len(snapshots)))
 
-	// Write snapshots to cross-chain database
-	// NOTE: This requires CrossChainDB field in Context (task 8)
-	if ac.CrossChainDB == nil {
-		return types.ActivityComputeLPSnapshotsOutput{}, temporal.NewApplicationError("cross-chain database not available", "crosschain_db_missing")
-	}
-
-	if err := ac.CrossChainDB.InsertLPPositionSnapshots(ctx, snapshots); err != nil {
+	if err := ac.GlobalDB.InsertLPPositionSnapshots(ctx, snapshots); err != nil {
 		return types.ActivityComputeLPSnapshotsOutput{}, temporal.NewApplicationErrorWithCause("failed to insert snapshots", "insert_error", err)
 	}
 	activity.RecordHeartbeat(ctx, "inserted_snapshots")
@@ -182,16 +175,17 @@ func (ac *Context) ComputeLPSnapshots(ctx context.Context, input types.ActivityC
 
 // queryPoolPointsAtHeight queries pool_points_by_holder table for all positions at the given height.
 // Returns deduplicated results (latest record per address+pool_id).
-func (ac *Context) queryPoolPointsAtHeight(ctx context.Context, chainDb chainstore.Store, height uint64) ([]poolPointsRow, error) {
-	query := `
+func (ac *Context) queryPoolPointsAtHeight(ctx context.Context, chainId uint64, height uint64) ([]poolPointsRow, error) {
+	query := fmt.Sprintf(`
 		SELECT address, pool_id, points, liquidity_pool_points
-		FROM pool_points_by_holder FINAL
+		FROM "%s"."pool_points_by_holder" FINAL
+        PREWHERE chain_id = ?
 		WHERE height <= ?
 		ORDER BY address, pool_id, height DESC
-	`
+	`, ac.GlobalDB.DatabaseName())
 
 	var allRows []poolPointsRow
-	err := chainDb.Select(ctx, &allRows, query, height)
+	err := ac.GlobalDB.Select(ctx, &allRows, query, chainId, height)
 	if err != nil {
 		return nil, fmt.Errorf("query pool points: %w", err)
 	}
@@ -213,43 +207,39 @@ func (ac *Context) queryPoolPointsAtHeight(ctx context.Context, chainDb chainsto
 
 // queryPoolTotalPoints queries the pools table for total_points at the given height.
 // Returns a map of pool_id -> total_points for the specified pool IDs.
-func (ac *Context) queryPoolTotalPoints(ctx context.Context, chainDb chainstore.Store, height uint64, poolPoints []poolPointsRow) (map[uint64]uint64, error) {
+func (ac *Context) queryPoolTotalPoints(ctx context.Context, chainId uint64, height uint64, poolPoints []poolPointsRow) (map[uint32]uint64, error) {
 	// Extract unique pool IDs
-	poolIDsMap := make(map[uint64]bool)
+	poolIDsMap := make(map[uint32]bool)
 	for _, pp := range poolPoints {
 		poolIDsMap[pp.PoolID] = true
 	}
 
-	poolIDs := make([]uint64, 0, len(poolIDsMap))
+	poolIDs := make([]uint32, 0, len(poolIDsMap))
 	for poolID := range poolIDsMap {
 		poolIDs = append(poolIDs, poolID)
 	}
 
 	if len(poolIDs) == 0 {
-		return make(map[uint64]uint64), nil
+		return make(map[uint32]uint64), nil
 	}
 
 	// Query pools table for total_points
 	// ClickHouse requires IN clause with explicit values
-	query := `
+	query := fmt.Sprintf(`
 		SELECT pool_id, total_points
-		FROM pools FINAL
+		FROM "%s"."pools" FINAL
+        PREWHERE chain_id = ?
 		WHERE height <= ? AND pool_id IN ?
-	`
+	`, ac.GlobalDB.DatabaseName())
 
-	type poolRow struct {
-		PoolID      uint64 `ch:"pool_id"`
-		TotalPoints uint64 `ch:"total_points"`
-	}
-
-	var rows []poolRow
-	err := chainDb.Select(ctx, &rows, query, height, poolIDs)
+	var rows []poolTotalPointsRow
+	err := ac.GlobalDB.Select(ctx, &rows, query, chainId, height, poolIDs)
 	if err != nil {
 		return nil, fmt.Errorf("query pool total points: %w", err)
 	}
 
 	// Deduplicate: keep latest total_points per pool_id
-	result := make(map[uint64]uint64)
+	result := make(map[uint32]uint64)
 	for _, row := range rows {
 		result[row.PoolID] = row.TotalPoints
 	}
@@ -259,21 +249,16 @@ func (ac *Context) queryPoolTotalPoints(ctx context.Context, chainDb chainstore.
 
 // queryPositionCreatedDates queries the pool_points_created_height materialized view
 // to get the date when each position was first created.
-func (ac *Context) queryPositionCreatedDates(ctx context.Context, chainDb chainstore.Store) (map[string]time.Time, error) {
+func (ac *Context) queryPositionCreatedDates(ctx context.Context, chainId uint64) (map[string]time.Time, error) {
 	// Query the materialized view for first seen heights
-	query := `
+	query := fmt.Sprintf(`
 		SELECT address, pool_id, created_height
-		FROM pool_points_created_height FINAL
-	`
+		FROM "%s"."pool_points_created_height" FINAL
+        PREWHERE chain_id = ?
+	`, ac.GlobalDB.DatabaseName())
 
-	type createdRow struct {
-		Address       string `ch:"address"`
-		PoolID        uint64 `ch:"pool_id"`
-		CreatedHeight uint64 `ch:"created_height"`
-	}
-
-	var rows []createdRow
-	err := chainDb.Select(ctx, &rows, query)
+	var rows []positionCreatedRow
+	err := ac.GlobalDB.Select(ctx, &rows, query, chainId)
 	if err != nil {
 		return nil, fmt.Errorf("query position created heights: %w", err)
 	}
@@ -281,12 +266,12 @@ func (ac *Context) queryPositionCreatedDates(ctx context.Context, chainDb chains
 	// Get block times for created heights
 	result := make(map[string]time.Time)
 	for _, row := range rows {
-		block, err := chainDb.GetBlock(ctx, row.CreatedHeight)
+		block, err := ac.GlobalDB.GetBlock(ctx, row.CreatedHeight)
 		if err != nil {
 			// Log warning but continue - we'll use default date for this position
 			ac.Logger.Warn("Failed to get block for created height",
 				zap.String("address", row.Address),
-				zap.Uint64("pool_id", row.PoolID),
+				zap.Uint32("pool_id", row.PoolID),
 				zap.Uint64("created_height", row.CreatedHeight),
 				zap.Error(err))
 			continue
@@ -303,9 +288,22 @@ func (ac *Context) queryPositionCreatedDates(ctx context.Context, chainDb chains
 // poolPointsRow represents a row from the pool_points_by_holder table.
 type poolPointsRow struct {
 	Address             string `ch:"address"`
-	PoolID              uint64 `ch:"pool_id"`
+	PoolID              uint32 `ch:"pool_id"`
 	Points              uint64 `ch:"points"`
 	LiquidityPoolPoints uint64 `ch:"liquidity_pool_points"` // Pre-calculated balance
+}
+
+// poolTotalPointsRow represents a row from the pools table for total_points lookup.
+type poolTotalPointsRow struct {
+	PoolID      uint32 `ch:"pool_id"`
+	TotalPoints uint64 `ch:"total_points"`
+}
+
+// positionCreatedRow represents a row from the pool_points_created_height materialized view.
+type positionCreatedRow struct {
+	Address       string `ch:"address"`
+	PoolID        uint32 `ch:"pool_id"`
+	CreatedHeight uint64 `ch:"created_height"`
 }
 
 // boolToUint8 converts a boolean to uint8 (1 for true, 0 for false).

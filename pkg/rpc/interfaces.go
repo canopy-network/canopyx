@@ -12,6 +12,7 @@ import (
 // Note: JSON unmarshaling is used throughout (RPC only supports JSON, not protobuf wire format).
 type Client interface {
 	ChainHead(ctx context.Context) (uint64, error)
+	Blob(ctx context.Context, height uint64) (*fsm.IndexerBlobs, error)
 	BlockByHeight(ctx context.Context, height uint64) (*lib.BlockResult, error)
 	TxsByHeight(ctx context.Context, height uint64) ([]*lib.TxResult, error)
 	EventsByHeight(ctx context.Context, height uint64) ([]*lib.Event, error)

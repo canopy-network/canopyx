@@ -1,9 +1,12 @@
 package controller
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/canopy-network/canopyx/app/admin/types"
+	"github.com/canopy-network/canopyx/pkg/temporal"
 	"github.com/canopy-network/canopyx/pkg/utils"
 	"github.com/go-jose/go-jose/v4/json"
 	"github.com/gorilla/mux"
@@ -99,9 +102,9 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	r.Handle("/api/chains/{id}/headscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerHeadScan))).Methods(http.MethodPost)
 	r.Handle("/api/chains/{id}/gapscan", c.RequireAuth(http.HandlerFunc(c.HandleTriggerGapScan))).Methods(http.MethodPost)
 	r.Handle("/api/chains/{id}/reindex", c.RequireAuth(http.HandlerFunc(c.HandleReindex))).Methods(http.MethodPost)
-	r.Handle("/api/chains/{id}/recover", c.RequireAuth(http.HandlerFunc(c.HandleChainRecover))).Methods(http.MethodPost)
 
 	// LP Snapshot Schedule Management
+	r.Handle("/api/chains/{id}/lp-schedule", c.RequireAuth(http.HandlerFunc(c.HandleGetLPSnapshotSchedule))).Methods(http.MethodGet)
 	r.Handle("/api/chains/{id}/lp-schedule", c.RequireAuth(http.HandlerFunc(c.HandleCreateLPSnapshotSchedule))).Methods(http.MethodPost)
 	r.Handle("/api/chains/{id}/lp-schedule/pause", c.RequireAuth(http.HandlerFunc(c.HandlePauseLPSnapshotSchedule))).Methods(http.MethodPost)
 	r.Handle("/api/chains/{id}/lp-schedule/unpause", c.RequireAuth(http.HandlerFunc(c.HandleUnpauseLPSnapshotSchedule))).Methods(http.MethodPost)
@@ -111,31 +114,28 @@ func (c *Controller) NewRouter() (*mux.Router, error) {
 	// LP Snapshot Query
 	r.Handle("/api/lp-snapshots", c.RequireAuth(http.HandlerFunc(c.HandleQueryLPSnapshots))).Methods(http.MethodGet)
 
-	// Schema introspection endpoints (migrated from query service)
+	// Schema introspection endpoints
 	r.Handle("/api/entities", c.RequireAuth(http.HandlerFunc(c.HandleEntities))).Methods(http.MethodGet)
-	r.Handle("/api/chains/{id}/schema", c.RequireAuth(http.HandlerFunc(c.HandleSchema))).Methods(http.MethodGet)
 
-	// Generic entity query endpoints
-	r.Handle("/api/chains/{id}/entity/{entity}", c.RequireAuth(http.HandlerFunc(c.HandleEntityQuery))).Methods(http.MethodGet)
-	// Note: HandleEntityGet now uses query parameters (property, value, height) instead of path parameter id_value
-	// This provides explicit column-based lookups without guessing the intent
-	r.Handle("/api/chains/{id}/entity/{entity}/lookup", c.RequireAuth(http.HandlerFunc(c.HandleEntityGet))).Methods(http.MethodGet)
-	// Entity schema endpoint - returns property names and types for dynamic form building
-	r.Handle("/api/chains/{id}/entity/{entity}/schema", c.RequireAuth(http.HandlerFunc(c.HandleEntitySchema))).Methods(http.MethodGet)
+	// Global Explorer endpoints (with optional chain_ids filter)
+	// With global single-DB architecture, schema is the same for all chains.
+	// Use chain_ids query param to filter entity queries by specific chains.
+	r.Handle("/api/explorer/schema", c.RequireAuth(http.HandlerFunc(c.HandleGlobalExplorerSchema))).Methods(http.MethodGet)
+	r.Handle("/api/explorer/entity/{entity}", c.RequireAuth(http.HandlerFunc(c.HandleGlobalExplorerEntityQuery))).Methods(http.MethodGet)
 
 	// WebSocket endpoint for real-time events (migrated from query service)
 	r.Handle("/api/ws", c.RequireAuth(http.HandlerFunc(c.HandleWebSocket))).Methods(http.MethodGet)
 
-	// Cross-chain API endpoints
-	r.Handle("/api/crosschain/health", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainHealth))).Methods(http.MethodGet)
-	r.Handle("/api/crosschain/resync/{chainID}/{table}", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainResyncTable))).Methods(http.MethodPost)
-	r.Handle("/api/crosschain/resync/{chainID}", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainResyncChain))).Methods(http.MethodPost)
-	r.Handle("/api/crosschain/sync-status/{chainID}/{table}", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainSyncStatus))).Methods(http.MethodGet)
-
-	// Cross-chain entity query endpoints (dynamic, mirror chain entity pattern)
-	r.Handle("/api/crosschain/entities", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainEntitiesList))).Methods(http.MethodGet)
-	r.Handle("/api/crosschain/entities/{entity}", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainEntities))).Methods(http.MethodGet)
-	r.Handle("/api/crosschain/entities/{entity}/schema", c.RequireAuth(http.HandlerFunc(c.HandleCrossChainEntitySchema))).Methods(http.MethodGet)
-
 	return r, nil
+}
+
+// getChainNamespace fetches the namespace for a chain from the database.
+// Returns the namespace in format "{chain_id}-{namespace_uid}" (e.g., "5-a1b2c3").
+func (c *Controller) getChainNamespace(ctx context.Context, chainID uint64) (string, error) {
+	nsInfo, err := c.App.AdminDB.GetChainNamespaceInfo(ctx, chainID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get chain namespace info: %w", err)
+	}
+	nsConfig := temporal.DefaultNamespaceConfig()
+	return nsConfig.ChainNamespaceWithUID(chainID, nsInfo.NamespaceUID), nil
 }

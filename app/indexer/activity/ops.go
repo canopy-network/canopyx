@@ -13,6 +13,7 @@ import (
 	"github.com/alitto/pond/v2"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
+	indexerworkflow "github.com/canopy-network/canopyx/pkg/temporal/indexer"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
@@ -30,28 +31,42 @@ type HeadResult struct {
 
 // PrepareIndexBlock determines whether a block needs reindexing and performs cleanup if required.
 // Returns output containing skip flag and execution duration in milliseconds.
+// Uses index_progress (admin DB) as source of truth - it's only written after successful indexing.
 func (ac *Context) PrepareIndexBlock(ctx context.Context, in types.ActivityIndexBlockInput) (types.ActivityPrepareIndexBlockOutput, error) {
 	start := time.Now()
+	logger := activity.GetLogger(ctx)
 
-	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
+	// Check index_progress in admin DB - this is the source of truth for successfully indexed blocks.
+	indexed, err := ac.AdminDB.HasIndexed(ctx, ac.ChainID, in.Height)
 	if err != nil {
-		return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", err)
+		logger.Error("PrepareIndexBlock: HasIndexed query failed",
+			zap.Uint64("chain_id", ac.ChainID),
+			zap.Uint64("height", in.Height),
+			zap.Error(err),
+		)
+		return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("index_progress_lookup_failed", "admin_db_error", err)
 	}
 
-	exists, err := chainDb.HasBlock(ctx, in.Height)
-	if err != nil {
-		return types.ActivityPrepareIndexBlockOutput{}, sdktemporal.NewApplicationErrorWithCause("block_lookup_failed", "chain_db_error", err)
-	}
-
-	// Skip if block already exists and this is not a reindex operation
-	if !in.Reindex && exists {
+	// Skip if block already indexed and this is not a reindex operation
+	if !in.Reindex && indexed {
 		durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+		logger.Info("PrepareIndexBlock: Block already indexed, skipping",
+			zap.Uint64("chain_id", ac.ChainID),
+			zap.Uint64("height", in.Height),
+			zap.Bool("reindex", in.Reindex),
+		)
 		return types.ActivityPrepareIndexBlockOutput{Skip: true, DurationMs: durationMs}, nil
 	}
 
 	// For reindex, proceed with indexing (no delete step needed)
 	// ReplacingMergeTree automatically deduplicates based on ClickHouse internal metadata
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+	logger.Debug("PrepareIndexBlock: Block needs indexing",
+		zap.Uint64("chain_id", ac.ChainID),
+		zap.Uint64("height", in.Height),
+		zap.Bool("reindex", in.Reindex),
+		zap.Bool("was_indexed", indexed),
+	)
 	return types.ActivityPrepareIndexBlockOutput{Skip: false, DurationMs: durationMs}, nil
 }
 
@@ -227,6 +242,13 @@ func (ac *Context) FindGaps(ctx context.Context) ([]adminmodels.Gap, error) {
 func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityIndexBlockInput) error {
 	logger := activity.GetLogger(ctx)
 
+	// Log namespace info for debugging stuck workflows
+	logger.Info("StartIndexWorkflow called",
+		zap.Uint64("chain_id", ac.ChainID),
+		zap.Uint64("height", in.Height),
+		zap.String("namespace", ac.ChainClient.Namespace),
+	)
+
 	// Get latest head to determine queue routing
 	latest, err := ac.GetLatestHead(ctx)
 	if err != nil {
@@ -240,15 +262,17 @@ func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityInde
 	var taskQueue string
 	if utils.IsLiveBlock(latest, in.Height) {
 		taskQueue = ac.ChainClient.LiveQueue
-		logger.Debug("Routing to live queue",
+		logger.Info("Routing to live queue",
 			zap.String("task_queue", taskQueue),
+			zap.String("namespace", ac.ChainClient.Namespace),
 			zap.Uint64("latest", latest),
 			zap.Uint64("height", in.Height),
 		)
 	} else {
 		taskQueue = ac.ChainClient.HistoricalQueue
-		logger.Debug("Routing to historical queue",
+		logger.Info("Routing to historical queue",
 			zap.String("task_queue", taskQueue),
+			zap.String("namespace", ac.ChainClient.Namespace),
 			zap.Uint64("latest", latest),
 			zap.Uint64("height", in.Height),
 		)
@@ -271,13 +295,27 @@ func (ac *Context) StartIndexWorkflow(ctx context.Context, in types.ActivityInde
 		}
 	}
 
-	_, err = ac.ChainClient.TClient.ExecuteWorkflow(ctx, options, "IndexBlockWorkflow", in)
+	logger.Info("Executing IndexBlock workflow",
+		zap.String("workflow_id", wfID),
+		zap.String("task_queue", taskQueue),
+		zap.String("namespace", ac.ChainClient.Namespace),
+		zap.Uint64("height", in.Height),
+	)
+
+	_, err = ac.ChainClient.TClient.ExecuteWorkflow(ctx, options, indexerworkflow.IndexBlockWorkflowName, in)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if errors.As(err, &alreadyStarted) {
+			logger.Debug("Workflow already started (idempotent)",
+				zap.String("workflow_id", wfID),
+			)
 			return nil
 		}
-		logger.Error("failed to start workflow", zap.Error(err))
+		logger.Error("failed to start workflow",
+			zap.String("workflow_id", wfID),
+			zap.String("namespace", ac.ChainClient.Namespace),
+			zap.Error(err),
+		)
 		return err
 	}
 	return nil
@@ -530,7 +568,7 @@ func (ac *Context) scheduleBatchToQueue(ctx context.Context, in types.ActivityBa
 				options.Priority = sdktemporal.Priority{PriorityKey: in.PriorityKey}
 			}
 
-			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, "IndexBlockWorkflow", types.WorkflowIndexBlockInput{
+			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, indexerworkflow.IndexBlockWorkflowName, types.WorkflowIndexBlockInput{
 				Height:      h,
 				PriorityKey: strconv.Itoa(in.PriorityKey),
 			})

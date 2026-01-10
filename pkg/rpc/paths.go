@@ -9,6 +9,7 @@ const (
 	headPath          = "/v1/query/height"
 	blockByHeightPath = "/v1/query/block-by-height"
 	certByHeightPath  = "/v1/query/cert-by-height"
+	indexerBlobsPath  = "/v1/query/indexer-blobs"
 
 	// Transaction and event queries
 	txsByHeightPath    = "/v1/query/txs-by-height"

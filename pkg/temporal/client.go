@@ -22,6 +22,7 @@ type Client struct {
 	TClient   client.Client
 	TSClient  client.ScheduleClient
 	Namespace string
+	logger    *zap.Logger
 
 	// Task Queues
 	IndexerLiveQueue       string // chain:<chainID>:index:live - per chain queue for live blocks (within threshold of head)
@@ -31,17 +32,16 @@ type Client struct {
 	AdminMaintenanceQueue  string // admin:maintenance - global admin maintenance queue (compaction, cleanup, monitoring)
 
 	// Schedule IDs
-	HeadScheduleID                 string
-	GapScanScheduleID              string
-	PollSnapshotScheduleID         string
-	ProposalSnapshotScheduleID     string
-	LPSnapshotScheduleID           string
-	CrossChainCompactionScheduleID string
+	HeadScheduleID             string
+	GapScanScheduleID          string
+	PollSnapshotScheduleID     string
+	ProposalSnapshotScheduleID string
+	LPSnapshotScheduleID       string
+	GlobalCompactionScheduleID string
 
 	// Workflow IDs
-	IndexBlockWorkflowId     string
-	SchedulerWorkflowID      string
-	CleanupStagingWorkflowID string
+	IndexBlockWorkflowId string
+	SchedulerWorkflowID  string
 }
 
 type Health struct {
@@ -86,6 +86,7 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		TClient:   tClient,
 		TSClient:  tClient.ScheduleClient(),
 		Namespace: ns,
+		logger:    logger,
 		// for now this is just hardcoded, could be configurable if we need it
 		IndexerLiveQueue:       "chain:%d:index:live",
 		IndexerHistoricalQueue: "chain:%d:index:historical",
@@ -93,16 +94,15 @@ func NewClient(ctx context.Context, logger *zap.Logger) (*Client, error) {
 		IndexerReindexQueue:    "chain:%d:reindex",
 		AdminMaintenanceQueue:  "admin:maintenance",
 		// schedule IDs
-		HeadScheduleID:                 "chain:%d:headscan",
-		GapScanScheduleID:              "chain:%d:gapscan",
-		PollSnapshotScheduleID:         "chain:%d:pollsnapshot",
-		ProposalSnapshotScheduleID:     "chain:%d:proposalsnapshot",
-		LPSnapshotScheduleID:           "chain:%d:lpsnapshot",
-		CrossChainCompactionScheduleID: "crosschain:compaction",
+		HeadScheduleID:             "chain:%d:headscan",
+		GapScanScheduleID:          "chain:%d:gapscan",
+		PollSnapshotScheduleID:     "chain:%d:pollsnapshot",
+		ProposalSnapshotScheduleID: "chain:%d:proposalsnapshot",
+		LPSnapshotScheduleID:       "chain:%d:lpsnapshot",
+		GlobalCompactionScheduleID: "global:compaction",
 		// workflow IDs
-		IndexBlockWorkflowId:     "chain:%d:index:%d",
-		SchedulerWorkflowID:      "chain:%d:scheduler",
-		CleanupStagingWorkflowID: "chain:%d:cleanup:%d",
+		IndexBlockWorkflowId: "chain:%d:index:%d",
+		SchedulerWorkflowID:  "chain:%d:scheduler",
 	}, nil
 }
 
@@ -182,12 +182,6 @@ func (c *Client) GetSchedulerWorkflowID(chainID uint64) string {
 	return fmt.Sprintf(c.SchedulerWorkflowID, chainID)
 }
 
-// GetCleanupStagingWorkflowID returns the workflow ID for the cleanup staging workflow.
-// This workflow is triggered after promotion to clean up staging tables asynchronously.
-func (c *Client) GetCleanupStagingWorkflowID(chainID uint64, height uint64) string {
-	return fmt.Sprintf(c.CleanupStagingWorkflowID, chainID, height)
-}
-
 // TwoSecondSpec returns a schedule spec for HeadScan workflow (5 seconds).
 // With 20s block time = 4 checks per block, max 5s delay for new blocks.
 func (c *Client) TwoSecondSpec() client.ScheduleSpec {
@@ -229,6 +223,7 @@ func (c *Client) EnsureNamespace(ctx context.Context, retention time.Duration) e
 	// Create a namespace client using the same connection options
 	nsClient, err := client.NewNamespaceClient(client.Options{
 		HostPort: host,
+		Logger:   NewZapAdapter(c.logger),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create namespace client: %w", err)
@@ -328,7 +323,7 @@ func (c *Client) GetAdminMaintenanceQueue() string {
 	return c.AdminMaintenanceQueue
 }
 
-// GetCrossChainCompactionScheduleID returns the schedule ID for cross-chain table compaction.
-func (c *Client) GetCrossChainCompactionScheduleID() string {
-	return c.CrossChainCompactionScheduleID
+// GetGlobalCompactionScheduleID returns the schedule ID for global table compaction.
+func (c *Client) GetGlobalCompactionScheduleID() string {
+	return c.GlobalCompactionScheduleID
 }

@@ -140,21 +140,29 @@ export default function DashboardPage() {
 
   const ITEMS_PER_PAGE = 50
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async (showNotification = false) => {
     setLoading(true)
     setError('')
     try {
-      const res = await apiFetch('/api/chains/status')
+      // Add cache-busting to ensure fresh data on refresh
+      const res = await apiFetch('/api/chains/status', {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+        },
+      })
       if (!res.ok) throw new Error('Failed to load status')
       const data: ChainStatusMap = await res.json()
-      // Use functional update to preserve stability and prevent mixing
-      setStatus((prev) => {
-        // Merge new data with previous, preserving chain order
-        const merged = { ...prev }
-        Object.keys(data).forEach((chainId) => {
-          merged[chainId] = data[chainId]
-        })
-        return merged
+      // Force a complete state replacement by clearing first
+      // This ensures React detects the change and re-renders
+      setStatus({})
+      // Use requestAnimationFrame to ensure the clear is processed before setting new data
+      requestAnimationFrame(() => {
+        setStatus(data)
+        if (showNotification) {
+          notify(`Refreshed ${Object.keys(data).length} chains`)
+        }
       })
     } catch (err) {
       console.error(err)
@@ -162,7 +170,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [notify])
 
   useEffect(() => {
     loadStatus()
@@ -435,7 +443,7 @@ export default function DashboardPage() {
             </svg>
             Add Chain
           </button>
-          <button onClick={loadStatus} className="btn-secondary" disabled={loading}>
+          <button onClick={() => loadStatus(true)} className="btn-secondary" disabled={loading}>
             <svg
               className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
               fill="none"

@@ -17,7 +17,6 @@
 - [GET /api/chains/{id}](#get-chain) - Get chain details
 - [PATCH /api/chains/{id}](#update-chain) - Partial update chain configuration
 - [DELETE /api/chains/{id}](#delete-chain) - Delete a chain
-- [GET /api/chains/{id}/schema](#get-chain-schema) - Get chain database schema
 - [GET /api/chains/{id}/progress](#get-chain-progress) - Get indexing progress for chain
 - [GET /api/chains/{id}/progress-history](#get-progress-history) - Get historical progress data
 - [GET /api/chains/{id}/gaps](#get-chain-gaps) - List missing block ranges
@@ -26,26 +25,18 @@
 - [POST /api/chains/{id}/gapscan](#trigger-gapscan) - Manually trigger gap scan
 - [GET /api/chains/status](#get-all-chains-status) - Get status for all chains
 - [PATCH /api/chains/status](#bulk-update-chains-status) - Bulk update chain status fields
+- [PATCH /api/chains/bulk](#bulk-update-all-chains) - Bulk update all chains with common settings
 
-### Chain Entities
+### Global Explorer
 - [GET /api/entities](#list-entities) - List available entity types
-- [GET /api/chains/{id}/entity/{entity}](#query-chain-entity) - Query entity data for a chain
-- [GET /api/chains/{id}/entity/{entity}/lookup](#lookup-entity) - Lookup entity by ID
-- [GET /api/chains/{id}/entity/{entity}/schema](#get-entity-schema) - Get entity schema
+- [GET /api/explorer/schema](#get-global-schema) - Get global database schema
+- [GET /api/explorer/entity/{entity}](#query-global-entity) - Query entity data across chains
 
 ### WebSocket
 - [GET /api/ws](#websocket) - Real-time events via WebSocket
 
-### Cross-Chain Queries
-- [GET /api/crosschain/health](#crosschain-health) - Cross-chain database health
-- [GET /api/crosschain/entities](#list-crosschain-entities) - List cross-chain entity types
-- [GET /api/crosschain/entities/{entity}](#query-crosschain-entity) - Query cross-chain entity data
-- [GET /api/crosschain/entities/{entity}/schema](#get-crosschain-entity-schema) - Get cross-chain entity schema
-- [POST /api/crosschain/resync/{chainID}](#resync-chain-crosschain) - Resync all tables for a chain
-- [POST /api/crosschain/resync/{chainID}/{table}](#resync-table-crosschain) - Resync specific table
-- [GET /api/crosschain/sync-status/{chainID}/{table}](#get-sync-status) - Get sync status for table
-
 ### LP Position Snapshots
+- [GET /api/chains/{id}/lp-schedule](#get-lp-snapshot-schedule) - Get LP snapshot schedule status
 - [POST /api/chains/{id}/lp-schedule](#create-lp-snapshot-schedule) - Create LP snapshot schedule
 - [POST /api/chains/{id}/lp-schedule/pause](#pause-lp-snapshot-schedule) - Pause LP snapshot schedule
 - [POST /api/chains/{id}/lp-schedule/unpause](#unpause-lp-snapshot-schedule) - Unpause LP snapshot schedule
@@ -346,64 +337,6 @@ curl -X DELETE http://localhost:3000/api/chains/1 \
 # Hard delete (permanent)
 curl -X DELETE "http://localhost:3000/api/chains/1?hard=true" \
   -H "Authorization: Bearer devtoken"
-```
-
-## Recover Chain
-
-**Route**: `POST /api/chains/{id}/recover`
-
-**Description**: Restore a soft-deleted chain. Unpauses schedules and re-enables indexing.
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **id**: Chain ID
-
-**Response**:
-```json
-{
-  "ok": "1"
-}
-```
-
-**Note**: Only works for soft-deleted chains. Hard-deleted chains cannot be recovered.
-
-**Example**:
-```bash
-curl -X POST http://localhost:3000/api/chains/1/recover \
-  -H "Authorization: Bearer devtoken"
-```
-
-## Get Chain Schema
-
-**Route**: `GET /api/chains/{id}/schema`
-
-**Description**: Get the ClickHouse database schema for a chain
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **id**: Chain ID
-
-**Response**:
-```json
-{
-  "database": "canopyx_chain_1",
-  "tables": [
-    {
-      "name": "accounts",
-      "columns": ["address", "amount", "height", "height_time"],
-      "engine": "ReplacingMergeTree",
-      "order_by": ["address", "height"]
-    }
-  ]
-}
-```
-
-**Example**:
-```bash
-curl -H "Authorization: Bearer devtoken" \
-  http://localhost:3000/api/chains/1/schema
 ```
 
 ## Get Chain Progress
@@ -763,9 +696,38 @@ curl -X PATCH http://localhost:3000/api/chains/status \
   ]'
 ```
 
+## Bulk Update All Chains
+
+**Route**: `PATCH /api/chains/bulk`
+
+**Description**: Bulk update all chains with common settings in a single request
+
+**Authentication**: Required (Bearer token or session cookie)
+
+**Request**: Object with settings to apply to all chains
+```json
+{
+  "image": "ghcr.io/canopy-network/canopyx-indexer:v2.0.0",
+  "min_replicas": 2,
+  "max_replicas": 5
+}
+```
+
+**Response**: 204 No Content
+
+**Example**:
+```bash
+curl -X PATCH http://localhost:3000/api/chains/bulk \
+  -H "Authorization: Bearer devtoken" \
+  -H "Content-Type: application/json" \
+  -d '{"image": "ghcr.io/canopy-network/canopyx-indexer:v2.0.0"}'
+```
+
 <hr/>
 
-# Chain Entities
+# Global Explorer
+
+The Global Explorer provides unified access to indexed blockchain data across all chains through a single global database (`canopyx_global`). All entity queries support filtering by `chain_id` to scope results.
 
 ## List Entities
 
@@ -782,9 +744,25 @@ curl -X PATCH http://localhost:3000/api/chains/status \
     "accounts",
     "validators",
     "pools",
+    "pool_points_by_holder",
     "orders",
     "dex_orders",
-    "block_summaries"
+    "dex_deposits",
+    "dex_withdrawals",
+    "dex_prices",
+    "block_summaries",
+    "blocks",
+    "transactions",
+    "events",
+    "committees",
+    "committee_validators",
+    "committee_payments",
+    "params",
+    "supply",
+    "poll_snapshots",
+    "proposal_snapshots",
+    "validator_non_signing_info",
+    "validator_double_signing_info"
   ]
 }
 ```
@@ -795,19 +773,54 @@ curl -H "Authorization: Bearer devtoken" \
   http://localhost:3000/api/entities
 ```
 
-## Query Chain Entity
+## Get Global Schema
 
-**Route**: `GET /api/chains/{id}/entity/{entity}`
+**Route**: `GET /api/explorer/schema`
 
-**Description**: Query entity data for a specific chain with filtering and pagination
+**Description**: Get the global database schema including all tables and their columns
+
+**Authentication**: Required (Bearer token)
+
+**Response**:
+```json
+{
+  "database": "canopyx_global",
+  "tables": [
+    {
+      "name": "accounts",
+      "columns": [
+        {"name": "chain_id", "type": "UInt64"},
+        {"name": "address", "type": "String"},
+        {"name": "amount", "type": "UInt64"},
+        {"name": "height", "type": "UInt64"},
+        {"name": "height_time", "type": "DateTime64(6)"}
+      ],
+      "engine": "ReplicatedReplacingMergeTree",
+      "order_by": ["chain_id", "address", "height"]
+    }
+  ]
+}
+```
+
+**Example**:
+```bash
+curl -H "Authorization: Bearer devtoken" \
+  http://localhost:3000/api/explorer/schema
+```
+
+## Query Global Entity
+
+**Route**: `GET /api/explorer/entity/{entity}`
+
+**Description**: Query entity data across all chains with filtering and pagination. Use `chain_ids` query parameter to filter by specific chains.
 
 **Authentication**: Required (Bearer token)
 
 **Path Parameters**:
-- **id**: Chain ID
-- **entity**: Entity type (e.g., "accounts", "validators")
+- **entity**: Entity type (e.g., "accounts", "validators", "pools")
 
 **Query Parameters**:
+- **chain_ids**: Comma-separated list of chain IDs to filter (e.g., "1,2,5")
 - **page**: Page number (default: 1)
 - **limit**: Items per page (default: 10, max: 1000)
 - **order_by**: Field to sort by
@@ -818,98 +831,48 @@ curl -H "Authorization: Bearer devtoken" \
 ```json
 {
   "entity": "accounts",
-  "chain_id": 1,
   "data": [
     {
+      "chain_id": 1,
       "address": "851e90eaef1fa27debaee2c2591503bdeec1d123",
-      "amount": 1000000,
-      "height": 12345,
+      "amount": 980213903,
+      "height": 19,
       "height_time": "2025-11-07T12:34:56Z"
+    },
+    {
+      "chain_id": 2,
+      "address": "851e90eaef1fa27debaee2c2591503bdeec1d123",
+      "amount": 461833030,
+      "height": 18,
+      "height_time": "2025-11-07T12:34:50Z"
     }
   ],
   "pagination": {
     "page": 1,
     "limit": 10,
-    "total": 150,
-    "total_pages": 15
+    "total": 2,
+    "total_pages": 1
   }
 }
 ```
 
 **Example**:
 ```bash
-# Basic query
+# Query all accounts across all chains
 curl -H "Authorization: Bearer devtoken" \
-  "http://localhost:3000/api/chains/1/entity/accounts?limit=20"
+  "http://localhost:3000/api/explorer/entity/accounts?limit=20"
 
-# With filters
+# Query accounts for specific chains only
 curl -H "Authorization: Bearer devtoken" \
-  "http://localhost:3000/api/chains/1/entity/accounts?filters={\"amount\":{\"gt\":1000000}}"
-```
+  "http://localhost:3000/api/explorer/entity/accounts?chain_ids=1,5&limit=20"
 
-## Lookup Entity
-
-**Route**: `GET /api/chains/{id}/entity/{entity}/lookup`
-
-**Description**: Lookup a specific entity by its unique identifier
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **id**: Chain ID
-- **entity**: Entity type
-
-**Query Parameters**:
-- Varies by entity type (e.g., **address** for accounts, **pool_id** for pools)
-
-**Response**: Single entity object
-
-**Example**:
-```bash
+# Query with filters (specific address)
 curl -H "Authorization: Bearer devtoken" \
-  "http://localhost:3000/api/chains/1/entity/accounts/lookup?address=851e90eaef1fa27debaee2c2591503bdeec1d123"
-```
+  "http://localhost:3000/api/explorer/entity/accounts?filters={\"address\":\"851e90eaef1fa27debaee2c2591503bdeec1d123\"}"
 
-## Get Entity Schema
-
-**Route**: `GET /api/chains/{id}/entity/{entity}/schema`
-
-**Description**: Get the schema definition for an entity type
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **id**: Chain ID
-- **entity**: Entity type
-
-**Response**:
-```json
-{
-  "entity": "accounts",
-  "chain_id": 1,
-  "fields": [
-    {
-      "name": "address",
-      "type": "String",
-      "description": "Account address (hex)",
-      "filterable": true,
-      "sortable": false
-    },
-    {
-      "name": "amount",
-      "type": "UInt64",
-      "description": "Account balance in micro denomination",
-      "filterable": true,
-      "sortable": true
-    }
-  ]
-}
-```
-
-**Example**:
-```bash
+# Query validators with pagination
 curl -H "Authorization: Bearer devtoken" \
-  http://localhost:3000/api/chains/1/entity/accounts/schema
+  "http://localhost:3000/api/explorer/entity/validators?page=2&limit=50&order_by=height&order_dir=desc"
 ```
 
 <hr/>
@@ -990,270 +953,45 @@ wscat -c ws://localhost:3000/api/ws
 
 <hr/>
 
-# Cross-Chain Queries
-
-## Crosschain Health
-
-**Route**: `GET /api/crosschain/health`
-
-**Description**: Check cross-chain database health and connectivity
-
-**Authentication**: Required (Bearer token)
-
-**Response**:
-```json
-{
-  "status": "healthy",
-  "database": "canopyx_cross_chain",
-  "tables": 11,
-  "chains_synced": 2,
-  "last_updated": "2025-11-07T12:34:56Z"
-}
-```
-
-**Example**:
-```bash
-curl -H "Authorization: Bearer devtoken" \
-  http://localhost:3000/api/crosschain/health
-```
-
-## List Crosschain Entities
-
-**Route**: `GET /api/crosschain/entities`
-
-**Description**: List entity types available for cross-chain queries
-
-**Authentication**: Required (Bearer token)
-
-**Response**:
-```json
-{
-  "entities": [
-    "accounts",
-    "validators",
-    "pools",
-    "pool_points_by_holder",
-    "orders",
-    "dex_orders",
-    "dex_deposits",
-    "dex_withdrawals",
-    "validator_signing_info",
-    "validator_double_signing_info",
-    "block_summaries"
-  ]
-}
-```
-
-**Example**:
-```bash
-curl -H "Authorization: Bearer devtoken" \
-  http://localhost:3000/api/crosschain/entities
-```
-
-## Query Crosschain Entity
-
-**Route**: `GET /api/crosschain/entities/{entity}`
-
-**Description**: Query entity data across all chains with filtering and pagination
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **entity**: Entity type
-
-**Query Parameters**:
-- **page**: Page number (default: 1)
-- **limit**: Items per page (default: 10, max: 1000)
-- **order_by**: Field to sort by
-- **order_dir**: Sort direction ("asc" or "desc")
-- **filters**: JSON object with field filters (can filter by chain_id)
-
-**Response**:
-```json
-{
-  "entity": "accounts",
-  "data": [
-    {
-      "chain_id": 1,
-      "address": "851e90eaef1fa27debaee2c2591503bdeec1d123",
-      "amount": 980213903,
-      "height": 19,
-      "height_time": "2025-11-07T12:34:56Z",
-      "updated_at": "2025-11-07T12:35:00Z"
-    },
-    {
-      "chain_id": 2,
-      "address": "851e90eaef1fa27debaee2c2591503bdeec1d123",
-      "amount": 461833030,
-      "height": 18,
-      "height_time": "2025-11-07T12:34:50Z",
-      "updated_at": "2025-11-07T12:35:00Z"
-    }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 10,
-    "total": 2,
-    "total_pages": 1
-  }
-}
-```
-
-**Example**:
-```bash
-# Query specific address across all chains
-curl -H "Authorization: Bearer devtoken" \
-  "http://localhost:3000/api/crosschain/entities/accounts?filters={\"address\":\"851e90eaef1fa27debaee2c2591503bdeec1d123\"}"
-
-# Query specific chain
-curl -H "Authorization: Bearer devtoken" \
-  "http://localhost:3000/api/crosschain/entities/accounts?filters={\"chain_id\":1}"
-```
-
-## Get Crosschain Entity Schema
-
-**Route**: `GET /api/crosschain/entities/{entity}/schema`
-
-**Description**: Get the schema definition for a cross-chain entity type
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **entity**: Entity type
-
-**Response**:
-```json
-{
-  "entity": "accounts",
-  "fields": [
-    {
-      "name": "chain_id",
-      "type": "UInt64",
-      "description": "Chain identifier",
-      "filterable": true,
-      "sortable": true
-    },
-    {
-      "name": "address",
-      "type": "String",
-      "description": "Account address (hex)",
-      "filterable": true,
-      "sortable": false
-    },
-    {
-      "name": "amount",
-      "type": "UInt64",
-      "description": "Account balance",
-      "filterable": true,
-      "sortable": true
-    },
-    {
-      "name": "height",
-      "type": "UInt64",
-      "description": "Block height of latest state",
-      "filterable": true,
-      "sortable": true
-    }
-  ]
-}
-```
-
-**Example**:
-```bash
-curl -H "Authorization: Bearer devtoken" \
-  http://localhost:3000/api/crosschain/entities/accounts/schema
-```
-
-## Resync Chain Crosschain
-
-**Route**: `POST /api/crosschain/resync/{chainID}`
-
-**Description**: Trigger resync of all cross-chain tables for a specific chain
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **chainID**: Chain ID
-
-**Response**:
-```json
-{
-  "message": "Resync started for all tables",
-  "chain_id": 1,
-  "tables": 11,
-  "estimated_duration": "5m"
-}
-```
-
-**Example**:
-```bash
-curl -X POST http://localhost:3000/api/crosschain/resync/1 \
-  -H "Authorization: Bearer devtoken"
-```
-
-## Resync Table Crosschain
-
-**Route**: `POST /api/crosschain/resync/{chainID}/{table}`
-
-**Description**: Trigger resync of a specific cross-chain table for a chain
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **chainID**: Chain ID
-- **table**: Table name (e.g., "accounts", "validators")
-
-**Response**:
-```json
-{
-  "message": "Resync started",
-  "chain_id": 1,
-  "table": "accounts",
-  "estimated_duration": "30s"
-}
-```
-
-**Example**:
-```bash
-curl -X POST http://localhost:3000/api/crosschain/resync/1/accounts \
-  -H "Authorization: Bearer devtoken"
-```
-
-## Get Sync Status
-
-**Route**: `GET /api/crosschain/sync-status/{chainID}/{table}`
-
-**Description**: Get synchronization status for a specific table
-
-**Authentication**: Required (Bearer token)
-
-**Path Parameters**:
-- **chainID**: Chain ID
-- **table**: Table name
-
-**Response**:
-```json
-{
-  "chain_id": 1,
-  "table": "accounts",
-  "status": "synced",
-  "last_sync": "2025-11-07T12:34:56Z",
-  "records_synced": 150,
-  "materialized_view_status": "running"
-}
-```
-
-**Example**:
-```bash
-curl -H "Authorization: Bearer devtoken" \
-  http://localhost:3000/api/crosschain/sync-status/1/accounts
-```
-
-<hr/>
-
 # LP Position Snapshots
 
 LP Position Snapshots capture daily snapshots of liquidity provider positions across all chains. These snapshots are computed via scheduled Temporal workflows that run hourly per chain.
+
+## Get LP Snapshot Schedule
+
+**Route**: `GET /api/chains/{id}/lp-schedule`
+
+**Description**: Get the current status of an LP snapshot schedule for a chain
+
+**Authentication**: Required (Bearer token)
+
+**Path Parameters**:
+- **id**: Chain ID
+
+**Response**:
+```json
+{
+  "chain_id": 1,
+  "schedule_id": "chain:1:lpsnapshot",
+  "paused": false,
+  "next_run": "2025-01-10T13:00:00Z",
+  "last_run": "2025-01-10T12:00:00Z",
+  "created_at": "2024-12-01T00:00:00Z"
+}
+```
+
+**Error Response** (404 Not Found):
+```json
+{
+  "error": "schedule not found"
+}
+```
+
+**Example**:
+```bash
+curl -H "Authorization: Bearer devtoken" \
+  http://localhost:3000/api/chains/1/lp-schedule
+```
 
 ## Create LP Snapshot Schedule
 

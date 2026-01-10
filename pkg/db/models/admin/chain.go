@@ -20,6 +20,7 @@ const (
 var ChainColumns = []ColumnDef{
 	{Name: "chain_id", Type: "UInt64"},
 	{Name: "chain_name", Type: "String"},
+	{Name: "namespace_uid", Type: "String"}, // Unique ID for Temporal namespace (e.g., "abc123")
 	{Name: "rpc_endpoints", Type: "Array(String)"},
 	{Name: "paused", Type: "UInt8"},
 	{Name: "deleted", Type: "UInt8"},
@@ -48,6 +49,7 @@ var ChainColumns = []ColumnDef{
 type Chain struct {
 	ChainID               uint64    `json:"chain_id" ch:"chain_id"` // ORDER BY set via builder
 	ChainName             string    `json:"chain_name" ch:"chain_name"`
+	NamespaceUID          string    `json:"namespace_uid" ch:"namespace_uid"` // Unique ID for Temporal namespace (regenerated on hard-delete/recreate)
 	RPCEndpoints          []string  `json:"rpc_endpoints" ch:"rpc_endpoints"` // []string -> Array(String)
 	Paused                uint8     `json:"paused" ch:"paused"`
 	Deleted               uint8     `json:"deleted" ch:"deleted"`

@@ -10,8 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
-	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
-	crosschainstore "github.com/canopy-network/canopyx/pkg/db/crosschain"
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/rpc"
 	temporalclient "github.com/canopy-network/canopyx/pkg/temporal"
@@ -20,10 +19,9 @@ import (
 type Context struct {
 	ChainID uint64
 	Logger  *zap.Logger
-	// Admin and per Chain DBs
-	AdminDB      adminstore.Store
-	ChainDB      chainstore.Store
-	CrossChainDB crosschainstore.Store
+	// Database stores
+	AdminDB  adminstore.Store
+	GlobalDB globalstore.Store // New single-DB architecture (replaces per-chain DB)
 	// For RPC calls to the blockchain
 	RPCFactory rpc.Factory
 	RPCOpts    rpc.Opts
@@ -38,12 +36,13 @@ type Context struct {
 	workerPoolSize       int
 }
 
-// GetChainDb returns the chain database (must be initialized at startup).
-func (ac *Context) GetChainDb(ctx context.Context, chainID uint64) (chainstore.Store, error) {
-	if ac.ChainDB == nil {
-		return nil, fmt.Errorf("ChainDB not initialized - this is a programming error")
+// GetGlobalDb returns the global database (must be initialized at startup).
+// This replaces the old GetChainDb method as part of the single-DB architecture migration.
+func (ac *Context) GetGlobalDb(ctx context.Context) (globalstore.Store, error) {
+	if ac.GlobalDB == nil {
+		return nil, fmt.Errorf("GlobalDB not initialized - this is a programming error")
 	}
-	return ac.ChainDB, nil
+	return ac.GlobalDB, nil
 }
 
 // rpcClient creates and returns an RPC client using the provided endpoints and the context's RPCFactory or default factory.

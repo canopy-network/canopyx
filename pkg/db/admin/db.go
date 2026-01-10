@@ -44,27 +44,19 @@ func (db *DB) Close() error {
 	return db.Db.Close()
 }
 
+// GetConnection returns the underlying ClickHouse driver connection.
 func (db *DB) GetConnection() driver.Conn {
 	return db.Db
+}
+
+// GetClient returns the underlying ClickHouse client.
+func (db *DB) GetClient() clickhouse.Client {
+	return db.Client
 }
 
 // DatabaseName returns the name of the cross-chain database
 func (db *DB) DatabaseName() string {
 	return db.Name
-}
-
-// DropChainDatabase drops the chain-specific database.
-// Uses DROP DATABASE IF EXISTS, which is safe to call even if the database doesn't exist.
-func (db *DB) DropChainDatabase(ctx context.Context, chainID uint64) error {
-	dbName := clickhouse.SanitizeName(fmt.Sprintf("chain_%d", chainID))
-
-	// Now drop the database on all cluster nodes
-	// SYNC ensures drop completes on all replicas before returning
-	query := fmt.Sprintf(`DROP DATABASE IF EXISTS "%s" %s SYNC`, dbName, db.OnCluster())
-	if err := db.Db.Exec(ctx, query); err != nil {
-		return fmt.Errorf("drop chain database %s: %w", dbName, err)
-	}
-	return nil
 }
 
 // InitializeDB ensures the required database and tables for indexing are created if they do not already exist.

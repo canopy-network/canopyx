@@ -26,7 +26,7 @@ func (wc *Context) ReindexSchedulerWorkflow(ctx workflow.Context, input types.Wo
 	// Activity options for batch scheduling
 	// Use regular activities (not local) to distribute load across workers
 	// Timeout increased to 2 minutes to accommodate larger batch sizes
-	ao := workflow.ActivityOptions{
+	ao := workflow.LocalActivityOptions{
 		StartToCloseTimeout: 2 * time.Minute,
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    200 * time.Millisecond,
@@ -34,9 +34,8 @@ func (wc *Context) ReindexSchedulerWorkflow(ctx workflow.Context, input types.Wo
 			MaximumInterval:    2 * time.Second,
 			MaximumAttempts:    0, // Unlimited retries
 		},
-		TaskQueue: wc.ChainClient.OpsQueue,
 	}
-	activityCtx := workflow.WithActivityOptions(ctx, ao)
+	activityCtx := workflow.WithLocalActivityOptions(ctx, ao)
 
 	currentHeight := input.EndHeight // Start from newest
 	startHeight := input.StartHeight
@@ -74,7 +73,7 @@ func (wc *Context) ReindexSchedulerWorkflow(ctx workflow.Context, input types.Wo
 		}
 
 		var batchResult types.ActivityReindexBatchOutput
-		err := workflow.ExecuteActivity(activityCtx, wc.ActivityContext.StartReindexWorkflowBatch, batchInput).Get(activityCtx, &batchResult)
+		err := workflow.ExecuteLocalActivity(activityCtx, wc.ActivityContext.StartReindexWorkflowBatch, batchInput).Get(activityCtx, &batchResult)
 		if err != nil {
 			logger.Error("Failed to schedule reindex batch",
 				"start", batchStartHeight,

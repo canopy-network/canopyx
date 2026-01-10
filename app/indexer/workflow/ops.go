@@ -26,13 +26,35 @@ const (
 
 var schedulerContinueThreshold = 5000 // ContinueAsNew after 5k blocks (more frequent to avoid large histories)
 
-// SetSchedulerContinueThresholdForTesting allows tests to override the ContinueAsNew threshold.
-// It returns a cleanup function that restores the previous value.
-func SetSchedulerContinueThresholdForTesting(threshold int) func() {
-	prev := schedulerContinueThreshold
-	schedulerContinueThreshold = threshold
-	return func() {
-		schedulerContinueThreshold = prev
+// CalculateBlockPriority determines priority based on block age.
+// Time-based priority calculation: blockAge = (latest - height) × blockTimeSeconds
+// Priority levels:
+// - Ultra High (5): Live blocks from HeadScan
+// - High (4): Last 24 hours (4,320 blocks)
+// - Medium (3): 24-48 hours (4,320 blocks)
+// - Low (2): 48-72 hours (4,320 blocks)
+// - Ultra Low (1): Older than 72 hours
+func CalculateBlockPriority(latest, height, blockTimeSeconds uint64, isLive bool) int {
+	if isLive {
+		return PriorityUltraHigh
+	}
+
+	if height >= latest {
+		return PriorityHigh
+	}
+
+	blockAge := (latest - height) * blockTimeSeconds // in seconds
+	hoursAgo := blockAge / 3600
+
+	switch {
+	case hoursAgo <= 24:
+		return PriorityHigh
+	case hoursAgo <= 48:
+		return PriorityMedium
+	case hoursAgo <= 72:
+		return PriorityLow
+	default:
+		return PriorityUltraLow
 	}
 }
 
@@ -335,38 +357,6 @@ func (wc *Context) GapScanWorkflow(ctx workflow.Context) error {
 	return nil
 }
 
-// CalculateBlockPriority determines priority based on block age.
-// Time-based priority calculation: blockAge = (latest - height) × blockTimeSeconds
-// Priority levels:
-// - Ultra High (5): Live blocks from HeadScan
-// - High (4): Last 24 hours (4,320 blocks)
-// - Medium (3): 24-48 hours (4,320 blocks)
-// - Low (2): 48-72 hours (4,320 blocks)
-// - Ultra Low (1): Older than 72 hours
-func CalculateBlockPriority(latest, height, blockTimeSeconds uint64, isLive bool) int {
-	if isLive {
-		return PriorityUltraHigh
-	}
-
-	if height >= latest {
-		return PriorityHigh
-	}
-
-	blockAge := (latest - height) * blockTimeSeconds // in seconds
-	hoursAgo := blockAge / 3600
-
-	switch {
-	case hoursAgo <= 24:
-		return PriorityHigh
-	case hoursAgo <= 48:
-		return PriorityMedium
-	case hoursAgo <= 72:
-		return PriorityLow
-	default:
-		return PriorityUltraLow
-	}
-}
-
 // SchedulerWorkflow handles batch scheduling for large block ranges (e.g., 700k blocks).
 // Optimized for Temporal stability:
 // - Batches workflow starts to reduce API load
@@ -378,7 +368,7 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.WorkflowS
 	// Activity options for batched StartIndexWorkflow calls
 	// Use regular activities (not local) to distribute load across workers
 	// Timeout increased to 2 minutes to accommodate larger batch sizes (5000+ workflows)
-	ao := workflow.ActivityOptions{
+	ao := workflow.LocalActivityOptions{
 		StartToCloseTimeout: 2 * time.Minute,
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    200 * time.Millisecond,
@@ -386,9 +376,8 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.WorkflowS
 			MaximumInterval:    2 * time.Second,
 			MaximumAttempts:    0,
 		},
-		TaskQueue: wc.ChainClient.OpsQueue,
 	}
-	activityCtx := workflow.WithActivityOptions(ctx, ao)
+	activityCtx := workflow.WithLocalActivityOptions(ctx, ao)
 
 	startHeight := input.StartHeight
 	endHeight := input.EndHeight
@@ -433,7 +422,7 @@ func (wc *Context) SchedulerWorkflow(ctx workflow.Context, input types.WorkflowS
 			EndHeight:   currentHeight,
 			PriorityKey: priority,
 		}
-		err := workflow.ExecuteActivity(activityCtx, wc.ActivityContext.StartIndexWorkflowBatch, batchInput).Get(activityCtx, &batchResult)
+		err := workflow.ExecuteLocalActivity(activityCtx, wc.ActivityContext.StartIndexWorkflowBatch, batchInput).Get(activityCtx, &batchResult)
 		if err != nil {
 			logger.Error("Failed to schedule batch",
 				"start_height", batchStartHeight,

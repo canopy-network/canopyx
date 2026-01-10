@@ -36,6 +36,9 @@ var ValidatorNonSigningInfoColumns = []ColumnDef{
 // - EventAutoBeginUnstaking: when a validator is automatically unstaked
 // - EventFinishUnstaking: when unstaking completes
 type ValidatorNonSigningInfo struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Identity
 	Address string `ch:"address" json:"address"` // Hex string representation of validator address
 

@@ -23,6 +23,9 @@ var CommitteePaymentColumns = []ColumnDef{
 //   - All recipients for a committee: SELECT DISTINCT address FROM committee_payments FINAL WHERE committee_id = ?
 //   - Payment history for an address: SELECT * FROM committee_payments FINAL WHERE address = ? ORDER BY height DESC
 type CommitteePayment struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	CommitteeID uint64    `ch:"committee_id" json:"committee_id"` // Committee/chain ID
 	Address     string    `ch:"address" json:"address"`           // Recipient address (validator/delegate)
 	Percent     uint64    `ch:"percent" json:"percent"`           // Percentage share (0-100)

@@ -7,7 +7,6 @@ const (
 	GapScanWorkflowName          = "GapScanWorkflow"
 	ReindexSchedulerWorkflowName = "ReindexSchedulerWorkflow"
 	SchedulerWorkflowName        = "SchedulerWorkflow"
-	CleanupStagingWorkflowName   = "CleanupStagingWorkflow"
 	PollSnapshotWorkflowName     = "PollSnapshotWorkflow"
 	ProposalSnapshotWorkflowName = "ProposalSnapshotWorkflow"
 	LPSnapshotWorkflowName       = "LPSnapshotWorkflow"

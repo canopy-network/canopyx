@@ -31,7 +31,7 @@ func (ac *Context) IndexProposals(ctx context.Context) (types.ActivityIndexPropo
 	}
 
 	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
+	chainDb, chainDbErr := ac.GetGlobalDb(ctx)
 	if chainDbErr != nil {
 		return types.ActivityIndexProposalsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}
@@ -57,7 +57,6 @@ func (ac *Context) IndexProposals(ctx context.Context) (types.ActivityIndexPropo
 			// Continue with partial data - store the raw JSON but skip exploded fields
 			snapshot := &indexer.ProposalSnapshot{
 				ProposalHash: proposalHash,
-				Proposal:     string(proposalData.Proposal),
 				Approve:      proposalData.Approve,
 				SnapshotTime: snapshotTime,
 				// Exploded fields will be empty/zero values
@@ -72,7 +71,6 @@ func (ac *Context) IndexProposals(ctx context.Context) (types.ActivityIndexPropo
 
 		snapshot := &indexer.ProposalSnapshot{
 			ProposalHash:       proposalHash,
-			Proposal:           string(proposalData.Proposal), // Convert json.RawMessage to string
 			Approve:            proposalData.Approve,
 			SnapshotTime:       snapshotTime,
 			ProposalType:       proposalFields.ProposalType,

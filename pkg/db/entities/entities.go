@@ -61,109 +61,73 @@ type Entity string
 // When adding a new entity, add it here and update the allEntities slice below.
 const (
 	// Blocks represents the blockchain blocks entity.
-	// Production table: blocks
-	// Staging table: blocks_staging
 	Blocks Entity = "blocks"
 
 	// Transactions represents the transaction entity.
-	// Production table: txs
-	// Staging table: txs_staging
 	Transactions Entity = "txs"
 
 	// BlockSummaries represents the block summary aggregations.
-	// Production table: block_summaries
-	// Staging table: block_summaries_staging
 	BlockSummaries Entity = "block_summaries"
 
 	// Accounts represents the account balance entity.
-	// Production table: accounts
-	// Staging table: accounts_staging
 	Accounts Entity = "accounts"
 
 	// Events represents the blockchain events entity.
-	// Production table: events
-	// Staging table: events_staging
 	Events Entity = "events"
 
 	// Orders represents the order entity.
-	// Production table: orders
-	// Staging table: orders_staging
 	Orders Entity = "orders"
 
 	// Pools represents the liquidity pools entity.
-	// Production table: pools
-	// Staging table: pools_staging
 	Pools Entity = "pools"
 
 	// DexPrices represents the DEX price data entity.
-	// Production table: dex_prices
-	// Staging table: dex_prices_staging
 	DexPrices Entity = "dex_prices"
 
 	// DexOrders represents the DEX limit orders entity.
-	// Production table: dex_orders
-	// Staging table: dex_orders_staging
 	DexOrders Entity = "dex_orders"
 
 	// DexDeposits represents the DEX liquidity deposits entity.
-	// Production table: dex_deposits
-	// Staging table: dex_deposits_staging
 	DexDeposits Entity = "dex_deposits"
 
 	// DexWithdrawals represents the DEX liquidity withdrawals entity.
-	// Production table: dex_withdrawals
-	// Staging table: dex_withdrawals_staging
 	DexWithdrawals Entity = "dex_withdrawals"
 
 	// PoolPointsByHolder represents the pool points by holder entity.
-	// Production table: pool_points_by_holder
-	// Staging table: pool_points_by_holder_staging
 	PoolPointsByHolder Entity = "pool_points_by_holder"
 
 	// Params represents the chain parameters entity.
-	// Production table: params
-	// Staging table: params_staging
 	Params Entity = "params"
 
 	// Validators represents the validator entity.
-	// Production table: validators
-	// Staging table: validators_staging
 	Validators Entity = "validators"
 
 	// ValidatorNonSigningInfo represents the validator non-signing info entity.
-	// Production table: validator_non_signing_info
-	// Staging table: validator_non_signing_info_staging
 	ValidatorNonSigningInfo Entity = "validator_non_signing_info"
 
 	// ValidatorDoubleSigningInfo represents the validator double signing info entity.
-	// Production table: validator_double_signing_info
-	// Staging table: validator_double_signing_info_staging
 	ValidatorDoubleSigningInfo Entity = "validator_double_signing_info"
 
 	// Committees represents the committee data entity.
-	// Production table: committees
-	// Staging table: committees_staging
 	Committees Entity = "committees"
 
 	// CommitteeValidators represents the committee-validator junction table entity.
-	// Production table: committee_validators
-	// Staging table: committee_validators_staging
 	CommitteeValidators Entity = "committee_validators"
 
 	// CommitteePayments represents the committee payment distribution entity.
-	// Production table: committee_payments
-	// Staging table: committee_payments_staging
 	CommitteePayments Entity = "committee_payments"
 
 	// PollSnapshots represents the governance poll snapshots entity.
-	// Production table: poll_snapshots
-	// Staging table: poll_snapshots_staging
 	PollSnapshots Entity = "poll_snapshots"
 
+	// ProposalSnapshots represents the governance proposal snapshots entity.
+	ProposalSnapshots Entity = "proposal_snapshots"
+
 	// Supply represents the chain supply metrics entity.
-	// Production table: supply
-	// Staging table: supply_staging
 	Supply Entity = "supply"
+
+	// LPPositionSnapshots represents the LP position snapshots entity.
+	LPPositionSnapshots Entity = "lp_position_snapshots"
 
 	// Future entities (uncomment and add to allEntities when implementing):
 	// Logs Entity = "logs"
@@ -195,7 +159,9 @@ var allEntities = []Entity{
 	CommitteeValidators,
 	CommitteePayments,
 	PollSnapshots,
+	ProposalSnapshots,
 	Supply,
+	LPPositionSnapshots,
 }
 
 // entitySet is a pre-computed map for O(1) validation lookups.
@@ -366,8 +332,15 @@ func Count() int {
 // entitiesWithoutStaging lists entities that don't use the staging pattern.
 // These are time-based snapshots captured via scheduled workflows, not height-based indexing.
 var entitiesWithoutStaging = map[Entity]bool{
-	PollSnapshots: true, // Time-based snapshots, no staging table
+	PollSnapshots:       true, // Time-based snapshots, no staging table
+	LPPositionSnapshots: true, // Computed via scheduled workflow, no staging table
 	// ProposalSnapshots uses staging pattern (height-based)
+}
+
+// entitiesWithCustomChainIDColumn maps entities that use a non-standard chain ID column name.
+// Most entities use "chain_id", but some (like LP snapshots) use different column names.
+var entitiesWithCustomChainIDColumn = map[Entity]string{
+	LPPositionSnapshots: "source_chain_id", // LP snapshots track the source chain where LP staked
 }
 
 // AllWithStaging returns entities that use the staging table pattern.
@@ -388,6 +361,21 @@ func AllWithStaging() []Entity {
 // HasStaging returns true if this entity uses the staging table pattern.
 func (e Entity) HasStaging() bool {
 	return !entitiesWithoutStaging[e]
+}
+
+// ChainIDColumn returns the column name used for chain ID filtering.
+// Most entities use "chain_id", but some entities (like LP position snapshots)
+// use different column names like "source_chain_id".
+//
+// Example:
+//
+//	entities.Blocks.ChainIDColumn() // Returns: "chain_id"
+//	entities.LPPositionSnapshots.ChainIDColumn() // Returns: "source_chain_id"
+func (e Entity) ChainIDColumn() string {
+	if col, ok := entitiesWithCustomChainIDColumn[e]; ok {
+		return col
+	}
+	return "chain_id"
 }
 
 // validEntitiesString returns a comma-separated list of valid entity names.

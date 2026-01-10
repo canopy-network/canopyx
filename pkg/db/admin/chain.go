@@ -2,16 +2,27 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
 	adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
 	"github.com/canopy-network/canopyx/pkg/utils"
-	"github.com/puzpuzpuz/xsync/v4"
 )
+
+// generateNamespaceUID generates a short unique identifier for Temporal namespace naming.
+// Returns a 6-character hex string (e.g., "a1b2c3").
+func generateNamespaceUID() string {
+	b := make([]byte, 3) // 3 bytes = 6 hex chars
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based if crypto/rand fails
+		return fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFFFF)
+	}
+	return hex.EncodeToString(b)
+}
 
 // initChains creates the chain table using raw SQL.
 // Table: ReplicatedReplacingMergeTree(updated_at) ORDER BY (chain_id)
@@ -33,35 +44,25 @@ func (db *DB) initChains(ctx context.Context) error {
 	return nil
 }
 
-// EnsureChainsDbs ensures the required database and tables for indexing are created if they do not already exist.
-// Uses shared connection pool for efficiency since admin only needs occasional reads.
-func (db *DB) EnsureChainsDbs(ctx context.Context) (*xsync.Map[string, chain.Store], error) {
-	chainDbMap := xsync.NewMap[string, chain.Store]()
-
-	chains, err := db.ListChain(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, c := range chains {
-		// Reuses admin DB's connection pool (shared client pattern)
-		// IMPORTANT: Do NOT call Close() on these chain DBs - they share the admin DB's connection pool.
-		// The admin DB is responsible for closing the shared connection when it shuts down.
-		// Calling Close() on any shared client would close the pool for ALL clients.
-		//nolint:gocritic // False positive: NewWithSharedClient reuses connection pool, no Close() needed
-		chainDb := chain.NewWithSharedClient(db.Client, c.ChainID)
-		// Store with a string key for map compatibility
-		chainDbMap.Store(fmt.Sprintf("%d", c.ChainID), chainDb)
-	}
-
-	return chainDbMap, nil
-}
-
 // UpsertChain creates or updates a chain in the database.
 func (db *DB) UpsertChain(ctx context.Context, c *adminmodels.Chain) error {
 	now := time.Now()
-	if c.CreatedAt.IsZero() {
-		c.CreatedAt = now
+
+	// Check if chain already exists to preserve NamespaceUID and CreatedAt
+	existing, err := db.GetChain(ctx, c.ChainID)
+	if err == nil && existing != nil {
+		// Chain exists - preserve NamespaceUID (never regenerate for existing chains)
+		c.NamespaceUID = existing.NamespaceUID
+		// Preserve original CreatedAt
+		c.CreatedAt = existing.CreatedAt
+	} else {
+		// New chain - generate NamespaceUID and set CreatedAt
+		if c.NamespaceUID == "" {
+			c.NamespaceUID = generateNamespaceUID()
+		}
+		if c.CreatedAt.IsZero() {
+			c.CreatedAt = now
+		}
 	}
 	c.UpdatedAt = now
 
@@ -110,19 +111,20 @@ func (db *DB) UpsertChain(ctx context.Context, c *adminmodels.Chain) error {
 func (db *DB) InsertChain(ctx context.Context, c *adminmodels.Chain) error {
 	query := fmt.Sprintf(`
 		INSERT INTO "%s"."%s" (
-			chain_id, chain_name, rpc_endpoints, paused, deleted, image,
+			chain_id, chain_name, namespace_uid, rpc_endpoints, paused, deleted, image,
 			min_replicas, max_replicas, reindex_min_replicas, reindex_max_replicas, reindex_scale_threshold,
 			notes, created_at, updated_at,
 			rpc_health_status, rpc_health_message, rpc_health_updated_at,
 			queue_health_status, queue_health_message, queue_health_updated_at,
 			deployment_health_status, deployment_health_message, deployment_health_updated_at,
 			overall_health_status, overall_health_updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, db.Name, adminmodels.ChainsTableName)
 
 	return db.Db.Exec(ctx, query,
 		c.ChainID,
 		c.ChainName,
+		c.NamespaceUID,
 		c.RPCEndpoints,
 		c.Paused,
 		c.Deleted,
@@ -175,6 +177,36 @@ func (db *DB) GetChain(ctx context.Context, id uint64) (*adminmodels.Chain, erro
 type ChainRPCEndpoints struct {
 	ChainID      uint64   `ch:"chain_id"`
 	RPCEndpoints []string `ch:"rpc_endpoints"`
+}
+
+// ChainNamespaceInfo is a lightweight struct for Temporal namespace queries.
+// Contains chain_id and namespace_uid for constructing namespace names.
+type ChainNamespaceInfo struct {
+	ChainID      uint64 `ch:"chain_id"`
+	NamespaceUID string `ch:"namespace_uid"`
+}
+
+// GetChainNamespaceInfo returns the chain_id and namespace_uid for a chain.
+// This is a lightweight query optimized for Temporal namespace naming.
+// The namespace name format is "{chain_id}-{namespace_uid}" (e.g., "5-a1b2c3").
+func (db *DB) GetChainNamespaceInfo(ctx context.Context, chainID uint64) (*ChainNamespaceInfo, error) {
+	query := fmt.Sprintf(`
+		SELECT chain_id, namespace_uid
+		FROM "%s"."%s" FINAL
+		WHERE chain_id = ?
+		LIMIT 1
+	`, db.Name, adminmodels.ChainsTableName)
+
+	var results []ChainNamespaceInfo
+	if err := db.Select(ctx, &results, query, chainID); err != nil {
+		return nil, fmt.Errorf("failed to query chain %d namespace_info: %w", chainID, err)
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("chain %d not found", chainID)
+	}
+
+	return &results[0], nil
 }
 
 // GetChainRPCEndpoints returns only the chain_id and rpc_endpoints for a chain.
@@ -233,27 +265,6 @@ func (db *DB) HardDeleteChain(ctx context.Context, chainID uint64) error {
 		adminmodels.ChainsTableName,
 	)
 	return db.Exec(ctx, query, chainID)
-}
-
-// RecoverChain restores a soft-deleted chain by setting deleted = 0.
-// Returns an error if the chain doesn't exist or is already active.
-func (db *DB) RecoverChain(ctx context.Context, chainID uint64) error {
-	// First, get the current chain to verify it exists and is deleted
-	c, err := db.GetChain(ctx, chainID)
-	if err != nil {
-		return fmt.Errorf("chain not found: %w", err)
-	}
-
-	if c.Deleted == 0 {
-		return fmt.Errorf("chain %d is already active (not deleted)", chainID)
-	}
-
-	// Set deleted = 0
-	c.Deleted = 0
-	c.UpdatedAt = time.Now()
-
-	// Insert a new row with deleted = 0
-	return db.InsertChain(ctx, c)
 }
 
 // PatchChains applies bulk partial updates by inserting new versioned rows

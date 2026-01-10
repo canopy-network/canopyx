@@ -3,10 +3,11 @@ package controller
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
-	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/entities"
+	"github.com/canopy-network/canopyx/pkg/db/global"
 	"github.com/go-jose/go-jose/v4/json"
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
@@ -14,7 +15,7 @@ import (
 
 // TableSchemaResponse represents the response structure for schema introspection
 type TableSchemaResponse struct {
-	Columns []chainstore.Column `json:"columns"`
+	Columns []global.Column `json:"columns"`
 }
 
 // HandleSchema returns the schema for the specified table
@@ -46,20 +47,21 @@ func (c *Controller) HandleSchema(w http.ResponseWriter, r *http.Request) {
 	// Use the actual table name (with _staging suffix if it was provided)
 	actualTable := tableName
 
-	// Check if this is a deleted chain query
+	// Check if this is a deleted chain query (for logging context)
 	isDeleted := r.URL.Query().Get("deleted") == "true"
+	_ = isDeleted // Unused but kept for logging context
 
 	ctx := context.Background()
 
-	store, ok := c.App.LoadChainStore(ctx, chainID)
-	if !ok {
-		c.App.Logger.Error("Failed to load chain store for schema request",
-			zap.String("chain_id", chainID),
-			zap.String("table", tableName),
-			zap.Bool("is_deleted", isDeleted))
-		http.Error(w, "chain not indexed", http.StatusNotFound)
+	// Parse chain ID
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		http.Error(w, "invalid chain_id", http.StatusBadRequest)
 		return
 	}
+
+	// Get GlobalDB configured for this chain
+	store := c.App.GetGlobalDBForChain(chainIDUint)
 
 	// Get column information using DESCRIBE TABLE
 	columns, err := store.DescribeTable(ctx, actualTable)

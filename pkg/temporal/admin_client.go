@@ -23,12 +23,13 @@ type AdminClient struct {
 	Namespace string // "canopyx"
 	HostPort  string
 	Config    NamespaceConfig
+	logger    *zap.Logger
 
 	// Admin-specific queue
 	MaintenanceQueue string // "maintenance"
 
 	// Admin-specific schedule patterns
-	CrossChainCompactionScheduleID string // "crosschain:compaction"
+	GlobalCompactionScheduleID string // "global:compaction"
 }
 
 // NewAdminClient creates a client for the admin namespace (canopyx).
@@ -72,9 +73,10 @@ func NewAdminClient(ctx context.Context, logger *zap.Logger) (*AdminClient, erro
 		Namespace: ns,
 		HostPort:  host,
 		Config:    DefaultNamespaceConfig(),
+		logger:    logger,
 		// Use constants from types.go
-		MaintenanceQueue:               QueueMaintenance,
-		CrossChainCompactionScheduleID: ScheduleCrossChainCompact,
+		MaintenanceQueue:           QueueMaintenance,
+		GlobalCompactionScheduleID: ScheduleGlobalCompaction,
 	}, nil
 }
 
@@ -82,6 +84,7 @@ func NewAdminClient(ctx context.Context, logger *zap.Logger) (*AdminClient, erro
 func (c *AdminClient) EnsureNamespace(ctx context.Context, retention time.Duration) error {
 	nsClient, err := client.NewNamespaceClient(client.Options{
 		HostPort: c.HostPort,
+		Logger:   NewZapAdapter(c.logger),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create namespace client: %w", err)
@@ -162,14 +165,18 @@ func (c *AdminClient) GetDeleteChainWorkflowID(chainID uint64) string {
 }
 
 // StartDeleteChainWorkflow starts the hard delete workflow for a chain.
+// renamedNamespace is the Temporal namespace after deletion (for cleanup monitoring).
 // Returns the workflow ID and run ID for tracking.
-func (c *AdminClient) StartDeleteChainWorkflow(ctx context.Context, chainID uint64) (workflowID string, runID string, err error) {
+func (c *AdminClient) StartDeleteChainWorkflow(ctx context.Context, chainID uint64, renamedNamespace string) (workflowID string, runID string, err error) {
 	workflowID = c.GetDeleteChainWorkflowID(chainID)
 
 	run, err := c.TClient.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
 		ID:        workflowID,
 		TaskQueue: c.MaintenanceQueue,
-	}, "DeleteChainWorkflow", DeleteChainWorkflowInput{ChainID: chainID})
+	}, "DeleteChainWorkflow", DeleteChainWorkflowInput{
+		ChainID:          chainID,
+		RenamedNamespace: renamedNamespace,
+	})
 	if err != nil {
 		return "", "", fmt.Errorf("failed to start delete chain workflow: %w", err)
 	}
@@ -179,7 +186,8 @@ func (c *AdminClient) StartDeleteChainWorkflow(ctx context.Context, chainID uint
 
 // DeleteChainWorkflowInput is the input for the DeleteChainWorkflow.
 type DeleteChainWorkflowInput struct {
-	ChainID uint64
+	ChainID          uint64
+	RenamedNamespace string
 }
 
 // Close closes the underlying Temporal client connection.

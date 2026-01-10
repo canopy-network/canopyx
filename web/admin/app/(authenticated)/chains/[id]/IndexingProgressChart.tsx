@@ -1,16 +1,52 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { apiFetch } from '../../../lib/api'
+
+// Timing metric options for the selector - Total is first (default)
+const TIMING_METRICS = [
+  { key: 'avg_total_time_ms', label: 'Total Processing Time', color: '#8b5cf6' },
+  { key: 'avg_fetch_block_ms', label: 'Fetch Block (RPC)', color: '#f59e0b' },
+  { key: 'avg_prepare_index_ms', label: 'Prepare Index', color: '#8b5cf6' },
+  { key: 'avg_index_accounts_ms', label: 'Index Accounts', color: '#10b981' },
+  { key: 'avg_index_committees_ms', label: 'Index Committees', color: '#3b82f6' },
+  { key: 'avg_index_dex_batch_ms', label: 'Index DEX Batch', color: '#ec4899' },
+  { key: 'avg_index_dex_prices_ms', label: 'Index DEX Prices', color: '#14b8a6' },
+  { key: 'avg_index_events_ms', label: 'Index Events', color: '#f97316' },
+  { key: 'avg_index_orders_ms', label: 'Index Orders', color: '#a855f7' },
+  { key: 'avg_index_params_ms', label: 'Index Params', color: '#06b6d4' },
+  { key: 'avg_index_pools_ms', label: 'Index Pools', color: '#84cc16' },
+  { key: 'avg_index_supply_ms', label: 'Index Supply', color: '#eab308' },
+  { key: 'avg_index_transactions_ms', label: 'Index Transactions', color: '#ef4444' },
+  { key: 'avg_index_validators_ms', label: 'Index Validators', color: '#22c55e' },
+  { key: 'avg_save_block_ms', label: 'Save Block', color: '#6366f1' },
+  { key: 'avg_save_block_summary_ms', label: 'Save Block Summary', color: '#d946ef' },
+] as const
+
+type TimingMetricKey = typeof TIMING_METRICS[number]['key']
 
 type ProgressDataPoint = {
   time: string
   height: number
-  avg_latency: number
-  avg_processing_time: number
+  avg_total_time_ms: number
   blocks_indexed: number
   velocity: number
+  avg_fetch_block_ms: number
+  avg_prepare_index_ms: number
+  avg_index_accounts_ms: number
+  avg_index_committees_ms: number
+  avg_index_dex_batch_ms: number
+  avg_index_dex_prices_ms: number
+  avg_index_events_ms: number
+  avg_index_orders_ms: number
+  avg_index_params_ms: number
+  avg_index_pools_ms: number
+  avg_index_supply_ms: number
+  avg_index_transactions_ms: number
+  avg_index_validators_ms: number
+  avg_save_block_ms: number
+  avg_save_block_summary_ms: number
 }
 
 type IndexingProgressChartProps = {
@@ -22,6 +58,7 @@ export default function IndexingProgressChart({ chainId }: IndexingProgressChart
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
   const [timeWindow, setTimeWindow] = useState<number>(24) // hours
+  const [selectedTiming, setSelectedTiming] = useState<TimingMetricKey>('avg_total_time_ms') // Default to Total
 
   useEffect(() => {
     const fetchData = async () => {
@@ -43,7 +80,6 @@ export default function IndexingProgressChart({ chainId }: IndexingProgressChart
     }
 
     fetchData()
-    // Refresh every 30 seconds
     const interval = setInterval(fetchData, 30_000)
     return () => clearInterval(interval)
   }, [chainId, timeWindow])
@@ -57,11 +93,26 @@ export default function IndexingProgressChart({ chainId }: IndexingProgressChart
       minute: '2-digit',
     }),
     height: point.height,
-    velocity: Math.round(point.velocity * 10) / 10, // blocks per minute
-    latency: Math.round(point.avg_latency * 10) / 10, // seconds
-    processingTime: Math.round(point.avg_processing_time), // milliseconds
+    velocity: Math.round(point.velocity * 10) / 10,
     blocksIndexed: point.blocks_indexed,
+    // All timing values for the selector
+    selectedTiming: Math.round((point[selectedTiming] || 0) * 10) / 10,
+    // Keep total time separately for summary
+    totalTime: Math.round(point.avg_total_time_ms * 10) / 10,
   }))
+
+  // Get the selected timing metric info
+  const selectedMetric = TIMING_METRICS.find(m => m.key === selectedTiming)
+
+  // Calculate summary stats (fixed, don't depend on selector)
+  const totalBlocksIndexed = data.reduce((sum, d) => sum + d.blocks_indexed, 0)
+  const avgVelocity = chartData.length > 0
+    ? chartData.reduce((sum, d) => sum + d.velocity, 0) / chartData.length
+    : 0
+  const avgTotalTime = chartData.length > 0
+    ? chartData.reduce((sum, d) => sum + d.totalTime, 0) / chartData.length
+    : 0
+  const currentHeight = chartData.length > 0 ? chartData[chartData.length - 1]?.height : 0
 
   if (loading && data.length === 0) {
     return (
@@ -133,49 +184,32 @@ export default function IndexingProgressChart({ chainId }: IndexingProgressChart
       </div>
 
       <div className="space-y-6 p-4">
-        {/* Height Progress Chart */}
-        <div>
-          <h4 className="mb-2 text-sm font-medium text-slate-300">Block Height Over Time</h4>
-          <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={chartData}>
-              <defs>
-                <linearGradient id="colorHeight" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-              <XAxis
-                dataKey="time"
-                stroke="#64748b"
-                style={{ fontSize: '11px' }}
-                tick={{ fill: '#94a3b8' }}
-              />
-              <YAxis
-                stroke="#64748b"
-                style={{ fontSize: '11px' }}
-                tick={{ fill: '#94a3b8' }}
-                tickFormatter={(value) => value.toLocaleString()}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#1e293b',
-                  border: '1px solid #475569',
-                  borderRadius: '8px',
-                  color: '#e2e8f0',
-                }}
-                labelStyle={{ color: '#94a3b8' }}
-              />
-              <Area
-                type="monotone"
-                dataKey="height"
-                stroke="#6366f1"
-                strokeWidth={2}
-                fillOpacity={1}
-                fill="url(#colorHeight)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+        {/* Summary Stats - At the top */}
+        <div className="grid gap-4 md:grid-cols-4 rounded-lg bg-slate-900/50 p-4">
+          <div className="text-center">
+            <p className="text-xs text-slate-400">Current Height</p>
+            <p className="mt-1 font-mono text-lg font-bold text-indigo-400">
+              {currentHeight.toLocaleString() || '—'}
+            </p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-slate-400">Blocks Indexed</p>
+            <p className="mt-1 font-mono text-lg font-bold text-blue-400">
+              {totalBlocksIndexed.toLocaleString()}
+            </p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-slate-400">Avg Velocity</p>
+            <p className="mt-1 font-mono text-lg font-bold text-green-400">
+              {avgVelocity.toFixed(1)} bl/min
+            </p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs text-slate-400">Avg Processing Time</p>
+            <p className="mt-1 font-mono text-lg font-bold text-purple-400">
+              {avgTotalTime.toFixed(1)}ms
+            </p>
+          </div>
         </div>
 
         {/* Velocity Chart */}
@@ -209,120 +243,62 @@ export default function IndexingProgressChart({ chainId }: IndexingProgressChart
                 dataKey="velocity"
                 stroke="#10b981"
                 strokeWidth={2}
-                dot={false}
+                dot={chartData.length < 50}
               />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Performance Metrics */}
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <h4 className="mb-2 text-sm font-medium text-slate-300">Avg Latency (seconds)</h4>
-            <ResponsiveContainer width="100%" height={120}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis
-                  dataKey="time"
-                  stroke="#64748b"
-                  style={{ fontSize: '11px' }}
-                  tick={{ fill: '#94a3b8' }}
-                />
-                <YAxis
-                  stroke="#64748b"
-                  style={{ fontSize: '11px' }}
-                  tick={{ fill: '#94a3b8' }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#1e293b',
-                    border: '1px solid #475569',
-                    borderRadius: '8px',
-                    color: '#e2e8f0',
-                  }}
-                  labelStyle={{ color: '#94a3b8' }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="latency"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+        {/* Combined Timing Chart with Selector (Total + Individual metrics) */}
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <h4 className="text-sm font-medium text-slate-300">Processing Time (ms)</h4>
+            <select
+              value={selectedTiming}
+              onChange={(e) => setSelectedTiming(e.target.value as TimingMetricKey)}
+              className="input w-auto px-2 py-1 text-xs"
+            >
+              {TIMING_METRICS.map((metric) => (
+                <option key={metric.key} value={metric.key}>
+                  {metric.label}
+                </option>
+              ))}
+            </select>
           </div>
-
-          <div>
-            <h4 className="mb-2 text-sm font-medium text-slate-300">Avg Processing Time (ms)</h4>
-            <ResponsiveContainer width="100%" height={120}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis
-                  dataKey="time"
-                  stroke="#64748b"
-                  style={{ fontSize: '11px' }}
-                  tick={{ fill: '#94a3b8' }}
-                />
-                <YAxis
-                  stroke="#64748b"
-                  style={{ fontSize: '11px' }}
-                  tick={{ fill: '#94a3b8' }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#1e293b',
-                    border: '1px solid #475569',
-                    borderRadius: '8px',
-                    color: '#e2e8f0',
-                  }}
-                  labelStyle={{ color: '#94a3b8' }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="processingTime"
-                  stroke="#8b5cf6"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Summary Stats */}
-        <div className="grid gap-4 md:grid-cols-4 rounded-lg bg-slate-900/50 p-4">
-          <div className="text-center">
-            <p className="text-xs text-slate-400">Current Height</p>
-            <p className="mt-1 font-mono text-lg font-bold text-indigo-400">
-              {chartData[chartData.length - 1]?.height.toLocaleString() || '—'}
-            </p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-slate-400">Avg Velocity</p>
-            <p className="mt-1 font-mono text-lg font-bold text-green-400">
-              {(
-                chartData.reduce((sum, d) => sum + d.velocity, 0) / chartData.length || 0
-              ).toFixed(1)}{' '}
-              bl/min
-            </p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-slate-400">Avg Latency</p>
-            <p className="mt-1 font-mono text-lg font-bold text-amber-400">
-              {(
-                chartData.reduce((sum, d) => sum + d.latency, 0) / chartData.length || 0
-              ).toFixed(1)}s
-            </p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-slate-400">Avg Processing</p>
-            <p className="mt-1 font-mono text-lg font-bold text-purple-400">
-              {Math.round(
-                chartData.reduce((sum, d) => sum + d.processingTime, 0) / chartData.length || 0
-              )}ms
-            </p>
-          </div>
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <XAxis
+                dataKey="time"
+                stroke="#64748b"
+                style={{ fontSize: '11px' }}
+                tick={{ fill: '#94a3b8' }}
+              />
+              <YAxis
+                stroke="#64748b"
+                style={{ fontSize: '11px' }}
+                tick={{ fill: '#94a3b8' }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#1e293b',
+                  border: '1px solid #475569',
+                  borderRadius: '8px',
+                  color: '#e2e8f0',
+                }}
+                labelStyle={{ color: '#94a3b8' }}
+                formatter={(value: number) => [`${value} ms`, selectedMetric?.label || 'Time']}
+              />
+              <Line
+                type="monotone"
+                dataKey="selectedTiming"
+                stroke={selectedMetric?.color || '#8b5cf6'}
+                strokeWidth={2}
+                dot={chartData.length < 50}
+                name={selectedMetric?.label}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
     </div>

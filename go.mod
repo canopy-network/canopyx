@@ -7,7 +7,7 @@ toolchain go1.24.3
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.37.2
 	github.com/alitto/pond/v2 v2.5.0
-	github.com/canopy-network/canopy v0.1.15-0.20251225182851-bcc795889f23
+	github.com/canopy-network/canopy v0.1.15-0.20260108192718-b7cc37c8d4fc
 	github.com/go-jose/go-jose/v4 v4.1.2
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/gorilla/mux v1.8.1

@@ -14,6 +14,7 @@ import { useBlockEvents } from '../../../hooks/useBlockEvents'
 import { TransactionTypeBreakdown } from './TransactionTypeBreakdown'
 import { TransactionList } from './TransactionList'
 import { EventTypeBreakdown } from './EventTypeBreakdown'
+import LPSnapshotManagement from './LPSnapshotManagement'
 
 // Types
 type QueueStatus = {
@@ -91,29 +92,6 @@ type ReindexPayload = {
   heights?: number[]
   from?: number
   to?: number
-}
-
-// Explorer tab types
-type ExplorerTable = 'blocks' | 'block_summaries' | 'txs' | 'txs_raw' | 'accounts' | 'events'
-
-type EntityInfo = {
-  name: string
-  table_name: string
-  staging_name: string
-  route_path: string
-}
-
-type EntitiesResponse = {
-  entities: EntityInfo[]
-}
-
-type SchemaColumn = {
-  name: string
-  type: string
-}
-
-type SchemaResponse = {
-  columns: SchemaColumn[]
 }
 
 type PaginatedResponse<T> = {
@@ -232,9 +210,9 @@ export default function ChainDetailPage() {
   const { notify } = useToast()
 
   // Get initial tab from URL, default to 'overview'
-  const tabFromUrl = searchParams.get('tab') as 'overview' | 'queues' | 'explorer' | 'settings' | null
-  const [activeTab, setActiveTab] = useState<'overview' | 'queues' | 'explorer' | 'settings'>(
-    tabFromUrl && ['overview', 'queues', 'explorer', 'settings'].includes(tabFromUrl)
+  const tabFromUrl = searchParams.get('tab') as 'overview' | 'queues' | 'settings' | null
+  const [activeTab, setActiveTab] = useState<'overview' | 'queues' | 'settings'>(
+    tabFromUrl && ['overview', 'queues', 'settings'].includes(tabFromUrl)
       ? tabFromUrl
       : 'overview'
   )
@@ -264,7 +242,7 @@ export default function ChainDetailPage() {
   }, [lastHeight, status])
 
   // Update URL when tab changes
-  const handleTabChange = (tab: 'overview' | 'queues' | 'explorer' | 'settings') => {
+  const handleTabChange = (tab: 'overview' | 'queues' | 'settings') => {
     setActiveTab(tab)
     const url = new URL(window.location.href)
     url.searchParams.set('tab', tab)
@@ -552,7 +530,6 @@ export default function ChainDetailPage() {
         <nav className="flex gap-6">
           {[
             { id: 'overview', label: 'Overview' },
-            { id: 'explorer', label: 'Explorer' },
             { id: 'settings', label: 'Settings' },
           ].map((tab) => (
             <button
@@ -581,8 +558,6 @@ export default function ChainDetailPage() {
           onRefresh={loadChainData}
         />
       )}
-
-      {activeTab === 'explorer' && <ExplorerTab chainId={chainId} isDeleted={config.deleted ? 1 : 0} />}
 
       {activeTab === 'settings' && (
         <SettingsTab config={config} onRefresh={loadChainData} isDeleted={config.deleted} />
@@ -898,798 +873,6 @@ function HealthCard({
   )
 }
 
-// Explorer Tab Component
-function ExplorerTab({ chainId, isDeleted }: { chainId: string; isDeleted: number }) {
-  const { notify } = useToast()
-
-  // Entities state
-  const [entities, setEntities] = useState<EntityInfo[]>([])
-  const [entityMap, setEntityMap] = useState<Record<string, string>>({}) // Maps entity name to route path
-  const [loadingEntities, setLoadingEntities] = useState(true)
-
-  // Table browsing state
-  const [selectedTable, setSelectedTable] = useState<string>('')
-  const [useStaging, setUseStaging] = useState(false) // Toggle for staging vs production
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>('')
-  const [schema, setSchema] = useState<string[]>([])
-  const [data, setData] = useState<any[]>([])
-  const [nextCursor, setNextCursor] = useState<number | null>(null)
-  const [cursors, setCursors] = useState<(number | null)[]>([null])
-  const [currentPageIndex, setCurrentPageIndex] = useState(0)
-  const [itemsPerPage, setItemsPerPage] = useState(50)
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-
-  // Single entity lookup state (uses selectedTable for entity type)
-  const [lookupId, setLookupId] = useState('')
-  const [lookupHeight, setLookupHeight] = useState('')
-  const [lookupResult, setLookupResult] = useState<any>(null)
-  const [lookupError, setLookupError] = useState('')
-  const [lookupLoading, setLookupLoading] = useState(false)
-
-  // Schema-driven lookup state
-  const [entitySchema, setEntitySchema] = useState<Record<string, string>>({})
-  const [selectedProperty, setSelectedProperty] = useState<string>('')
-  const [lookupValue, setLookupValue] = useState('')
-
-  // ID field configuration for different entities
-  type EntityIdConfig = {
-    field: string
-    type: 'number' | 'text'
-    label: string
-    endpoint: string
-  }
-
-  const entityIdFields: Record<string, EntityIdConfig> = {
-    blocks: { field: 'height', type: 'number', label: 'Height', endpoint: 'blocks' },
-    block_summaries: { field: 'height', type: 'number', label: 'Height', endpoint: 'block_summaries' },
-    transactions: { field: 'hash', type: 'text', label: 'Transaction Hash', endpoint: 'transactions' },
-    transactions_raw: { field: 'hash', type: 'text', label: 'Transaction Hash', endpoint: 'transactions' },
-    txs: { field: 'hash', type: 'text', label: 'Transaction Hash', endpoint: 'transactions' },
-    txs_raw: { field: 'hash', type: 'text', label: 'Transaction Hash', endpoint: 'transactions' },
-    accounts: { field: 'address', type: 'text', label: 'Address', endpoint: 'accounts' },
-  }
-
-  // Map display names to API endpoint names
-  // Note: Multi-word routes use dashes (e.g., block-summaries, dex-prices)
-  const TABLE_NAME_MAP: Record<string, string> = {
-    blocks: 'blocks',
-    block_summaries: 'block-summaries',
-    txs: 'transactions',
-    transactions: 'transactions',
-    txs_raw: 'transactions_raw',
-    transactions_raw: 'transactions_raw',
-    accounts: 'accounts',
-    events: 'events',
-    pools: 'pools',
-    orders: 'orders',
-    dex_prices: 'dex-prices',
-  }
-
-  // Get selected entity info
-  const selectedEntity = entities.find((e) => e.name === selectedTable)
-  const hasStaging = selectedEntity?.staging_name && selectedEntity.staging_name !== ''
-
-  // Fetch entities on mount and build dynamic route mapping
-  useEffect(() => {
-    const fetchEntities = async () => {
-      setLoadingEntities(true)
-      try {
-        const response = await apiFetch('/api/entities')
-        if (!response.ok) {
-          throw new Error('Failed to fetch entities')
-        }
-        const data: EntitiesResponse = await response.json()
-
-        // Store full entity objects
-        setEntities(data.entities)
-
-        // Build dynamic mapping from entity names to route paths
-        const mapping: Record<string, string> = {}
-        data.entities.forEach((e) => {
-          mapping[e.name] = e.route_path
-        })
-        setEntityMap(mapping)
-
-        // Set default selected table to first entity
-        if (data.entities.length > 0) {
-          setSelectedTable(data.entities[0].name)
-        }
-      } catch (err: any) {
-        console.error('Entities fetch error:', err)
-        notify('Failed to load entities list', 'error')
-        // Fallback to hardcoded entities with hardcoded mapping
-        const fallbackEntities: EntityInfo[] = [
-          { name: 'blocks', table_name: 'blocks', staging_name: '', route_path: 'blocks' },
-          { name: 'block_summaries', table_name: 'block_summaries', staging_name: '', route_path: 'block-summaries' },
-          { name: 'transactions', table_name: 'transactions', staging_name: '', route_path: 'transactions' },
-          { name: 'accounts', table_name: 'accounts', staging_name: '', route_path: 'accounts' },
-        ]
-        setEntities(fallbackEntities)
-        setEntityMap({
-          blocks: 'blocks',
-          block_summaries: 'block-summaries',
-          transactions: 'transactions',
-          accounts: 'accounts',
-        })
-        setSelectedTable('blocks')
-      } finally {
-        setLoadingEntities(false)
-      }
-    }
-
-    fetchEntities()
-  }, [notify])
-
-  // Fetch entity schema when selected entity changes
-  useEffect(() => {
-    if (!selectedTable) return
-
-    // Reset fields when entity changes
-    setSelectedProperty('')
-    setLookupValue('')
-    setLookupHeight('')
-    setLookupResult(null)
-    setLookupError('')
-
-    const fetchEntitySchema = async () => {
-      try {
-        const response = await apiFetch(`/api/chains/${chainId}/entity/${selectedTable}/schema`)
-        if (!response.ok) {
-          throw new Error('Failed to fetch entity schema')
-        }
-        const data = await response.json()
-        setEntitySchema(data.properties || {})
-
-        // Auto-select first property
-        const properties = Object.keys(data.properties || {})
-        if (properties.length > 0) {
-          setSelectedProperty(properties[0])
-        }
-      } catch (err: any) {
-        console.error('Schema fetch error:', err)
-        // Fall back to empty schema
-        setEntitySchema({})
-        setSelectedProperty('')
-      }
-    }
-
-    fetchEntitySchema()
-  }, [selectedTable, chainId])
-
-  // Fetch schema when table changes
-  useEffect(() => {
-    // Don't fetch if selectedTable hasn't been initialized yet
-    if (!selectedTable) {
-      return
-    }
-
-    const fetchSchema = async () => {
-      setLoading(true)
-      setError('')
-      try {
-        // Use entity name directly (not route path) - schema endpoint expects entity names
-        const tableName = useStaging && hasStaging ? `${selectedTable}_staging` : selectedTable
-        const deletedParam = isDeleted ? '&deleted=true' : ''
-        const response = await apiFetch(
-          `/api/chains/${chainId}/schema?table=${tableName}${deletedParam}`
-        )
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch schema: ${response.statusText}`)
-        }
-
-        const schemaData: SchemaResponse = await response.json()
-        const columnNames = schemaData.columns.map((col) => col.name)
-        setSchema(columnNames)
-      } catch (err: any) {
-        console.error('Schema fetch error:', err)
-        setError(err.message || 'Failed to load schema')
-        setSchema([])
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchSchema()
-  }, [chainId, selectedTable, entityMap, useStaging, hasStaging, isDeleted])
-
-  // Fetch data when table or page changes
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true)
-      setError('')
-      try {
-        // Use entity name directly - the generic entity endpoint expects entity names
-        const cursor = cursors[currentPageIndex]
-        const cursorParam = cursor !== null ? `&cursor=${cursor}` : ''
-        const stagingParam = useStaging && hasStaging ? '&use_staging=true' : ''
-        const deletedParam = isDeleted ? '&deleted=true' : ''
-
-        const response = await apiFetch(
-          `/api/chains/${chainId}/entity/${selectedTable}?limit=${itemsPerPage}&sort=${sortOrder}${cursorParam}${stagingParam}${deletedParam}`
-        )
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch data: ${response.statusText}`)
-        }
-
-        const result: PaginatedResponse<any> = await response.json()
-        setData(result.data || [])
-        setNextCursor(result.next_cursor ?? null)
-      } catch (err: any) {
-        console.error('Data fetch error:', err)
-        setError(err.message || 'Failed to load data')
-        setData([])
-        setNextCursor(null)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    if (schema.length > 0) {
-      fetchData()
-    }
-  }, [chainId, selectedTable, currentPageIndex, cursors, schema.length, itemsPerPage, sortOrder, entityMap, useStaging, hasStaging, isDeleted])
-
-  const handleTableChange = (newTable: string) => {
-    setSelectedTable(newTable)
-    setUseStaging(false) // Reset to production when changing entities
-    setCursors([null])
-    setCurrentPageIndex(0)
-    setData([])
-    setNextCursor(null)
-    setError('')
-  }
-
-  // Single entity lookup handler (schema-driven)
-  const handleLookup = async () => {
-    setLookupResult(null)
-    setLookupError('')
-    setLookupLoading(true)
-
-    if (!selectedProperty) {
-      notify('Please select a property', 'error')
-      setLookupLoading(false)
-      return
-    }
-
-    if (!lookupValue) {
-      notify(`Please enter a value for ${selectedProperty}`, 'error')
-      setLookupLoading(false)
-      return
-    }
-
-    // Build URL using new query parameter format
-    try {
-      const params = new URLSearchParams()
-      params.append('property', selectedProperty)
-      params.append('value', lookupValue)
-
-      if (lookupHeight) {
-        params.append('height', lookupHeight)
-      }
-
-      if (useStaging && hasStaging) {
-        params.append('use_staging', 'true')
-      }
-
-      const url = `/api/chains/${chainId}/entity/${selectedTable}/lookup?${params.toString()}`
-      const response = await apiFetch(url)
-
-      if (response.ok) {
-        const responseData = await response.json()
-        setLookupResult(responseData)
-        notify('Entity found', 'info')
-      } else if (response.status === 404) {
-        const errorData = await response.json().catch(() => ({ error: 'Entity not found' }))
-        setLookupError(errorData.error || 'Entity not found')
-        notify(errorData.error || 'Entity not found', 'error')
-      } else {
-        const errorData = await response.json().catch(() => ({ error: 'Query failed' }))
-        setLookupError(errorData.error || 'Query failed')
-        notify(errorData.error || 'Query failed', 'error')
-      }
-    } catch (err: any) {
-      console.error('Lookup error:', err)
-      setLookupError('Network error')
-      notify('Network error', 'error')
-    } finally {
-      setLookupLoading(false)
-    }
-  }
-
-  const handleItemsPerPageChange = (newLimit: number) => {
-    setItemsPerPage(newLimit)
-    setCursors([null])
-    setCurrentPageIndex(0)
-  }
-
-  // Render dynamic input based on property type
-  const renderValueInput = () => {
-    const propertyType = entitySchema[selectedProperty]
-
-    if (!propertyType) {
-      return (
-        <input
-          type="text"
-          value={lookupValue}
-          onChange={(e) => setLookupValue(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
-          placeholder="Enter value"
-          className="input w-full"
-          disabled={lookupLoading}
-        />
-      )
-    }
-
-    // Numeric types
-    if (propertyType.includes('int') || propertyType.includes('uint') || propertyType.includes('float')) {
-      return (
-        <input
-          type="number"
-          value={lookupValue}
-          onChange={(e) => setLookupValue(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
-          placeholder={`Enter ${selectedProperty} (${propertyType})`}
-          className="input w-full"
-          disabled={lookupLoading}
-        />
-      )
-    }
-
-    // Boolean type
-    if (propertyType === 'bool') {
-      return (
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="boolValue"
-              value="true"
-              checked={lookupValue === 'true'}
-              onChange={(e) => setLookupValue(e.target.value)}
-              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
-              disabled={lookupLoading}
-            />
-            <span className="text-sm text-slate-300">True</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="boolValue"
-              value="false"
-              checked={lookupValue === 'false'}
-              onChange={(e) => setLookupValue(e.target.value)}
-              className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
-              disabled={lookupLoading}
-            />
-            <span className="text-sm text-slate-300">False</span>
-          </label>
-        </div>
-      )
-    }
-
-    // DateTime type
-    if (propertyType === 'datetime') {
-      return (
-        <input
-          type="datetime-local"
-          value={lookupValue}
-          onChange={(e) => setLookupValue(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
-          placeholder={`Enter ${selectedProperty}`}
-          className="input w-full"
-          disabled={lookupLoading}
-        />
-      )
-    }
-
-    // Default: string input
-    return (
-      <input
-        type="text"
-        value={lookupValue}
-        onChange={(e) => setLookupValue(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
-        placeholder={`Enter ${selectedProperty} (${propertyType})`}
-        className="input w-full"
-        disabled={lookupLoading}
-      />
-    )
-  }
-
-  const handleNextPage = () => {
-    if (nextCursor !== null) {
-      const newCursors = [...cursors.slice(0, currentPageIndex + 1), nextCursor]
-      setCursors(newCursors)
-      setCurrentPageIndex(currentPageIndex + 1)
-    }
-  }
-
-  const handlePreviousPage = () => {
-    if (currentPageIndex > 0) {
-      setCurrentPageIndex(currentPageIndex - 1)
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Error Banner */}
-      {error && (
-        <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-rose-200">
-          <div className="flex items-start gap-3">
-            <svg className="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div>
-              <p className="font-semibold">Error Loading Explorer Data</p>
-              <p className="mt-1 text-sm text-rose-300">{error}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Entity Selection Header - Shared for both lookup and table browsing */}
-      {!loadingEntities && entities.length > 0 && (
-        <div className="card">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 flex-1">
-              <label className="text-sm font-medium text-slate-300 whitespace-nowrap">Entity:</label>
-              <select
-                value={selectedTable}
-                onChange={(e) => handleTableChange(e.target.value)}
-                className="input w-auto min-w-[200px]"
-                disabled={loading || loadingEntities}
-              >
-                {loadingEntities ? (
-                  <option>Loading...</option>
-                ) : (
-                  entities.map((entity) => (
-                    <option key={entity.name} value={entity.name}>
-                      {entity.name}
-                    </option>
-                  ))
-                )}
-              </select>
-
-              {/* Staging/Production Toggle - Only show if selected entity has staging */}
-              {hasStaging && (
-                <>
-                  <div className="h-6 w-px bg-slate-700"></div>
-                  <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/50 px-3 py-1.5">
-                    <label className="text-xs font-medium text-slate-400">Mode:</label>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => setUseStaging(false)}
-                        disabled={loading}
-                        className={`relative rounded px-2.5 py-1 text-xs font-medium transition-all ${
-                          !useStaging
-                            ? 'bg-indigo-600 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-slate-300'
-                        }`}
-                      >
-                        Production
-                      </button>
-                      <button
-                        onClick={() => setUseStaging(true)}
-                        disabled={loading}
-                        className={`relative rounded px-2.5 py-1 text-xs font-medium transition-all ${
-                          useStaging
-                            ? 'bg-amber-600 text-white shadow-sm'
-                            : 'text-slate-400 hover:text-slate-300'
-                        }`}
-                      >
-                        Staging
-                      </button>
-                    </div>
-                    <span
-                      className={`ml-1 flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        useStaging
-                          ? 'bg-amber-500/20 text-amber-300'
-                          : 'bg-indigo-500/20 text-indigo-300'
-                      }`}
-                    >
-                      <span className={`h-1.5 w-1.5 rounded-full ${useStaging ? 'bg-amber-400' : 'bg-indigo-400'}`}></span>
-                      {useStaging ? 'STAGING' : 'PROD'}
-                    </span>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Single Entity Lookup Section - Schema-Driven */}
-      {!loadingEntities && entities.length > 0 && Object.keys(entitySchema).length > 0 && (
-        <div className="card border-indigo-500/20 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
-          <div className="card-header">
-            <h3 className="card-title">Quick Lookup</h3>
-            <p className="text-xs text-slate-500">Search for a specific {selectedTable} by any property</p>
-          </div>
-
-          <div className="space-y-4">
-            {/* Property Selector and Value Input */}
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
-              <div className="md:col-span-4">
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Property <span className="text-xs text-slate-500">({Object.keys(entitySchema).length} available)</span>
-                </label>
-                <select
-                  value={selectedProperty}
-                  onChange={(e) => {
-                    setSelectedProperty(e.target.value)
-                    setLookupValue('') // Reset value when property changes
-                  }}
-                  className="input w-full"
-                  disabled={lookupLoading}
-                >
-                  <option value="">Select property...</option>
-                  {Object.keys(entitySchema)
-                    .sort()
-                    .map((prop) => (
-                      <option key={prop} value={prop}>
-                        {prop} ({entitySchema[prop]})
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              <div className="md:col-span-6">
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Value
-                  {selectedProperty && entitySchema[selectedProperty] && (
-                    <span className="text-xs text-slate-500 ml-2">
-                      Type: {entitySchema[selectedProperty]}
-                    </span>
-                  )}
-                </label>
-                {renderValueInput()}
-              </div>
-
-              <div className="md:col-span-2 flex items-end">
-                <button
-                  onClick={handleLookup}
-                  disabled={lookupLoading || !selectedProperty}
-                  className="btn w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {lookupLoading ? (
-                    <>
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
-                      Searching...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                      Search
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Optional Height Input - Only show for stateful entities */}
-            {selectedTable && !['blocks', 'txs', 'events'].includes(selectedTable) && (
-              <div className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-                <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div className="flex-1">
-                  <label className="text-xs font-medium text-slate-400">
-                    Height (optional) - Leave empty for latest
-                  </label>
-                  <input
-                    type="number"
-                    value={lookupHeight}
-                    onChange={(e) => setLookupHeight(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
-                    placeholder="0 = latest, or specific height"
-                    className="input w-full mt-1 text-sm"
-                    disabled={lookupLoading}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Lookup Result Display */}
-          {lookupResult && (
-            <div className="mt-4 rounded-lg border border-emerald-500/50 bg-emerald-500/10 p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-emerald-200">Result Found</h4>
-                <button
-                  onClick={() => setLookupResult(null)}
-                  className="text-xs text-emerald-300 hover:text-emerald-100"
-                >
-                  Clear
-                </button>
-              </div>
-              <pre className="text-xs overflow-auto max-h-96 rounded bg-slate-900/50 p-3 text-slate-200">
-                {JSON.stringify(lookupResult, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {/* Lookup Error Display */}
-          {lookupError && (
-            <div className="mt-4 rounded-lg border border-rose-500/50 bg-rose-500/10 p-4">
-              <div className="flex items-start gap-3">
-                <svg className="h-5 w-5 flex-shrink-0 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div className="flex-1">
-                  <p className="font-semibold text-rose-200">Lookup Failed</p>
-                  <p className="mt-1 text-sm text-rose-300">{lookupError}</p>
-                </div>
-                <button
-                  onClick={() => setLookupError('')}
-                  className="text-rose-300 hover:text-rose-100"
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Table Controls */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-slate-300">Items per page:</label>
-          <select
-            value={itemsPerPage}
-            onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
-            className="input w-auto"
-            disabled={loading}
-          >
-            <option value={10}>10</option>
-            <option value={25}>25</option>
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-          </select>
-
-          <div className="h-6 w-px bg-slate-700"></div>
-
-          <button
-            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-            className="btn-secondary text-sm"
-            disabled={loading}
-            title={`Sort ${sortOrder === 'asc' ? 'descending' : 'ascending'}`}
-          >
-            <svg
-              className={`h-4 w-4 transition-transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
-            </svg>
-            {sortOrder === 'asc' ? 'Oldest First' : 'Newest First'}
-          </button>
-        </div>
-
-        {/* Pagination Controls */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handlePreviousPage}
-            disabled={currentPageIndex === 0 || loading}
-            className="btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Previous
-          </button>
-          <span className="text-sm text-slate-400">
-            Page {currentPageIndex + 1}
-          </span>
-          <button
-            onClick={handleNextPage}
-            disabled={nextCursor === null || loading}
-            className="btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Next
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {/* Schema Display */}
-      {schema.length > 0 && (
-        <div className="card">
-          <div className="card-header">
-            <div className="flex items-center gap-2">
-              <h3 className="card-title">Schema: {selectedTable}</h3>
-              {hasStaging && (
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                    useStaging
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                  }`}
-                >
-                  {useStaging ? 'STAGING' : 'PRODUCTION'}
-                </span>
-              )}
-            </div>
-            <span className="text-xs text-slate-500">{schema.length} columns</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {schema.map((col) => (
-              <span key={col} className="badge-neutral">
-                {col}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Data Table */}
-      <div className="card overflow-hidden p-0">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-700 border-t-indigo-500"></div>
-              <p className="text-slate-400">Loading data...</p>
-            </div>
-          </div>
-        ) : data.length === 0 ? (
-          <div className="flex items-center justify-center py-12 text-slate-500">
-            <div className="text-center">
-              <svg className="mx-auto h-16 w-16 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-              </svg>
-              <p className="mt-4 text-sm">No data available</p>
-              <p className="mt-1 text-xs text-slate-600">This table may be empty or not yet indexed</p>
-            </div>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  {schema.map((col) => (
-                    <th key={col}>{col}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((row, idx) => (
-                  <tr key={idx}>
-                    {schema.map((col) => (
-                      <td key={col} className="font-mono text-xs">
-                        {row[col] !== null && row[col] !== undefined
-                          ? String(row[col])
-                          : '—'}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Results Info */}
-      {data.length > 0 && (
-        <div className="text-center text-xs text-slate-500">
-          Showing {data.length} {data.length === 1 ? 'row' : 'rows'}
-          {nextCursor !== null && ' • More results available'}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // Settings Tab Component
 function SettingsTab({
   config,
@@ -1980,21 +1163,16 @@ function SettingsTab({
         </div>
       </div>
 
+      {/* LP Snapshot Management */}
+      <LPSnapshotManagement chainId={String(config.chain_id)} isDeleted={isDeleted} />
+
       {/* Danger Zone */}
       <div className="card border-rose-500/50 bg-rose-500/5">
         <div className="card-header">
           <h3 className="card-title text-rose-200">Danger Zone</h3>
         </div>
         <p className="text-sm text-rose-300">
-          {isDeleted ? (
-            <>
-              This chain is already soft-deleted. Clicking the button below will <strong>permanently delete</strong> all chain data from the database, including configuration, indexing progress, and blockchain data. This action cannot be undone and the chain cannot be recovered.
-            </>
-          ) : (
-            <>
-              Deleting a chain will stop all indexing and monitoring. You can choose between soft delete (recoverable) or permanent deletion (cannot be undone).
-            </>
-          )}
+          Deleting a chain will <strong>permanently delete</strong> all chain data from the database, including configuration, indexing progress, and blockchain data. This action cannot be undone.
         </p>
         <button
           onClick={() => setDeleteDialogOpen(true)}
@@ -2003,7 +1181,7 @@ function SettingsTab({
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
-          {isDeleted ? 'Permanently Delete Chain' : 'Delete Chain'}
+          Permanently Delete Chain
         </button>
       </div>
 
@@ -2012,9 +1190,8 @@ function SettingsTab({
         onOpenChange={setDeleteDialogOpen}
         chainId={String(config.chain_id)}
         chainName={config.chain_name}
-        isDeleted={isDeleted}
         onSuccess={() => {
-          notify('Chain deleted successfully')
+          notify('Chain permanently deleted')
           router.push('/dashboard')
         }}
       />
@@ -2175,27 +1352,23 @@ function DeleteChainDialog({
   onOpenChange,
   chainId,
   chainName,
-  isDeleted,
   onSuccess,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   chainId: string
   chainName: string
-  isDeleted: boolean
   onSuccess: () => void
 }) {
   const { notify } = useToast()
   const [confirmText, setConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
-  const [hardDelete, setHardDelete] = useState(isDeleted)
 
   useEffect(() => {
     if (!open) {
       setConfirmText('')
-      setHardDelete(isDeleted)
     }
-  }, [open, isDeleted])
+  }, [open])
 
   const handleDelete = async () => {
     if (confirmText !== String(chainId)) {
@@ -2205,10 +1378,7 @@ function DeleteChainDialog({
 
     setDeleting(true)
     try {
-      const url = hardDelete
-        ? `/api/chains/${chainId}?hard=true`
-        : `/api/chains/${chainId}`
-      const res = await apiFetch(url, {
+      const res = await apiFetch(`/api/chains/${chainId}?hard=true`, {
         method: 'DELETE',
       })
       if (!res.ok) throw new Error('Failed to delete chain')
@@ -2227,67 +1397,22 @@ function DeleteChainDialog({
         <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content className="fixed left-1/2 top-1/2 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-rose-500/50 bg-slate-900 p-6 shadow-2xl">
           <Dialog.Title className="text-xl font-bold text-rose-200">
-            {isDeleted ? 'Permanently Delete Chain' : 'Delete Chain'}
+            Permanently Delete Chain
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm text-slate-400">
-            {hardDelete
-              ? 'This action cannot be undone. This will permanently delete the chain configuration and all associated data.'
-              : 'This will soft-delete the chain, stopping all indexing and monitoring. The data will be preserved and can be recovered if needed.'}
+            This action cannot be undone. This will permanently delete the chain configuration and all associated data.
           </Dialog.Description>
 
           <div className="mt-6 space-y-4">
-            {/* Hard Delete Checkbox */}
-            {!isDeleted && (
-              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4">
-                <label className="flex cursor-pointer items-start gap-3">
-                  <input
-                    type="checkbox"
-                    checked={hardDelete}
-                    onChange={(e) => setHardDelete(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 cursor-pointer rounded border-amber-500 bg-slate-800 text-amber-500 focus:ring-2 focus:ring-amber-500/20"
-                  />
-                  <div className="flex-1">
-                    <div className="text-sm font-semibold text-amber-200">
-                      Permanent Deletion (Hard Delete)
-                    </div>
-                    <div className="mt-1 text-xs text-amber-300/90">
-                      This will permanently remove all chain data from the database. Use this only if you're certain you won't need to recover the chain.
-                    </div>
-                  </div>
-                </label>
-              </div>
-            )}
-
-            {/* Show warning for already deleted chains */}
-            {isDeleted && (
-              <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4">
-                <div className="flex items-start gap-3">
-                  <svg className="h-5 w-5 text-rose-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <div className="flex-1">
-                    <div className="text-sm font-semibold text-rose-200">
-                      Permanent Deletion Required
-                    </div>
-                    <div className="mt-1 text-xs text-rose-300/90">
-                      This chain is already soft-deleted. The only option now is permanent deletion, which will remove all chain data from the database. This action cannot be undone.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {(hardDelete || isDeleted) && (
-              <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-sm text-rose-200">
-                <p className="font-semibold">The following will be permanently deleted:</p>
-                <ul className="mt-2 list-inside list-disc space-y-1">
-                  <li>Chain configuration</li>
-                  <li>Indexing progress and metadata</li>
-                  <li>All indexed blockchain data</li>
-                  <li>Reindex history</li>
-                </ul>
-              </div>
-            )}
+            <div className="rounded-lg border border-rose-500/50 bg-rose-500/10 p-4 text-sm text-rose-200">
+              <p className="font-semibold">The following will be permanently deleted:</p>
+              <ul className="mt-2 list-inside list-disc space-y-1">
+                <li>Chain configuration</li>
+                <li>Indexing progress and metadata</li>
+                <li>All indexed blockchain data</li>
+                <li>Reindex history</li>
+              </ul>
+            </div>
 
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-300">
@@ -2316,14 +1441,14 @@ function DeleteChainDialog({
                 {deleting ? (
                   <>
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white"></div>
-                    {hardDelete ? 'Permanently Deleting...' : 'Deleting...'}
+                    Permanently Deleting...
                   </>
                 ) : (
                   <>
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
-                    {hardDelete ? 'Permanently Delete' : 'Delete Chain'}
+                    Permanently Delete
                   </>
                 )}
               </button>

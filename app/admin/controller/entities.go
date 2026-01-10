@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/canopy-network/canopyx/app/admin/controller/types"
 	"github.com/canopy-network/canopyx/pkg/db/entities"
@@ -11,27 +12,29 @@ import (
 // entityRouteMapping maps entity names to their API route paths.
 // Multi-word routes use dashes (e.g., block-summaries, dex-prices).
 var entityRouteMapping = map[string]string{
+	"accounts":                      "accounts",
 	"blocks":                        "blocks",
 	"block_summaries":               "block-summaries",
-	"txs":                           "transactions",
-	"accounts":                      "accounts",
-	"events":                        "events",
-	"pools":                         "pools",
-	"orders":                        "orders",
-	"dex_prices":                    "dex-prices",
-	"dex_orders":                    "dex-orders",
-	"dex_deposits":                  "dex-deposits",
-	"dex_withdrawals":               "dex-withdrawals",
-	"pool_points_by_holder":         "pool-points",
-	"params":                        "params",
-	"validators":                    "validators",
-	"validator_non_signing_info":    "validator-non-signing-info",
-	"validator_double_signing_info": "validator-double-signing-info",
 	"committees":                    "committees",
-	"committee_validators":          "committee-validators",
 	"committee_payments":            "committee-payments",
+	"committee_validators":          "committee-validators",
+	"dex_deposits":                  "dex-deposits",
+	"dex_orders":                    "dex-orders",
+	"dex_prices":                    "dex-prices",
+	"dex_withdrawals":               "dex-withdrawals",
+	"events":                        "events",
+	"lp_position_snapshots":         "lp-position-snapshots",
+	"orders":                        "orders",
+	"params":                        "params",
+	"pools":                         "pools",
 	"poll_snapshots":                "poll-snapshots",
+	"pool_points_by_holder":         "pool-points",
+	"proposal_snapshots":            "proposal-snapshots",
 	"supply":                        "supply",
+	"txs":                           "transactions",
+	"validators":                    "validators",
+	"validator_double_signing_info": "validator-double-signing-info",
+	"validator_non_signing_info":    "validator-non-signing-info",
 }
 
 // HandleEntities returns list of all available entities.
@@ -57,6 +60,11 @@ func (c *Controller) HandleEntities(w http.ResponseWriter, r *http.Request) {
 			RoutePath:   routePath,
 		}
 	}
+
+	// Sort entities alphabetically by name
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

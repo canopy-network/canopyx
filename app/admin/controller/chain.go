@@ -154,37 +154,9 @@ func (c *Controller) HandleChainsUpsert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// With global single-DB architecture, we only need to ensure Temporal schedules exist.
+	// The indexer will write to the global database with chain_id context.
 	chainIDStr := strconv.FormatUint(chain.ChainID, 10)
-	if _, err := c.App.NewChainDb(ctx, chainIDStr); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	// Setup cross-chain sync for this chain (non-fatal - just log warnings)
-	// Note: This may fail if the chain database hasn't been created by the indexer yet
-	if c.App.CrossChainDB != nil {
-		if ccStore, ok := c.App.CrossChainDB.(interface {
-			SetupChainSync(context.Context, uint64) error
-		}); ok {
-			if syncErr := ccStore.SetupChainSync(ctx, chain.ChainID); syncErr != nil {
-				// Check if error is due to database not existing yet (expected on new chains)
-				if strings.Contains(syncErr.Error(), "does not exist") {
-					c.App.Logger.Info("Chain database not created yet - cross-chain sync will be set up when indexer starts",
-						zap.Uint64("chain_id", chain.ChainID),
-						zap.String("note", "This is normal for newly registered chains"))
-				} else {
-					c.App.Logger.Warn("Failed to setup cross-chain sync for chain - cross-chain queries may be incomplete",
-						zap.Uint64("chain_id", chain.ChainID),
-						zap.Error(syncErr))
-				}
-			} else {
-				c.App.Logger.Info("Cross-chain sync setup complete for chain",
-					zap.Uint64("chain_id", chain.ChainID))
-			}
-		}
-	}
-
 	err := c.App.EnsureChainSchedules(r.Context(), chainIDStr)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -273,19 +245,14 @@ func (c *Controller) HandleIndexProgressHistory(w http.ResponseWriter, r *http.R
 	}
 
 	// Query aggregated data in time buckets for efficient charting
-	// Use 5-minute buckets for <= 24h, 30-minute for <= 72h, 2-hour for > 72h
-	var intervalMinutes int
-	if hours <= 24 {
-		intervalMinutes = 5
-	} else if hours <= 72 {
-		intervalMinutes = 30
-	} else {
-		intervalMinutes = 120
-	}
+	// Use fixed 60-second buckets for consistent granularity regardless of time window.
+	// This ensures small data sets show full detail and larger windows still render efficiently.
+	// Max points: 1h=60, 6h=360, 24h=1440, 3d=4320, 7d=10080 (all reasonable for charting)
+	intervalSeconds := 60
 
 	ctx := r.Context()
 
-	points, pointsErr := c.App.AdminDB.IndexProgressHistory(ctx, chainID, hours, intervalMinutes)
+	points, pointsErr := c.App.AdminDB.IndexProgressHistory(ctx, chainID, hours, intervalSeconds)
 	if pointsErr != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "query failed"})
@@ -293,23 +260,43 @@ func (c *Controller) HandleIndexProgressHistory(w http.ResponseWriter, r *http.R
 	}
 
 	result := make([]types.ResponsePoint, 0, len(points))
+	intervalMinutes := float64(intervalSeconds) / 60.0
 	for i, p := range points {
 		velocity := 0.0
 		if i > 0 {
 			timeDiff := p.TimeBucket.Sub(points[i-1].TimeBucket).Minutes()
-			heightDiff := float64(p.MaxHeight - points[i-1].MaxHeight)
-			if timeDiff > 0 {
-				velocity = heightDiff / timeDiff
+			// Calculate velocity as blocks indexed per minute (indexer throughput)
+			// NOT height difference (which measures chain growth rate)
+			if timeDiff > 0 && p.BlocksIndexed > 0 {
+				velocity = float64(p.BlocksIndexed) / timeDiff
 			}
+		} else if p.BlocksIndexed > 0 {
+			// For the first data point (or single bucket), use the interval size
+			velocity = float64(p.BlocksIndexed) / intervalMinutes
 		}
 
 		result = append(result, types.ResponsePoint{
-			Time:              p.TimeBucket.UTC().Format(time.RFC3339),
-			Height:            p.MaxHeight,
-			AvgLatency:        p.AvgLatency,
-			AvgProcessingTime: p.AvgProcessingTime,
-			BlocksIndexed:     p.BlocksIndexed,
-			Velocity:          velocity,
+			Time:           p.TimeBucket.UTC().Format(time.RFC3339),
+			Height:         p.MaxHeight,
+			AvgTotalTimeMs: p.AvgTotalTimeMs,
+			BlocksIndexed:  p.BlocksIndexed,
+			Velocity:       velocity,
+			// Individual timing averages
+			AvgFetchBlockMs:        p.AvgFetchBlockMs,
+			AvgPrepareIndexMs:      p.AvgPrepareIndexMs,
+			AvgIndexAccountsMs:     p.AvgIndexAccountsMs,
+			AvgIndexCommitteesMs:   p.AvgIndexCommitteesMs,
+			AvgIndexDexBatchMs:     p.AvgIndexDexBatchMs,
+			AvgIndexDexPricesMs:    p.AvgIndexDexPricesMs,
+			AvgIndexEventsMs:       p.AvgIndexEventsMs,
+			AvgIndexOrdersMs:       p.AvgIndexOrdersMs,
+			AvgIndexParamsMs:       p.AvgIndexParamsMs,
+			AvgIndexPoolsMs:        p.AvgIndexPoolsMs,
+			AvgIndexSupplyMs:       p.AvgIndexSupplyMs,
+			AvgIndexTransactionsMs: p.AvgIndexTransactionsMs,
+			AvgIndexValidatorsMs:   p.AvgIndexValidatorsMs,
+			AvgSaveBlockMs:         p.AvgSaveBlockMs,
+			AvgSaveBlockSummaryMs:  p.AvgSaveBlockSummaryMs,
 		})
 	}
 
@@ -367,14 +354,14 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 	// 2) Bulk last-indexed via aggregate table
 	// SELECT chain_id, maxMerge(max_height) FROM <db>.index_progress_agg GROUP BY chain_id
 	{
-		dbName := c.App.AdminDB.Name
+		dbName := c.App.AdminDB.DatabaseName()
 		q := fmt.Sprintf(`
 			SELECT chain_id, maxMerge(max_height) AS last_idx
 			FROM "%s"."index_progress_agg"
 			GROUP BY chain_id
 		`, dbName)
 
-		rows, err := c.App.AdminDB.Db.Query(ctx, q)
+		rows, err := c.App.AdminDB.GetConnection().Query(ctx, q)
 		if err == nil {
 			defer func(rows driver.Rows) {
 				err := rows.Close()
@@ -405,14 +392,14 @@ func (c *Controller) HandleChainStatus(w http.ResponseWriter, r *http.Request) {
 
 	// 3) Fallback for any chain missing in the aggregate: max(height) from base table
 	{
-		dbName := c.App.AdminDB.Name
+		dbName := c.App.AdminDB.DatabaseName()
 		q := fmt.Sprintf(`
 			SELECT chain_id, max(height) AS last_idx
 			FROM "%s"."index_progress"
 			GROUP BY chain_id
 		`, dbName)
 
-		rows, err := c.App.AdminDB.Db.Query(ctx, q)
+		rows, err := c.App.AdminDB.GetConnection().Query(ctx, q)
 		if err == nil {
 			defer func(rows driver.Rows) {
 				err := rows.Close()
@@ -705,11 +692,8 @@ func (c *Controller) HandleTriggerGapScan(w http.ResponseWriter, r *http.Request
 // validateReindexBlocks checks if blocks exist in the database (already indexed).
 // Returns only blocks that have been previously indexed.
 func (c *Controller) validateReindexBlocks(ctx context.Context, chainID uint64, heights []uint64) (alreadyIndexed []uint64, notIndexed []uint64, err error) {
-	chainIDStr := strconv.FormatUint(chainID, 10)
-	store, ok := c.App.LoadChainStore(ctx, chainIDStr)
-	if !ok {
-		return nil, nil, fmt.Errorf("failed to load chain store for chain %d", chainID)
-	}
+	// Get GlobalDB configured for this chain
+	store := c.App.GetGlobalDBForChain(chainID)
 
 	for _, height := range heights {
 		// Check if block exists in database
@@ -851,8 +835,19 @@ func (c *Controller) HandleReindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain namespace",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to get chain namespace"})
+		return
+	}
+
 	// Get chain-specific client
-	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint, namespace)
 	if err != nil {
 		c.App.Logger.Error("failed to get chain client",
 			zap.Uint64("chain_id", chainIDUint),
@@ -922,8 +917,14 @@ func (c *Controller) startOpsWorkflow(ctx context.Context, chainID, workflowName
 		return fmt.Errorf("invalid chain ID format: %w", parseErr)
 	}
 
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(ctx, chainIDUint)
+	if err != nil {
+		return fmt.Errorf("failed to get chain namespace: %w", err)
+	}
+
 	// Get chain-specific client
-	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainIDUint)
+	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainIDUint, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get chain client: %w", err)
 	}
@@ -991,8 +992,17 @@ func (c *Controller) describeBothQueues(ctx context.Context, chainID string) (ad
 		return admintypes.QueueStatus{}, admintypes.QueueStatus{}, fmt.Errorf("invalid chain ID format: %w", parseErr)
 	}
 
+	// Fetch namespace for this chain
+	namespace, err := c.getChainNamespace(ctx, chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("describeBothQueues: failed to get chain namespace",
+			zap.String("chain_id", chainID),
+			zap.Error(err))
+		return opsStats, indexerStats, fmt.Errorf("failed to get chain namespace: %w", err)
+	}
+
 	// Get chain-specific client for queue stats
-	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainIDUint)
+	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainIDUint, namespace)
 	if err != nil {
 		c.App.Logger.Error("describeBothQueues: failed to get chain client",
 			zap.String("chain_id", chainID),
@@ -1446,10 +1456,9 @@ func (c *Controller) HandlePatchChainsStatus(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// HandleChainDelete handles the deletion of a chain.
-// Query param: ?hard=true for permanent deletion (cannot be undone)
-// Default (soft delete): marks as deleted, pauses schedules, terminates workflows
-// Hard delete: deletes Temporal namespace, starts async workflow to clean all data
+// HandleChainDelete permanently deletes a chain and all its data.
+// This deletes the Temporal namespace, starts an async workflow to clean all data from the global DB,
+// and removes all admin table records. This operation cannot be undone.
 func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if id == "" {
@@ -1459,178 +1468,54 @@ func (c *Controller) HandleChainDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	hardDelete := r.URL.Query().Get("hard") == "true"
 
-	// 1. Verify chain exists
+	// Verify chain exists
 	chainIDUint, parseErr := strconv.ParseUint(id, 10, 64)
 	if parseErr != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid chain ID"})
 		return
 	}
-	chain, err := c.App.AdminDB.GetChain(ctx, chainIDUint)
-	if err != nil {
+	if _, err := c.App.AdminDB.GetChain(ctx, chainIDUint); err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "chain not found"})
 		return
 	}
 
 	user := c.currentUser(r)
+	c.App.Logger.Info("deleting chain", zap.String("chain_id", id), zap.String("user", user))
 
-	if hardDelete {
-		// === HARD DELETE ===
-		c.App.Logger.Info("hard deleting chain", zap.String("chain_id", id), zap.String("user", user))
-
-		// 1. Delete Temporal namespace (removes all workflows and schedules)
-		if c.App.TemporalManager != nil {
-			if err := c.App.DeleteChainNamespace(ctx, id); err != nil {
-				c.App.Logger.Warn("failed to delete chain namespace", zap.String("chain_id", id), zap.Error(err))
-			}
-		}
-
-		// 2. Clear in-memory caches
-		c.App.ChainsDB.Delete(id)
-		c.App.QueueStatsCache.Delete(id)
-
-		// 3. Start async workflow to clean all data (cross-chain, drop DB, admin tables)
-		workflowID, err := c.App.StartDeleteChainWorkflow(ctx, chainIDUint)
-		if err != nil {
-			c.App.Logger.Error("failed to start delete chain workflow", zap.String("chain_id", id), zap.Error(err))
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to start delete workflow"})
-			return
-		}
-
-		c.App.Logger.Info("chain hard delete workflow started",
-			zap.String("chain_id", id),
-			zap.String("workflow_id", workflowID),
-			zap.String("user", user))
-
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"status":      "deletion_started",
-			"workflow_id": workflowID,
-		})
-		return
-	}
-
-	// === SOFT DELETE ===
-	c.App.Logger.Info("soft deleting chain", zap.String("chain_id", id), zap.String("user", user))
-
-	// 1. Pause Temporal schedules
+	// 1. Delete Temporal namespace (removes all workflows and schedules)
+	// Returns the renamed namespace (e.g., "chain_5-deleted-abc123") for cleanup monitoring
+	var renamedNamespace string
 	if c.App.TemporalManager != nil {
-		if err := c.App.PauseChainSchedules(ctx, id); err != nil {
-			c.App.Logger.Warn("failed to pause chain schedules", zap.String("chain_id", id), zap.Error(err))
-		}
-
-		// 2. Terminate all running workflows
-		if err := c.App.TerminateRunningWorkflows(ctx, id, "chain soft-deleted"); err != nil {
-			c.App.Logger.Warn("failed to terminate running workflows", zap.String("chain_id", id), zap.Error(err))
+		var nsErr error
+		renamedNamespace, nsErr = c.App.DeleteChainNamespace(ctx, id)
+		if nsErr != nil {
+			c.App.Logger.Warn("failed to delete chain namespace", zap.String("chain_id", id), zap.Error(nsErr))
 		}
 	}
 
-	// 3. Mark chain as deleted and clear health status
-	chain.Deleted = 1
-	now := time.Now()
-	chain.OverallHealthStatus = "unknown"
-	chain.OverallHealthUpdatedAt = now
-	chain.RPCHealthStatus = "unknown"
-	chain.RPCHealthMessage = ""
-	chain.RPCHealthUpdatedAt = now
-	chain.QueueHealthStatus = "unknown"
-	chain.QueueHealthMessage = ""
-	chain.QueueHealthUpdatedAt = now
-	chain.DeploymentHealthStatus = "unknown"
-	chain.DeploymentHealthMessage = ""
-	chain.DeploymentHealthUpdatedAt = now
-
-	if err := c.App.AdminDB.UpsertChain(ctx, chain); err != nil {
-		c.App.Logger.Error("failed to mark chain as deleted", zap.String("chain_id", id), zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to delete chain"})
-		return
-	}
-
-	// 4. Clear in-memory caches
-	c.App.ChainsDB.Delete(id)
+	// 2. Clear in-memory caches
 	c.App.QueueStatsCache.Delete(id)
 
-	c.App.Logger.Info("chain soft deleted successfully", zap.String("chain_id", id), zap.String("user", user))
-	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
-}
-
-// HandleChainRecover restores a soft-deleted chain by setting deleted=0,
-// recreating Temporal workflows/schedules, and re-adding cross-chain sync.
-func (c *Controller) HandleChainRecover(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing chain id"})
-		return
-	}
-
-	ctx := r.Context()
-	user := c.currentUser(r)
-
-	// Parse chain ID
-	chainIDUint, parseErr := strconv.ParseUint(id, 10, 64)
-	if parseErr != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid chain ID"})
-		return
-	}
-
-	c.App.Logger.Info("recovering chain", zap.String("chain_id", id), zap.String("user", user))
-
-	// 1. Recover the chain (set deleted = 0)
-	if err := c.App.AdminDB.RecoverChain(ctx, chainIDUint); err != nil {
-		c.App.Logger.Error("failed to recover chain", zap.String("chain_id", id), zap.Error(err))
+	// 3. Start async workflow to clean all data (global DB chain_id cleanup, admin tables, namespace cleanup)
+	workflowID, err := c.App.StartDeleteChainWorkflow(ctx, chainIDUint, renamedNamespace)
+	if err != nil {
+		c.App.Logger.Error("failed to start delete chain workflow", zap.String("chain_id", id), zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to start delete workflow"})
 		return
 	}
 
-	// 2. Unpause Temporal schedules (schedules were paused during soft-delete)
-	if c.App.TemporalManager != nil {
-		// First try to unpause existing schedules
-		if err := c.App.UnpauseChainSchedules(ctx, id); err != nil {
-			c.App.Logger.Warn("failed to unpause chain schedules during recovery, will try to recreate",
-				zap.String("chain_id", id), zap.Error(err))
-		}
+	c.App.Logger.Info("chain delete workflow started",
+		zap.String("chain_id", id),
+		zap.String("workflow_id", workflowID),
+		zap.String("renamed_namespace", renamedNamespace),
+		zap.String("user", user))
 
-		// Ensure all schedules exist (creates if missing, no-op if exists)
-		if err := c.App.EnsureChainSchedules(ctx, id); err != nil {
-			c.App.Logger.Warn("failed to ensure chain schedules during recovery",
-				zap.String("chain_id", id), zap.Error(err))
-		}
-	}
-
-	// 3. Re-add cross-chain sync
-	if c.App.CrossChainDB != nil {
-		if ccStore, ok := c.App.CrossChainDB.(interface {
-			SetupChainSync(context.Context, uint64) error
-		}); ok {
-			if syncErr := ccStore.SetupChainSync(ctx, chainIDUint); syncErr != nil {
-				c.App.Logger.Warn("Failed to setup cross-chain sync during recovery",
-					zap.Uint64("chain_id", chainIDUint),
-					zap.Error(syncErr))
-			} else {
-				c.App.Logger.Info("Cross-chain sync restored for chain",
-					zap.Uint64("chain_id", chainIDUint))
-			}
-		}
-	}
-
-	// 4. Ensure chain database exists and is in cache (should already exist from soft delete)
-	chainDb, chainDbErr := c.App.NewChainDb(ctx, id)
-	if chainDbErr != nil {
-		c.App.Logger.Warn("failed to initialize chain database during recovery",
-			zap.String("chain_id", id), zap.Error(chainDbErr))
-	} else {
-		c.App.Logger.Info("Chain database initialized and cached during recovery",
-			zap.String("chain_id", id))
-		_ = chainDb // chainDb is stored in cache by NewChainDb
-	}
-
-	c.App.Logger.Info("chain recovered successfully", zap.String("chain_id", id), zap.String("user", user))
-	_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":      "deletion_started",
+		"workflow_id": workflowID,
+	})
 }

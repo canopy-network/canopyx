@@ -34,6 +34,9 @@ var AccountColumns = []ColumnDef{
 // which calculates MIN(height) for each address. Consumers should JOIN with this view
 // if they need to know when an account was created.
 type Account struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Identity
 	Address string `ch:"address" json:"address"` // Hex string representation of address
 

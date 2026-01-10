@@ -34,6 +34,9 @@ var BlockColumns = []ColumnDef{
 }
 
 type Block struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	Height          uint64    `ch:"height" json:"height"`
 	Hash            string    `ch:"hash" json:"hash"`
 	Time            time.Time `ch:"time" json:"time"` // stored as DateTime64(6)

@@ -2,124 +2,44 @@ package activity
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"time"
 
-	"github.com/alitto/pond/v2"
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
+
 	"github.com/canopy-network/canopy/fsm"
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"go.temporal.io/sdk/temporal"
-	"go.uber.org/zap"
 )
 
 // IndexParams indexes chain parameters for a given block height.
-// Params are only inserted when they differ from the previous height to maintain a sparse historical record.
-// This follows the RPC(H) vs RPC(H-1) pattern for change detection, never querying the database.
-// Returns output indicating whether params changed and execution duration in milliseconds.
-func (ac *Context) IndexParams(ctx context.Context, in types.ActivityIndexAtHeight) (types.ActivityIndexParamsOutput, error) {
+func (ac *Context) indexParamsFromBlob(ctx context.Context, chainDb globalstore.Store, height uint64, heightTime time.Time, currentData *blobData, previousData *blobData) (types.ActivityIndexParamsOutput, float64, error) {
 	start := time.Now()
-
-	// Get RPC client with height-aware endpoint selection
-	cli, err := ac.rpcClientForHeight(ctx, in.Height)
-	if err != nil {
-		return types.ActivityIndexParamsOutput{}, err
+	currentParams := currentData.params
+	if currentParams == nil {
+		currentParams = &fsm.Params{}
 	}
-
-	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
-	if chainDbErr != nil {
-		return types.ActivityIndexParamsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
-	}
-
-	// Parallel RPC fetch using shared worker pool for performance
-	var (
-		paramsAtH   *fsm.Params
-		paramsAtH1  *fsm.Params
-		paramsErr   error
-		paramsH1Err error
-	)
-
-	// Get a subgroup from the shared worker pool for parallel RPC fetching
-	pool := ac.WorkerPool(2)
-	group := pool.NewGroupContext(ctx)
-	groupCtx := group.Context()
-
-	// Worker 1: Fetch params at height H
-	group.Submit(func() {
-		if err := groupCtx.Err(); err != nil {
-			return
-		}
-		paramsAtH, paramsErr = cli.AllParamsByHeight(groupCtx, in.Height)
-	})
-
-	// Worker 2: Fetch params at height H-1
-	group.Submit(func() {
-		if err := groupCtx.Err(); err != nil {
-			return
-		}
-		if in.Height <= 1 {
-			paramsAtH1 = nil
-			return
-		}
-		paramsAtH1, paramsH1Err = cli.AllParamsByHeight(groupCtx, in.Height-1)
-	})
-
-	// Wait for all workers to complete
-	if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, pond.ErrGroupStopped) {
-		ac.Logger.Warn("parallel RPC fetch encountered error",
-			zap.Uint64("chainId", ac.ChainID),
-			zap.Uint64("height", in.Height),
-			zap.Error(err),
-		)
-	}
-
-	// Check for errors
-	if paramsErr != nil {
-		return types.ActivityIndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height, paramsErr)
-	}
-	if paramsH1Err != nil {
-		return types.ActivityIndexParamsOutput{}, fmt.Errorf("fetch params at height %d: %w", in.Height-1, paramsH1Err)
-	}
-
-	// Convert RPC params at H to an entity model
-	currentParams := convertRpcParamsToEntity(paramsAtH, in.Height, in.BlockTime)
-
-	// Determine if params changed by comparing with H-1
+	currentParamsEntity := convertRpcParamsToEntity(currentParams, height, heightTime)
 	var paramsChanged bool
-	if in.Height == 1 {
-		// Genesis block: always insert params
+	if height == 1 {
 		paramsChanged = true
-		ac.Logger.Debug("IndexParams genesis block - inserting initial params",
-			zap.Uint64("height", in.Height))
 	} else {
-		// Convert RPC params at H-1 to an entity model (using dummy time since we only compare values)
-		prevParams := convertRpcParamsToEntity(paramsAtH1, in.Height-1, time.Time{})
-
-		// Compare all 31 fields between H and H-1
-		paramsChanged = !paramsEqual(prevParams, currentParams)
-
-		ac.Logger.Debug("IndexParams compared RPC(H) vs RPC(H-1)",
-			zap.Uint64("height", in.Height),
-			zap.Bool("paramsChanged", paramsChanged))
-	}
-
-	// Only insert if params changed (sparse insert)
-	if paramsChanged {
-		if err := chainDb.InsertParamsStaging(ctx, currentParams); err != nil {
-			return types.ActivityIndexParamsOutput{}, err
+		prevParams := previousData.params
+		if prevParams == nil {
+			prevParams = &fsm.Params{}
 		}
-		ac.Logger.Info("Params changed, inserted to staging",
-			zap.Uint64("height", in.Height),
-			zap.Uint64("chainID", ac.ChainID))
+		prevParamsEntity := convertRpcParamsToEntity(prevParams, height-1, time.Time{})
+		paramsChanged = !paramsEqual(prevParamsEntity, currentParamsEntity)
 	}
-
-	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.ActivityIndexParamsOutput{
+	if paramsChanged {
+		if err := chainDb.InsertParams(ctx, currentParamsEntity); err != nil {
+			return types.ActivityIndexParamsOutput{}, 0, err
+		}
+	}
+	out := types.ActivityIndexParamsOutput{
 		ParamsChanged: paramsChanged,
-		DurationMs:    durationMs,
-	}, nil
+	}
+	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+	return out, durationMs, nil
 }
 
 // convertRpcParamsToEntity converts fsm.Params (protobuf type from Canopy) to the entity model.

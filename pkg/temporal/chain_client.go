@@ -23,6 +23,7 @@ type ChainClient struct {
 	ChainID   uint64
 	Namespace string // "chain_<id>"
 	HostPort  string
+	logger    *zap.Logger
 
 	// Simplified queue names (no chain prefix needed - namespace provides isolation)
 	LiveQueue        string // "live"
@@ -37,12 +38,10 @@ type ChainClient struct {
 	PollSnapshotScheduleID     string // "pollsnapshot"
 	ProposalSnapshotScheduleID string // "proposalsnapshot"
 	LPSnapshotScheduleID       string // "lpsnapshot"
-	CleanupStagingScheduleID   string // "cleanupstaging"
 
 	// Simplified workflow ID templates
-	IndexBlockWorkflowIDPattern     string // "index:%d"
-	SchedulerWorkflowID             string // "scheduler"
-	CleanupStagingWorkflowIDPattern string // "cleanup:%d"
+	IndexBlockWorkflowIDPattern string // "index:%d"
+	SchedulerWorkflowID         string // "scheduler"
 }
 
 // NewChainClient creates a client for a chain-specific namespace.
@@ -90,6 +89,7 @@ func NewChainClient(ctx context.Context, logger *zap.Logger, chainID uint64) (*C
 		ChainID:   chainID,
 		Namespace: ns,
 		HostPort:  host,
+		logger:    logger,
 		// Simplified queue names (using constants from types.go)
 		LiveQueue:        QueueLive,
 		HistoricalQueue:  QueueHistorical,
@@ -102,11 +102,9 @@ func NewChainClient(ctx context.Context, logger *zap.Logger, chainID uint64) (*C
 		PollSnapshotScheduleID:     SchedulePollSnapshot,
 		ProposalSnapshotScheduleID: ScheduleProposalSnapshot,
 		LPSnapshotScheduleID:       ScheduleLPSnapshot,
-		CleanupStagingScheduleID:   ScheduleCleanupStaging,
 		// Simplified workflow ID templates (using constants from types.go)
-		IndexBlockWorkflowIDPattern:     WorkflowIDIndexBlock,
-		SchedulerWorkflowID:             WorkflowIDScheduler,
-		CleanupStagingWorkflowIDPattern: WorkflowIDCleanupStaging,
+		IndexBlockWorkflowIDPattern: WorkflowIDIndexBlock,
+		SchedulerWorkflowID:         WorkflowIDScheduler,
 	}, nil
 }
 
@@ -151,6 +149,7 @@ func NewChainClientWithNamespace(ctx context.Context, logger *zap.Logger, chainI
 		ChainID:   chainID,
 		Namespace: namespace,
 		HostPort:  host,
+		logger:    logger,
 		// Simplified queue names (using constants from types.go)
 		LiveQueue:        QueueLive,
 		HistoricalQueue:  QueueHistorical,
@@ -163,11 +162,9 @@ func NewChainClientWithNamespace(ctx context.Context, logger *zap.Logger, chainI
 		PollSnapshotScheduleID:     SchedulePollSnapshot,
 		ProposalSnapshotScheduleID: ScheduleProposalSnapshot,
 		LPSnapshotScheduleID:       ScheduleLPSnapshot,
-		CleanupStagingScheduleID:   ScheduleCleanupStaging,
 		// Simplified workflow ID templates (using constants from types.go)
-		IndexBlockWorkflowIDPattern:     WorkflowIDIndexBlock,
-		SchedulerWorkflowID:             WorkflowIDScheduler,
-		CleanupStagingWorkflowIDPattern: WorkflowIDCleanupStaging,
+		IndexBlockWorkflowIDPattern: WorkflowIDIndexBlock,
+		SchedulerWorkflowID:         WorkflowIDScheduler,
 	}, nil
 }
 
@@ -175,12 +172,6 @@ func NewChainClientWithNamespace(ctx context.Context, logger *zap.Logger, chainI
 // e.g., height=500 -> "index:500"
 func (c *ChainClient) GetIndexBlockWorkflowID(height uint64) string {
 	return fmt.Sprintf(c.IndexBlockWorkflowIDPattern, height)
-}
-
-// GetCleanupStagingWorkflowID returns the workflow ID for cleanup staging workflow.
-// e.g., height=500 -> "cleanup:500"
-func (c *ChainClient) GetCleanupStagingWorkflowID(height uint64) string {
-	return fmt.Sprintf(c.CleanupStagingWorkflowIDPattern, height)
 }
 
 // GetReindexBlockWorkflowID returns a deterministic workflow ID for reindex operations.
@@ -200,6 +191,7 @@ func (c *ChainClient) GapSchedulerWorkflowID(from, to uint64) string {
 func (c *ChainClient) EnsureNamespace(ctx context.Context, retention time.Duration) error {
 	nsClient, err := client.NewNamespaceClient(client.Options{
 		HostPort: c.HostPort,
+		Logger:   NewZapAdapter(c.logger),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create namespace client: %w", err)

@@ -64,18 +64,18 @@ func (c *Controller) HandleEntityQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load chain store
-	store, ok := c.App.LoadChainStore(ctx, chainID)
-	if !ok {
-		c.App.Logger.Error("Failed to load chain store for entity query",
-			zap.String("chain_id", chainID),
-			zap.String("entity", entityName),
-			zap.Bool("is_deleted", isDeleted))
-		c.writeError(w, http.StatusNotFound, "chain not found")
+	// Parse chain ID
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		c.writeError(w, http.StatusBadRequest, "invalid chain_id")
 		return
 	}
 
-	// Determine which table to query (staging vs production)
+	// Get GlobalDB configured for this chain
+	store := c.App.GetGlobalDBForChain(chainIDUint)
+	_ = isDeleted // Unused but kept for logging context
+
+	// Determine which table to query (staging vs. production)
 	tableName := entity.TableName()
 	if req.UseStaging {
 		tableName = entity.StagingTableName()
@@ -142,16 +142,16 @@ func (c *Controller) HandleEntityGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load chain store
-	store, ok := c.App.LoadChainStore(ctx, chainID)
-	if !ok {
-		c.App.Logger.Error("Failed to load chain store for entity get",
-			zap.String("chain_id", chainID),
-			zap.String("entity", entityName),
-			zap.Bool("is_deleted", isDeleted))
-		c.writeError(w, http.StatusNotFound, "chain not found")
+	// Parse chain ID
+	chainIDUint, parseErr := strconv.ParseUint(chainID, 10, 64)
+	if parseErr != nil {
+		c.writeError(w, http.StatusBadRequest, "invalid chain_id")
 		return
 	}
+
+	// Get GlobalDB configured for this chain
+	store := c.App.GetGlobalDBForChain(chainIDUint)
+	_ = isDeleted // Unused but kept for logging context
 
 	// Determine which table to query (staging vs production)
 	tableName := entity.TableName()
@@ -332,7 +332,7 @@ func createEntitySlice(entity entities.Entity) interface{} {
 // queryEntityData executes a generic entity query with pagination
 func (c *Controller) queryEntityData(
 	ctx context.Context,
-	store db.ChainStore,
+	store db.GlobalStore,
 	tableName string,
 	req types.EntityQueryRequest,
 ) ([]map[string]interface{}, *uint64, error) {
@@ -347,9 +347,12 @@ func (c *Controller) queryEntityData(
 	// Request limit+1 to detect if there are more results
 	queryLimit := req.Limit + 1
 
-	var whereClause string
-	var args []interface{}
+	// PREWHERE for chain_id filtering (first column in ORDER BY, most efficient)
+	chainID := store.GetChainID()
+	prewhere := "PREWHERE chain_id = ?"
+	args := []interface{}{chainID}
 
+	var whereClause string
 	// Add cursor condition if provided
 	if req.Cursor > 0 {
 		if req.SortDesc {
@@ -369,13 +372,15 @@ func (c *Controller) queryEntityData(
 	// Build final query
 	// Note: Using FINAL for ReplacingMergeTree tables to get deduplicated results
 	// Both production and staging tables use ReplacingMergeTree
+	// PREWHERE chain_id filters early for efficiency (chain_id is first in ORDER BY)
 	query := fmt.Sprintf(`
 		SELECT *
 		FROM "%s"."%s" FINAL
 		%s
 		%s
+		%s
 		LIMIT ?
-	`, store.DatabaseName(), tableName, whereClause, orderClause)
+	`, store.DatabaseName(), tableName, prewhere, whereClause, orderClause)
 
 	args = append(args, queryLimit)
 
@@ -437,7 +442,7 @@ func (c *Controller) queryEntityData(
 // getEntityByID retrieves a single entity by its primary key value using explicit property and value parameters
 func (c *Controller) getEntityByID(
 	ctx context.Context,
-	store db.ChainStore,
+	store db.GlobalStore,
 	tableName string,
 	property string,
 	value string,
@@ -450,29 +455,35 @@ func (c *Controller) getEntityByID(
 		return nil, fmt.Errorf("invalid entity: %w", err)
 	}
 
+	// Get chain_id for PREWHERE filtering
+	chainID := store.GetChainID()
+
 	var query string
 	var args []interface{}
 
 	// Build query based on whether height is specified
+	// PREWHERE chain_id filters early for efficiency (chain_id is first in ORDER BY)
 	if height == nil || *height == 0 {
 		// Get latest - ORDER BY height DESC LIMIT 1
 		query = fmt.Sprintf(`
 			SELECT *
 			FROM "%s"."%s" FINAL
+			PREWHERE chain_id = ?
 			WHERE %s = ?
 			ORDER BY height DESC
 			LIMIT 1
 		`, store.DatabaseName(), tableName, property)
-		args = []interface{}{value}
+		args = []interface{}{chainID, value}
 	} else {
 		// Get at specific height - exact height match with the property
 		query = fmt.Sprintf(`
 			SELECT *
 			FROM "%s"."%s" FINAL
+			PREWHERE chain_id = ?
 			WHERE %s = ? AND height = ?
 			LIMIT 1
 		`, store.DatabaseName(), tableName, property)
-		args = []interface{}{value, *height}
+		args = []interface{}{chainID, value, *height}
 	}
 
 	// Create a slice to hold the result (we expect 1 item)

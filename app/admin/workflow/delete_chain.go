@@ -4,62 +4,64 @@ import (
 	"time"
 
 	"github.com/canopy-network/canopyx/app/admin/types"
-	"github.com/canopy-network/canopyx/pkg/temporal"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
 
 // DeleteChainWorkflow permanently removes all data for a chain.
 // Runs 3 activities in parallel:
-// 1. CleanCrossChainData - removes data from global cross-chain tables
-// 2. DropChainDatabase - drops the chain_X database
-// 3. CleanAdminTables - removes records from admin tables (endpoints, index_progress, etc.)
+// 1. DeleteChainData - deletes all chain data from the global database
+// 2. CleanAdminTables - removes records from admin tables (endpoints, index_progress, etc.)
+// 3. WaitForNamespaceCleanup - waits for the Temporal namespace to be fully cleaned up
 func (wc *Context) DeleteChainWorkflow(ctx workflow.Context, in types.DeleteChainWorkflowInput) (types.DeleteChainWorkflowOutput, error) {
 	logger := workflow.GetLogger(ctx)
-	logger.Info("Starting delete chain workflow", "chain_id", in.ChainID)
+	logger.Info("Starting delete chain workflow",
+		"chain_id", in.ChainID,
+		"renamed_namespace", in.RenamedNamespace)
 
 	result := types.DeleteChainWorkflowOutput{ChainID: in.ChainID}
 
-	ao := workflow.ActivityOptions{
+	// Activity options for DB operations (shorter timeout)
+	dbActivityOpts := workflow.LocalActivityOptions{
 		StartToCloseTimeout: 10 * time.Minute,
-		HeartbeatTimeout:    1 * time.Minute,
 		RetryPolicy: &sdktemporal.RetryPolicy{
 			InitialInterval:    1 * time.Second,
 			BackoffCoefficient: 2.0,
 			MaximumInterval:    30 * time.Second,
 			MaximumAttempts:    0,
 		},
-		TaskQueue: temporal.QueueMaintenance,
 	}
-	ctx = workflow.WithActivityOptions(ctx, ao)
+	dbCtx := workflow.WithLocalActivityOptions(ctx, dbActivityOpts)
+
+	// Activity options for namespace cleanup (longer timeout - can take several minutes)
+	namespaceActivityOpts := workflow.LocalActivityOptions{
+		StartToCloseTimeout: 10 * time.Minute,
+		RetryPolicy: &sdktemporal.RetryPolicy{
+			InitialInterval:    5 * time.Second,
+			BackoffCoefficient: 1.5,
+			MaximumInterval:    30 * time.Second,
+			MaximumAttempts:    0,
+		},
+	}
+	nsCtx := workflow.WithLocalActivityOptions(ctx, namespaceActivityOpts)
 
 	// Run all 3 activities in parallel
-	var crossChainFuture, dropDbFuture, adminTablesFuture workflow.Future
+	deleteDataFuture := workflow.ExecuteLocalActivity(dbCtx, wc.ActivityContext.DeleteChainData,
+		types.DeleteChainDataInput{ChainID: in.ChainID})
 
-	crossChainFuture = workflow.ExecuteActivity(ctx, wc.ActivityContext.CleanCrossChainData,
-		types.CleanCrossChainDataInput(in))
+	adminTablesFuture := workflow.ExecuteLocalActivity(dbCtx, wc.ActivityContext.CleanAdminTables,
+		types.CleanAdminTablesInput{ChainID: in.ChainID})
 
-	dropDbFuture = workflow.ExecuteActivity(ctx, wc.ActivityContext.DropChainDatabase,
-		types.DropChainDatabaseInput(in))
-
-	adminTablesFuture = workflow.ExecuteActivity(ctx, wc.ActivityContext.CleanAdminTables,
-		types.CleanAdminTablesInput(in))
+	namespaceCleanupFuture := workflow.ExecuteLocalActivity(nsCtx, wc.ActivityContext.WaitForNamespaceCleanup,
+		types.WaitForNamespaceCleanupInput{RenamedNamespace: in.RenamedNamespace})
 
 	// Wait for all activities to complete
-	var crossChainResult types.CleanCrossChainDataOutput
-	if err := crossChainFuture.Get(ctx, &crossChainResult); err != nil {
-		logger.Error("CleanCrossChainData failed", "error", err.Error())
-		result.Errors = append(result.Errors, "cross-chain: "+err.Error())
+	var deleteDataResult types.DeleteChainDataOutput
+	if err := deleteDataFuture.Get(ctx, &deleteDataResult); err != nil {
+		logger.Error("DeleteChainData failed", "error", err.Error())
+		result.Errors = append(result.Errors, "delete-data: "+err.Error())
 	} else {
-		result.CrossChainCleaned = crossChainResult.Success
-	}
-
-	var dropDbResult types.DropChainDatabaseOutput
-	if err := dropDbFuture.Get(ctx, &dropDbResult); err != nil {
-		logger.Error("DropChainDatabase failed", "error", err.Error())
-		result.Errors = append(result.Errors, "drop-db: "+err.Error())
-	} else {
-		result.DatabaseDropped = dropDbResult.Success
+		result.ChainDataDeleted = deleteDataResult.Success
 	}
 
 	var adminTablesResult types.CleanAdminTablesOutput
@@ -68,6 +70,14 @@ func (wc *Context) DeleteChainWorkflow(ctx workflow.Context, in types.DeleteChai
 		result.Errors = append(result.Errors, "admin-tables: "+err.Error())
 	} else {
 		result.AdminTablesCleaned = adminTablesResult.Success
+	}
+
+	var namespaceCleanupResult types.WaitForNamespaceCleanupOutput
+	if err := namespaceCleanupFuture.Get(ctx, &namespaceCleanupResult); err != nil {
+		logger.Error("WaitForNamespaceCleanup failed", "error", err.Error())
+		result.Errors = append(result.Errors, "namespace-cleanup: "+err.Error())
+	} else {
+		result.NamespaceCleanupComplete = namespaceCleanupResult.Success
 	}
 
 	if len(result.Errors) > 0 {

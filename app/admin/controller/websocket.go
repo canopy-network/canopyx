@@ -487,7 +487,7 @@ func (c *Controller) readClientMessages(ctx context.Context, conn *websocket.Con
 			var msg ClientMessage
 			err := conn.ReadJSON(&msg)
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNoStatusReceived) {
 					c.App.Logger.Error("WebSocket read error", zap.Error(err))
 				}
 				cancel() // Signal shutdown

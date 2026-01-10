@@ -17,8 +17,7 @@ const ProposalSnapshotsProductionTableName = "proposal_snapshots"
 // - LowCardinality(String) for type field (limited set of proposal types)
 var ProposalSnapshotColumns = []ColumnDef{
 	{Name: "proposal_hash", Type: "String", Codec: "ZSTD(1)"},
-	{Name: "proposal", Type: "String", Codec: "ZSTD(1)"}, // JSON proposal data (full message)
-	{Name: "approve", Type: "Bool", Codec: "ZSTD(1)"},    // Node approval flag
+	{Name: "approve", Type: "Bool", Codec: "ZSTD(1)"}, // Node approval flag
 	{Name: "snapshot_time", Type: "DateTime64(6)", Codec: "DoubleDelta, LZ4"},
 
 	// Exploded proposal fields for efficient querying
@@ -48,12 +47,14 @@ var ProposalSnapshotColumns = []ColumnDef{
 //   - By type: SELECT * FROM proposal_snapshots FINAL WHERE proposal_type = 'changeParameter'
 //   - By parameter: SELECT * FROM proposal_snapshots FINAL WHERE parameter_space = 'fee' AND parameter_key = 'sendFee'
 type ProposalSnapshot struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Primary key - composite key for deduplication
 	ProposalHash string `ch:"proposal_hash" json:"proposal_hash"` // Hex hash of proposal (transaction hash)
 
 	// Proposal data
-	Proposal string `ch:"proposal" json:"proposal"` // JSON-encoded proposal (from fsm.GovProposalWithVote.Proposal)
-	Approve  bool   `ch:"approve" json:"approve"`   // Whether this node approves the proposal
+	Approve bool `ch:"approve" json:"approve"` // Whether this node approves the proposal
 
 	// Time field for snapshot tracking
 	SnapshotTime time.Time `ch:"snapshot_time" json:"snapshot_time"` // When this snapshot was captured

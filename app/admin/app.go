@@ -8,15 +8,13 @@ import (
 	"github.com/canopy-network/canopyx/app/admin/types"
 	"github.com/canopy-network/canopyx/app/admin/workflow"
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
-	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
 	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
-	"github.com/canopy-network/canopyx/pkg/db/crosschain"
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 	"github.com/canopy-network/canopyx/pkg/logging"
 	"github.com/canopy-network/canopyx/pkg/redis"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	temporaladmin "github.com/canopy-network/canopyx/pkg/temporal/admin"
 	"github.com/canopy-network/canopyx/pkg/utils"
-	"github.com/puzpuzpuz/xsync/v4"
 	"go.temporal.io/sdk/worker"
 	temporalworkflow "go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
@@ -48,7 +46,7 @@ func Initialize(ctx context.Context) *types.App {
 	adminMaxConns := adminIdleConns + bufferConnections
 
 	// Configure pool sizes for an admin database (low throughput)
-	// This single pool is shared by admin DB, crosschain DB, and per-chain DBs
+	// This single pool is shared by admin DB and global DB
 	adminPoolConfig := clickhouse.PoolConfig{
 		MaxOpenConns:    adminMaxConns,
 		MaxIdleConns:    adminIdleConns,
@@ -60,7 +58,6 @@ func Initialize(ctx context.Context) *types.App {
 		zap.Int("maintenance_max_activities", maintenanceMaxActivities),
 		zap.Int("connections_per_activity", connectionsPerActivity),
 		zap.Int("total_max_connections", adminMaxConns),
-		zap.String("note", "shared by admin, crosschain, and per-chain DBs"),
 	)
 
 	indexerDbName := utils.Env("INDEXER_DB", "canopyx_indexer")
@@ -70,22 +67,18 @@ func Initialize(ctx context.Context) *types.App {
 		logger.Fatal("Unable to initialize indexer database", zap.Error(err))
 	}
 
-	// Initialize a cross-chain database (required)
-	// Reuse admin DB's connection pool - crosschain ops are part of the same 10 concurrent activities
-	crossChainDBName := utils.Env("CROSSCHAIN_DB", "canopyx_cross_chain")
-	crossChainDB := crosschain.NewWithSharedClient(indexerDb.Client, crossChainDBName)
-
-	// Initialize a database and tables (create if they don't exist)
-	// This is idempotent - safe to call on every startup
-	if dbErr := crossChainDB.InitializeDB(ctx); dbErr != nil {
-		logger.Fatal("Cross-chain database initialization failed",
+	// Initialize a global database (single-DB architecture)
+	// Uses chainID=0 for admin (no specific chain context needed for reads)
+	globalDBName := utils.Env("GLOBAL_DB", globalstore.DefaultGlobalDBName)
+	globalDB := globalstore.NewWithSharedClient(indexerDb.Client, globalDBName, 0)
+	if dbErr := globalDB.InitializeDB(ctx); dbErr != nil {
+		logger.Fatal("Global database initialization failed",
 			zap.Error(dbErr))
 	}
+	logger.Info("Global database initialized successfully",
+		zap.String("database", globalDB.Name))
 
-	logger.Info("Cross-chain database initialized successfully",
-		zap.String("database", crossChainDB.Name))
-
-	// Create multi-namespace Temporal client manager
+	// Create a multi-namespace Temporal client manager
 	temporalManager, err := temporal.NewClientManager(ctx, logger)
 	if err != nil {
 		logger.Fatal("Unable to create temporal manager", zap.Error(err))
@@ -120,9 +113,8 @@ func Initialize(ctx context.Context) *types.App {
 
 	app := &types.App{
 		// Database initialization
-		AdminDB:      indexerDb,
-		CrossChainDB: crossChainDB,
-		ChainsDB:     xsync.NewMap[string, chainstore.Store](), // Initialize empty chain DB cache
+		AdminDB:  indexerDb,
+		GlobalDB: globalDB,
 
 		// Temporal initialization (multi-namespace support)
 		TemporalManager: temporalManager,
@@ -138,27 +130,14 @@ func Initialize(ctx context.Context) *types.App {
 	}
 
 	logger.Info("Admin app initialized",
-		zap.Bool("chains_db_initialized", app.ChainsDB != nil),
+		zap.Bool("global_db_initialized", app.GlobalDB != nil),
 		zap.Bool("admin_db_initialized", app.AdminDB != nil))
 
-	// Set up materialized views for all existing chains in parallel
-	chains, listErr := app.AdminDB.ListChain(ctx, false)
-	if listErr != nil {
-		logger.Warn("Failed to list chains for cross-chain sync setup, sync will be retried later",
-			zap.Error(listErr))
-	} else if len(chains) > 0 {
-		for _, chain := range chains {
-			if err := crossChainDB.SetupChainSync(ctx, chain.ChainID); err != nil {
-				logger.Fatal("Failed to setup cross-chain sync for chain", zap.Error(err))
-			}
-		}
-	}
-
-	// Initialize Temporal maintenance worker for cross-chain compaction
+	// Initialize Temporal maintenance worker for global table compaction
 	activityContext := &activity.Context{
 		Logger:          logger,
 		AdminDB:         indexerDb,
-		CrossChainDB:    crossChainDB,
+		GlobalDB:        globalDB,
 		TemporalManager: temporalManager,
 	}
 	workflowContext := workflow.Context{
@@ -179,11 +158,11 @@ func Initialize(ctx context.Context) *types.App {
 		},
 	)
 
-	// Register a compaction workflow
+	// Register a compaction workflow for global tables
 	maintenanceWorker.RegisterWorkflowWithOptions(
-		workflowContext.CompactCrossChainTablesWorkflow,
+		workflowContext.CompactGlobalTablesWorkflow,
 		temporalworkflow.RegisterOptions{
-			Name: temporaladmin.CompactCrossChainTablesWorkflowName,
+			Name: temporaladmin.CompactGlobalTablesWorkflowName,
 		},
 	)
 
@@ -201,8 +180,7 @@ func Initialize(ctx context.Context) *types.App {
 	maintenanceWorker.RegisterActivity(activityContext.LogCompactionSummary)
 
 	// Register delete chain activities
-	maintenanceWorker.RegisterActivity(activityContext.CleanCrossChainData)
-	maintenanceWorker.RegisterActivity(activityContext.DropChainDatabase)
+	maintenanceWorker.RegisterActivity(activityContext.DeleteChainData)
 	maintenanceWorker.RegisterActivity(activityContext.CleanAdminTables)
 
 	app.MaintenanceWorker = maintenanceWorker
