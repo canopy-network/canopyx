@@ -3,9 +3,10 @@ package activity
 import (
 	"context"
 	"fmt"
+	"time"
+
 	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"time"
 
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"github.com/canopy-network/canopyx/pkg/db/transform"

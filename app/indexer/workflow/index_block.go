@@ -1,10 +1,11 @@
 package workflow
 
 import (
+	"time"
+
 	"github.com/canopy-network/canopyx/app/indexer/types"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
-	"time"
 )
 
 // IndexBlockWorkflow kicks off indexing of a block for a given chain in a separate workflow at `index:<chain>` queue.

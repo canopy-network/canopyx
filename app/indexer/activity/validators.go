@@ -3,8 +3,9 @@ package activity
 import (
 	"context"
 	"encoding/hex"
-	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"time"
+
+	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 
 	"github.com/canopy-network/canopy/fsm"
 	"github.com/canopy-network/canopy/lib"

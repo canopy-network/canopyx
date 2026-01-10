@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"time"
+
+	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 
 	"github.com/canopy-network/canopy/lib"
 	"github.com/canopy-network/canopyx/app/indexer/types"

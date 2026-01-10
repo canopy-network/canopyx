@@ -2,8 +2,9 @@ package activity
 
 import (
 	"context"
-	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 	"time"
+
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 
 	"github.com/canopy-network/canopy/fsm"
 	"github.com/canopy-network/canopyx/app/indexer/types"

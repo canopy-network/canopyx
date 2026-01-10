@@ -2,9 +2,10 @@ package activity
 
 import (
 	"context"
+	"time"
+
 	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"time"
 )
 
 // saveBlockSummaryFromBlob indexes a block summary from the provided block summary and stores it in the database, returning the duration in ms.
