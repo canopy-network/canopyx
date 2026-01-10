@@ -39,6 +39,9 @@ var DexDepositColumns = []ColumnDef{
 // which calculates MIN(height) for each order_id. Consumers should JOIN with this view
 // if they need to know when a deposit was created.
 type DexDeposit struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Identity
 	OrderID string `ch:"order_id" json:"order_id"` // Hex string representation of order ID
 

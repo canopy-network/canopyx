@@ -2,7 +2,7 @@ package activity
 
 import (
 	adminstore "github.com/canopy-network/canopyx/pkg/db/admin"
-	"github.com/canopy-network/canopyx/pkg/db/crosschain"
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	"go.uber.org/zap"
 )
@@ -11,6 +11,6 @@ import (
 type Context struct {
 	Logger          *zap.Logger
 	AdminDB         adminstore.Store
-	CrossChainDB    crosschain.Store
+	GlobalDB        globalstore.Store
 	TemporalManager *temporal.ClientManager
 }

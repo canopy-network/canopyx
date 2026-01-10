@@ -104,3 +104,93 @@ func (c *Client) PSubscribe(ctx context.Context, patterns ...string) *redis.PubS
 func (c *Client) Health(ctx context.Context) error {
 	return c.client.Ping(ctx).Err()
 }
+
+// ---- Redis Streams ----
+
+// XAdd adds a message to a Redis stream with auto-generated ID.
+// Returns the generated message ID.
+func (c *Client) XAdd(ctx context.Context, stream string, values map[string]interface{}) (string, error) {
+	return c.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: stream,
+		Values: values,
+	}).Result()
+}
+
+// XAddWithMaxLen adds a message to a Redis stream with a maximum length cap.
+// Older entries are trimmed when the stream exceeds maxLen.
+func (c *Client) XAddWithMaxLen(ctx context.Context, stream string, maxLen int64, values map[string]interface{}) (string, error) {
+	return c.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: stream,
+		MaxLen: maxLen,
+		Approx: true, // Use ~ for better performance
+		Values: values,
+	}).Result()
+}
+
+// XRead reads messages from one or more streams starting from the given IDs.
+// Use "$" to read only new messages, or "0" to read from the beginning.
+// count limits the number of messages returned (0 = no limit).
+// block is the blocking timeout (0 = non-blocking).
+func (c *Client) XRead(ctx context.Context, streams []string, count int64, block time.Duration) ([]redis.XStream, error) {
+	return c.client.XRead(ctx, &redis.XReadArgs{
+		Streams: streams,
+		Count:   count,
+		Block:   block,
+	}).Result()
+}
+
+// XReadGroup reads messages from streams using a consumer group.
+// Use ">" to read only new messages not yet delivered to any consumer.
+// Use "0" to read pending messages that were delivered but not acknowledged.
+func (c *Client) XReadGroup(ctx context.Context, group, consumer string, streams []string, count int64, block time.Duration) ([]redis.XStream, error) {
+	return c.client.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: consumer,
+		Streams:  streams,
+		Count:    count,
+		Block:    block,
+	}).Result()
+}
+
+// XGroupCreate creates a consumer group for a stream.
+// Use "$" to start consuming from new messages only.
+// Use "0" to start consuming from the beginning of the stream.
+// Returns nil if group already exists.
+func (c *Client) XGroupCreate(ctx context.Context, stream, group, start string) error {
+	err := c.client.XGroupCreateMkStream(ctx, stream, group, start).Err()
+	if err != nil && err.Error() == "BUSYGROUP Consumer Group name already exists" {
+		return nil // Group already exists, not an error
+	}
+	return err
+}
+
+// XAck acknowledges processing of messages in a consumer group.
+func (c *Client) XAck(ctx context.Context, stream, group string, ids ...string) (int64, error) {
+	return c.client.XAck(ctx, stream, group, ids...).Result()
+}
+
+// XLen returns the number of entries in a stream.
+func (c *Client) XLen(ctx context.Context, stream string) (int64, error) {
+	return c.client.XLen(ctx, stream).Result()
+}
+
+// XTrimMaxLen trims a stream to approximately maxLen entries.
+func (c *Client) XTrimMaxLen(ctx context.Context, stream string, maxLen int64) (int64, error) {
+	return c.client.XTrimMaxLenApprox(ctx, stream, maxLen, 0).Result()
+}
+
+// XPending returns information about pending messages in a consumer group.
+func (c *Client) XPending(ctx context.Context, stream, group string) (*redis.XPending, error) {
+	return c.client.XPending(ctx, stream, group).Result()
+}
+
+// XClaim claims pending messages from another consumer.
+func (c *Client) XClaim(ctx context.Context, stream, group, consumer string, minIdle time.Duration, ids ...string) ([]redis.XMessage, error) {
+	return c.client.XClaim(ctx, &redis.XClaimArgs{
+		Stream:   stream,
+		Group:    group,
+		Consumer: consumer,
+		MinIdle:  minIdle,
+		Messages: ids,
+	}).Result()
+}

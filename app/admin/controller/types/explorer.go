@@ -36,32 +36,3 @@ type EntityGetRequest struct {
 	UseStaging bool    `json:"use_staging"`
 }
 
-// CrossChainEntityQueryRequest represents query parameters for cross-chain entity queries
-type CrossChainEntityQueryRequest struct {
-	ChainIDs     []uint64               `json:"chain_ids,omitempty"`      // Filter by specific chain IDs (e.g., [1,2,3])
-	Limit        int                    `json:"limit"`                    // Number of records to return (default: 50, max: 1000)
-	Offset       uint64                 `json:"offset"`                   // Offset for pagination
-	OrderBy      string                 `json:"order_by,omitempty"`       // Column to sort by (default: height)
-	SortDesc     bool                   `json:"sort_desc"`                // Sort order - true for DESC, false for ASC (default: true)
-	Filters      map[string]interface{} `json:"filters,omitempty"`        // Dynamic filters based on entity fields
-	Aggregate    bool                   `json:"aggregate,omitempty"`      // Whether to return aggregation stats
-	GroupByChain bool                   `json:"group_by_chain,omitempty"` // Group results by chain_id
-}
-
-// CrossChainEntityQueryResponse represents the response for cross-chain entity queries
-type CrossChainEntityQueryResponse struct {
-	Data         []map[string]interface{} `json:"data"`                   // Entity records
-	Total        uint64                   `json:"total"`                  // Total count across all chains
-	Limit        int                      `json:"limit"`                  // Limit used in query
-	Offset       uint64                   `json:"offset"`                 // Offset used in query
-	HasMore      bool                     `json:"has_more"`               // Whether more records exist
-	ChainStats   []ChainStats             `json:"chain_stats,omitempty"`  // Per-chain statistics
-	Aggregations map[string]interface{}   `json:"aggregations,omitempty"` // Aggregation results
-}
-
-// ChainStats represents statistics for a specific chain in cross-chain queries
-type ChainStats struct {
-	ChainID      uint64                 `json:"chain_id"`
-	Count        uint64                 `json:"count"`
-	Aggregations map[string]interface{} `json:"aggregations,omitempty"`
-}

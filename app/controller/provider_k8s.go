@@ -42,6 +42,7 @@ type K8sProvider struct {
 	tqPrefix       string
 	pullPolicy     corev1.PullPolicy
 	pullSecretName string
+	nodeSelector   map[string]string
 }
 
 var _ Provider = (*K8sProvider)(nil)
@@ -93,6 +94,9 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 	// Image pull configuration
 	pullPolicy := parsePullPolicy(getEnv("INDEXER_PULL_POLICY", "Always"))
 	pullSecretName := getEnv("INDEXER_PULL_SECRET", "")
+
+	// Node selector for pod placement (e.g., "node-role.kubernetes.io/control-plane=true")
+	nodeSelector := parseNodeSelector(getEnv("INDEXER_NODE_SELECTOR", ""))
 
 	// Container env (common + per-chain overrides later).
 	env := []corev1.EnvVar{
@@ -177,6 +181,7 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 		tqPrefix:       tqPrefix,
 		pullPolicy:     pullPolicy,
 		pullSecretName: pullSecretName,
+		nodeSelector:   nodeSelector,
 	}
 
 	log.Info("provider initialized",
@@ -193,6 +198,7 @@ func NewK8sProviderFromEnv(logger *zap.Logger) (*K8sProvider, error) {
 		zap.String("pull_policy", string(pullPolicy)),
 		zap.String("pull_secret", pullSecretName),
 		zap.Bool("resources_configured", res != nil),
+		zap.Any("node_selector", nodeSelector),
 	)
 
 	return p, nil
@@ -274,6 +280,11 @@ func (p *K8sProvider) EnsureChain(ctx context.Context, c *Chain) error {
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{
 			{Name: p.pullSecretName},
 		}
+	}
+
+	// Add node selector if configured
+	if len(p.nodeSelector) > 0 {
+		podSpec.NodeSelector = p.nodeSelector
 	}
 
 	desired := &appsv1.Deployment{
@@ -868,6 +879,10 @@ func needsUpdate(curr, desired *appsv1.Deployment) bool {
 	if curr.Spec.Template.Spec.Containers[0].Image != desired.Spec.Template.Spec.Containers[0].Image {
 		return true
 	}
+	// node selector
+	if !nodeSelectorEqual(curr.Spec.Template.Spec.NodeSelector, desired.Spec.Template.Spec.NodeSelector) {
+		return true
+	}
 	// env checksum
 	ca := curr.Spec.Template.Annotations["canopyx/env-checksum"]
 	da := desired.Spec.Template.Annotations["canopyx/env-checksum"]
@@ -902,4 +917,40 @@ func parsePullPolicy(policy string) corev1.PullPolicy {
 	default:
 		return corev1.PullAlways // Safe default for production
 	}
+}
+
+// parseNodeSelector parses a comma-separated list of key=value pairs into a map
+// Example: "node-role.kubernetes.io/control-plane=true,disktype=ssd"
+func parseNodeSelector(s string) map[string]string {
+	if s == "" {
+		return nil
+	}
+	result := make(map[string]string)
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 {
+			result[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// nodeSelectorEqual compares two node selector maps for equality
+func nodeSelectorEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }

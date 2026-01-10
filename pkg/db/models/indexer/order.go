@@ -45,6 +45,9 @@ var OrderColumns = []ColumnDef{
 // which calculates MIN(height) for each order_id. Consumers should JOIN with this view
 // if they need to know when an order was created.
 type Order struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Identity - OrderID is the unique identifier for this order
 	OrderID string `ch:"order_id" json:"order_id"` // Unique order identifier
 

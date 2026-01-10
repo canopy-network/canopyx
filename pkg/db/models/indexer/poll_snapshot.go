@@ -45,6 +45,9 @@ var PollSnapshotColumns = []ColumnDef{
 //   - Historical state: SELECT * FROM poll_snapshots FINAL WHERE proposal_hash = ? AND snapshot_time <= ? ORDER BY snapshot_time DESC LIMIT 1
 //   - All proposals at time: SELECT DISTINCT proposal_hash FROM poll_snapshots FINAL WHERE snapshot_time = ?
 type PollSnapshot struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Primary key - composite key for deduplication
 	ProposalHash string `ch:"proposal_hash" json:"proposal_hash"` // Hex hash of proposal
 

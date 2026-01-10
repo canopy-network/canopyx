@@ -28,8 +28,11 @@ var SupplyColumns = []ColumnDef{
 // - We don't rely on database state which may be incomplete during parallel indexing
 // - ReplacingMergeTree handles deduplication if the same height is indexed multiple times
 type Supply struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Supply metrics
-	Total         uint64 `ch:"total" json:"total"`                   // Total tokens in the system (minted - burned)
+	Total         uint64 `ch:"total" json:"total"` // Total tokens in the system (minted - burned)
 	Staked        uint64 `ch:"staked" json:"staked"`                 // Total locked tokens (includes delegated)
 	DelegatedOnly uint64 `ch:"delegated_only" json:"delegated_only"` // Total delegated tokens only
 

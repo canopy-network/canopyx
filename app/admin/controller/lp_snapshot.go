@@ -8,8 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	chainstore "github.com/canopy-network/canopyx/pkg/db/chain"
-	crosschainstore "github.com/canopy-network/canopyx/pkg/db/crosschain"
+	globalstore "github.com/canopy-network/canopyx/pkg/db/global"
 	indexermodels "github.com/canopy-network/canopyx/pkg/db/models/indexer"
 	"github.com/canopy-network/canopyx/pkg/temporal"
 	indexerworkflow "github.com/canopy-network/canopyx/pkg/temporal/indexer"
@@ -20,6 +19,98 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 )
+
+// LPScheduleStatus represents the status of an LP snapshot schedule.
+type LPScheduleStatus struct {
+	Exists       bool       `json:"exists"`
+	ScheduleID   string     `json:"schedule_id"`
+	ChainID      uint64     `json:"chain_id"`
+	Paused       bool       `json:"paused"`
+	PauseNote    string     `json:"pause_note,omitempty"`
+	NextRunTime  *time.Time `json:"next_run_time,omitempty"`
+	LastRunTime  *time.Time `json:"last_run_time,omitempty"`
+	RunningCount int        `json:"running_count"`
+}
+
+// HandleGetLPSnapshotSchedule returns the status of the LP snapshot schedule.
+// GET /api/chains/:id/lp-schedule
+func (c *Controller) HandleGetLPSnapshotSchedule(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	chainIDStr := vars["id"]
+
+	chainIDUint, err := strconv.ParseUint(chainIDStr, 10, 64)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid chain ID"})
+		return
+	}
+
+	status := LPScheduleStatus{
+		ChainID: chainIDUint,
+		Exists:  false,
+	}
+
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Warn("failed to get chain namespace for LP schedule status",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		_ = json.NewEncoder(w).Encode(status)
+		return
+	}
+
+	// Get the chain client for this chain's namespace
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint, namespace)
+	if err != nil {
+		c.App.Logger.Warn("failed to get chain client for LP schedule status",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		_ = json.NewEncoder(w).Encode(status)
+		return
+	}
+
+	scheduleID := chainClient.LPSnapshotScheduleID
+	status.ScheduleID = scheduleID
+
+	handle := chainClient.TSClient.GetHandle(r.Context(), scheduleID)
+	desc, err := handle.Describe(r.Context())
+	if err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			// Schedule doesn't exist - return status with exists=false
+			_ = json.NewEncoder(w).Encode(status)
+			return
+		}
+		// Other error
+		c.App.Logger.Error("failed to describe LP schedule",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Schedule exists
+	status.Exists = true
+	status.Paused = desc.Schedule.State.Paused
+	status.PauseNote = desc.Schedule.State.Note
+	status.RunningCount = len(desc.Info.RunningWorkflows)
+
+	// Get next scheduled run time
+	if len(desc.Info.NextActionTimes) > 0 {
+		nextTime := desc.Info.NextActionTimes[0]
+		status.NextRunTime = &nextTime
+	}
+
+	// Get last run time from recent actions
+	if len(desc.Info.RecentActions) > 0 {
+		lastTime := desc.Info.RecentActions[len(desc.Info.RecentActions)-1].ScheduleTime
+		status.LastRunTime = &lastTime
+	}
+
+	_ = json.NewEncoder(w).Encode(status)
+}
 
 // HandleCreateLPSnapshotSchedule creates an hourly schedule for LP position snapshots.
 // POST /api/v1/admin/chains/:id/lp-schedule
@@ -36,8 +127,19 @@ func (c *Controller) HandleCreateLPSnapshotSchedule(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain namespace",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to get chain namespace"})
+		return
+	}
+
 	// Get the chain client for this chain's namespace
-	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint, namespace)
 	if err != nil {
 		c.App.Logger.Error("failed to get chain client",
 			zap.Uint64("chain_id", chainIDUint),
@@ -165,8 +267,19 @@ func (c *Controller) HandlePauseLPSnapshotSchedule(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain namespace",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to get chain namespace"})
+		return
+	}
+
 	// Get the chain client for this chain's namespace
-	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint, namespace)
 	if err != nil {
 		c.App.Logger.Error("failed to get chain client",
 			zap.Uint64("chain_id", chainIDUint),
@@ -231,8 +344,19 @@ func (c *Controller) HandleUnpauseLPSnapshotSchedule(w http.ResponseWriter, r *h
 		}
 	}
 
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain namespace",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to get chain namespace"})
+		return
+	}
+
 	// Get the chain client for this chain's namespace
-	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint, namespace)
 	if err != nil {
 		c.App.Logger.Error("failed to get chain client",
 			zap.Uint64("chain_id", chainIDUint),
@@ -314,8 +438,19 @@ func (c *Controller) HandleDeleteLPSnapshotSchedule(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain namespace",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to get chain namespace"})
+		return
+	}
+
 	// Get the chain client for this chain's namespace
-	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint, namespace)
 	if err != nil {
 		c.App.Logger.Error("failed to get chain client",
 			zap.Uint64("chain_id", chainIDUint),
@@ -408,8 +543,19 @@ func (c *Controller) HandleTriggerLPSnapshotBackfill(w http.ResponseWriter, r *h
 		}
 	}
 
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(r.Context(), chainIDUint)
+	if err != nil {
+		c.App.Logger.Error("failed to get chain namespace",
+			zap.Uint64("chain_id", chainIDUint),
+			zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "failed to get chain namespace"})
+		return
+	}
+
 	// Get the chain client for this chain's namespace
-	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint)
+	chainClient, err := c.App.TemporalManager.GetChainClient(r.Context(), chainIDUint, namespace)
 	if err != nil {
 		c.App.Logger.Error("failed to get chain client",
 			zap.Uint64("chain_id", chainIDUint),
@@ -441,7 +587,7 @@ func (c *Controller) HandleTriggerLPSnapshotBackfill(w http.ResponseWriter, r *h
 func (c *Controller) HandleQueryLPSnapshots(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
-	var params crosschainstore.LPPositionSnapshotQueryParams
+	var params globalstore.LPPositionSnapshotQueryParams
 
 	// Parse optional filters
 	if chainIDStr := query.Get("chain_id"); chainIDStr != "" {
@@ -512,14 +658,8 @@ func (c *Controller) HandleQueryLPSnapshots(w http.ResponseWriter, r *http.Reque
 		params.Offset = offset
 	}
 
-	// Query cross-chain database
-	if c.App.CrossChainDB == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cross-chain database not available"})
-		return
-	}
-
-	snapshots, err := c.App.CrossChainDB.QueryLPPositionSnapshots(r.Context(), params)
+	// Query global database
+	snapshots, err := c.App.GlobalDB.QueryLPPositionSnapshots(r.Context(), params)
 	if err != nil {
 		c.App.Logger.Error("Failed to query LP snapshots", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
@@ -536,9 +676,8 @@ func (c *Controller) HandleQueryLPSnapshots(w http.ResponseWriter, r *http.Reque
 
 // calculateBackfillRange calculates the backfill date range from block 1 to current indexed height.
 func (c *Controller) calculateBackfillRange(ctx context.Context, chainID uint64) (startDate, endDate time.Time, err error) {
-	// Get chain database - reuse admin DB's connection pool
-	chainDB := chainstore.NewWithSharedClient(c.App.AdminDB.Client, chainID)
-	// Note: No Close() needed - shares admin DB's connection pool
+	// Get GlobalDB configured for this chain
+	chainDB := c.App.GetGlobalDBForChain(chainID)
 
 	// Get block 1 time for the start date (lightweight query - only fetches time column)
 	block1Time, err := chainDB.GetBlockTime(ctx, 1)
@@ -578,8 +717,14 @@ func (c *Controller) calculateBackfillRange(ctx context.Context, chainID uint64)
 
 // triggerLPSnapshotBackfill triggers a Temporal schedule backfill.
 func (c *Controller) triggerLPSnapshotBackfill(ctx context.Context, chainID uint64, scheduleID string, startDate, endDate time.Time) error {
+	// Fetch namespace from database
+	namespace, err := c.getChainNamespace(ctx, chainID)
+	if err != nil {
+		return fmt.Errorf("failed to get chain namespace: %w", err)
+	}
+
 	// Get the chain client for this chain's namespace
-	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainID)
+	chainClient, err := c.App.TemporalManager.GetChainClient(ctx, chainID, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get chain client: %w", err)
 	}

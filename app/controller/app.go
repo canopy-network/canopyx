@@ -405,7 +405,15 @@ func (a *App) ReconcileReindexWorkers(ctx context.Context) error {
 
 		// Check reindex queue depth
 		// Get the chain client to query queue stats in chain's namespace
-		chainClient, clientErr := a.TemporalManager.GetChainClient(ctx, chain.ChainID)
+		namespace, nsErr := a.getChainNamespace(ctx, chain.ChainID)
+		if nsErr != nil {
+			a.Logger.Warn("failed to get chain namespace for reindex queue",
+				zap.Uint64("chain_id", chain.ChainID),
+				zap.Error(nsErr))
+			continue
+		}
+
+		chainClient, clientErr := a.TemporalManager.GetChainClient(ctx, chain.ChainID, namespace)
 		if clientErr != nil {
 			a.Logger.Warn("failed to get chain client for reindex queue",
 				zap.Uint64("chain_id", chain.ChainID),
@@ -678,6 +686,16 @@ func (a *App) updateDeploymentHealthStatus(ctx context.Context, chainID uint64) 
 	}
 }
 
+// getChainNamespace fetches the namespace for a chain from the database.
+func (a *App) getChainNamespace(ctx context.Context, chainID uint64) (string, error) {
+	nsInfo, err := a.IndexerDB.GetChainNamespaceInfo(ctx, chainID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get chain namespace info: %w", err)
+	}
+	nsConfig := temporal.DefaultNamespaceConfig()
+	return nsConfig.ChainNamespaceWithUID(chainID, nsInfo.NamespaceUID), nil
+}
+
 func (a *App) fetchQueueStats(ctx context.Context, chainID uint64) (QueueStats, error) {
 	chainIDStr := strconv.FormatUint(chainID, 10)
 	if a.TemporalManager == nil {
@@ -692,8 +710,14 @@ func (a *App) fetchQueueStats(ctx context.Context, chainID uint64) (QueueStats, 
 	ctx, cancel := context.WithTimeout(ctx, queueRequestTimeout)
 	defer cancel()
 
+	// Fetch namespace for this chain
+	namespace, nsErr := a.getChainNamespace(ctx, chainID)
+	if nsErr != nil {
+		return QueueStats{}, fmt.Errorf("failed to get chain namespace: %w", nsErr)
+	}
+
 	// Get chain client to query stats in chain's namespace
-	chainClient, err := a.TemporalManager.GetChainClient(ctx, chainID)
+	chainClient, err := a.TemporalManager.GetChainClient(ctx, chainID, namespace)
 	if err != nil {
 		return QueueStats{}, fmt.Errorf("failed to get chain client: %w", err)
 	}

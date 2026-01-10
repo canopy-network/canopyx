@@ -52,10 +52,32 @@ type ActivityIndexAtHeight struct {
 }
 
 // ActivityRecordIndexedInput contains the parameters for recording indexing progress with timing data.
+// Uses individual timing fields instead of JSON for ClickHouse column efficiency.
 type ActivityRecordIndexedInput struct {
 	Height         uint64  `json:"height"`
 	IndexingTimeMs float64 `json:"indexingTimeMs"` // Total workflow execution time in milliseconds
-	IndexingDetail string  `json:"indexingDetail"` // JSON string with breakdown of individual activity timings
+
+	// Block info for Redis event (passed from IndexBlockFromBlob to avoid re-querying ClickHouse)
+	BlockHash            string    `json:"blockHash"`
+	BlockTime            time.Time `json:"blockTime"`
+	BlockProposerAddress string    `json:"blockProposerAddress"`
+
+	// Individual timing metrics (milliseconds) - columnar for ClickHouse efficiency
+	TimingFetchBlockMs        float64 `json:"timing_fetch_block_ms"`
+	TimingPrepareIndexMs      float64 `json:"timing_prepare_index_ms"`
+	TimingIndexAccountsMs     float64 `json:"timing_index_accounts_ms"`
+	TimingIndexCommitteesMs   float64 `json:"timing_index_committees_ms"`
+	TimingIndexDexBatchMs     float64 `json:"timing_index_dex_batch_ms"`
+	TimingIndexDexPricesMs    float64 `json:"timing_index_dex_prices_ms"`
+	TimingIndexEventsMs       float64 `json:"timing_index_events_ms"`
+	TimingIndexOrdersMs       float64 `json:"timing_index_orders_ms"`
+	TimingIndexParamsMs       float64 `json:"timing_index_params_ms"`
+	TimingIndexPoolsMs        float64 `json:"timing_index_pools_ms"`
+	TimingIndexSupplyMs       float64 `json:"timing_index_supply_ms"`
+	TimingIndexTransactionsMs float64 `json:"timing_index_transactions_ms"`
+	TimingIndexValidatorsMs   float64 `json:"timing_index_validators_ms"`
+	TimingSaveBlockMs         float64 `json:"timing_save_block_ms"`
+	TimingSaveBlockSummaryMs  float64 `json:"timing_save_block_summary_ms"`
 }
 
 // ActivityBatchScheduleInput contains the parameters for batch scheduling workflows.

@@ -1,108 +1,134 @@
 package activity
 
 import (
-	"context"
-	"encoding/json"
-	"time"
+    "context"
+    "encoding/json"
+    "time"
 
-	"github.com/canopy-network/canopyx/app/indexer/utils"
-	"github.com/canopy-network/canopyx/pkg/db/clickhouse"
-
-	"github.com/canopy-network/canopyx/app/indexer/types"
-	"go.uber.org/zap"
+    "github.com/canopy-network/canopyx/app/indexer/types"
+    "github.com/canopy-network/canopyx/app/indexer/utils"
+    adminmodels "github.com/canopy-network/canopyx/pkg/db/models/admin"
+    "go.uber.org/zap"
 )
 
 // RecordIndexed records the height of the last block indexed for a given chain along with timing metrics.
 // After updating the index_progress watermark, it publishes a block.indexed event to Redis for real-time notifications.
 func (ac *Context) RecordIndexed(ctx context.Context, in types.ActivityRecordIndexedInput) error {
-	// Get chain database for block data (needed for Redis event)
-	chainDb, err := ac.GetChainDb(ctx, ac.ChainID)
-	if err != nil {
-		return err
-	}
+    // Convert input timing fields to IndexProgress struct for columnar storage
+    timing := &adminmodels.IndexProgress{
+        TimingFetchBlockMs:        in.TimingFetchBlockMs,
+        TimingPrepareIndexMs:      in.TimingPrepareIndexMs,
+        TimingIndexAccountsMs:     in.TimingIndexAccountsMs,
+        TimingIndexCommitteesMs:   in.TimingIndexCommitteesMs,
+        TimingIndexDexBatchMs:     in.TimingIndexDexBatchMs,
+        TimingIndexDexPricesMs:    in.TimingIndexDexPricesMs,
+        TimingIndexEventsMs:       in.TimingIndexEventsMs,
+        TimingIndexOrdersMs:       in.TimingIndexOrdersMs,
+        TimingIndexParamsMs:       in.TimingIndexParamsMs,
+        TimingIndexPoolsMs:        in.TimingIndexPoolsMs,
+        TimingIndexSupplyMs:       in.TimingIndexSupplyMs,
+        TimingIndexTransactionsMs: in.TimingIndexTransactionsMs,
+        TimingIndexValidatorsMs:   in.TimingIndexValidatorsMs,
+        TimingSaveBlockMs:         in.TimingSaveBlockMs,
+        TimingSaveBlockSummaryMs:  in.TimingSaveBlockSummaryMs,
+    }
 
-	// Query block FIRST to verify it exists before updating index_progress
-	// This prevents marking blocks as indexed when PromoteData failed
-	consistentCtx := clickhouse.WithSequentialConsistency(ctx)
-	block, err := chainDb.GetBlock(consistentCtx, in.Height)
-	if err != nil {
-		// If block doesn't exist, fail so Temporal retries (PromoteData might still be in progress)
-		return err
-	}
+    // Update index_progress watermark
+    // IndexingTimeMs already contains the accurate workflow execution time
+    if err := ac.AdminDB.RecordIndexed(ctx, ac.ChainID, in.Height, in.IndexingTimeMs, timing); err != nil {
+        return err
+    }
 
-	// Update index_progress watermark - only after verifying block exists
-	// IndexingTimeMs already contains the accurate workflow execution time
-	if err := ac.AdminDB.RecordIndexed(ctx, ac.ChainID, in.Height, in.IndexingTimeMs, in.IndexingDetail); err != nil {
-		return err
-	}
+    // Publish block.indexed event to Redis (best-effort, don't fail if Redis unavailable)
+    if ac.RedisClient != nil {
+        // Get chain database for block summary (needed for Redis event)
+        chainDb, err := ac.GetGlobalDb(ctx)
+        if err != nil {
+            ac.Logger.Warn("Failed to get global db for block summary (non-fatal)",
+                zap.Uint64("chainId", ac.ChainID),
+                zap.Uint64("height", in.Height),
+                zap.Error(err))
+            return nil
+        }
 
-	// Publish block.indexed event to Redis (best-effort, don't fail if Redis unavailable)
-	if ac.RedisClient != nil {
-		// Build event
-		// Query block summary to get entity counts (use consistent context for replication safety)
-		summary, summaryErr := chainDb.GetBlockSummary(consistentCtx, in.Height, false)
-		if summaryErr != nil {
-			// fallback to staging just in case the database is still processing the propagation
-			summary, summaryErr = chainDb.GetBlockSummary(consistentCtx, in.Height, true)
-			if summaryErr != nil {
-				ac.Logger.Warn(
-					"Fail to load block summary to publish block.indexed event (non-fatal)",
-					zap.Uint64("chainId", ac.ChainID),
-					zap.Uint64("height", in.Height),
-					zap.Error(summaryErr),
-				)
-				return nil
-			}
-		}
+        // Query block summary to get entity counts
+        summary, summaryErr := chainDb.GetBlockSummary(ctx, in.Height)
+        if summaryErr != nil {
+            ac.Logger.Warn(
+                "Fail to load block summary to publish block.indexed event (non-fatal)",
+                zap.Uint64("chainId", ac.ChainID),
+                zap.Uint64("height", in.Height),
+                zap.Error(summaryErr),
+            )
+            return nil
+        }
 
-		event := &types.BlockIndexedEvent{
-			Event:     "block.indexed",
-			ChainID:   ac.ChainID,
-			Height:    in.Height,
-			Timestamp: time.Now().UTC(),
-			Block: types.BlockInfo{
-				Hash:            block.Hash,
-				Time:            block.Time,
-				ProposerAddress: block.ProposerAddress,
-			},
-			Summary: *summary, // Include a complete BlockSummary
-		}
+        // Use block info passed from IndexBlockFromBlob (no ClickHouse re-query needed)
+        event := &types.BlockIndexedEvent{
+            Event:     "block.indexed",
+            ChainID:   ac.ChainID,
+            Height:    in.Height,
+            Timestamp: time.Now().UTC(),
+            Block: types.BlockInfo{
+                Hash:            in.BlockHash,
+                Time:            in.BlockTime,
+                ProposerAddress: in.BlockProposerAddress,
+            },
+            Summary: *summary,
+        }
 
-		if err := ac.publishBlockIndexedEvent(ctx, event); err != nil {
-			ac.Logger.Warn("Failed to publish block.indexed event (non-fatal)",
-				zap.Uint64("chainId", ac.ChainID),
-				zap.Uint64("height", in.Height),
-				zap.Error(err))
-			// Don't return error - Redis publish is best-effort
-		}
-	}
+        if err := ac.publishBlockIndexedEvent(ctx, event); err != nil {
+            ac.Logger.Warn("Failed to publish block.indexed event (non-fatal)",
+                zap.Uint64("chainId", ac.ChainID),
+                zap.Uint64("height", in.Height),
+                zap.Error(err))
+            // Don't return error - Redis publish is best-effort
+        }
+    }
 
-	return nil
+    return nil
 }
 
-// publishBlockIndexedEvent queries block and summary data, then publishes to Redis.
+// publishBlockIndexedEvent publishes to both Redis Pub/Sub (real-time) and Streams (durable).
 func (ac *Context) publishBlockIndexedEvent(ctx context.Context, event *types.BlockIndexedEvent) error {
-	// Marshal to JSON
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
+    // Marshal to JSON
+    payload, err := json.Marshal(event)
+    if err != nil {
+        return err
+    }
 
-	// Publish to a Redis channel (if Redis is available)
-	// The Publish method handles errors internally and logs them
-	if ac.RedisClient != nil {
-		channel := utils.GetBlockIndexedChannel(ac.ChainID)
-		ac.RedisClient.Publish(ctx, channel, payload)
+    if ac.RedisClient == nil {
+        ac.Logger.Debug("Redis client not available, skipping event publication",
+            zap.Uint64("chainId", ac.ChainID),
+            zap.Uint64("height", event.Height))
+        return nil
+    }
 
-		ac.Logger.Debug("Published block.indexed event",
-			zap.Uint64("chainId", ac.ChainID),
-			zap.Uint64("height", event.Height),
-			zap.String("channel", channel))
-	} else {
-		ac.Logger.Debug("Redis client not available, skipping event publication",
-			zap.Uint64("chainId", ac.ChainID),
-			zap.Uint64("height", event.Height))
-	}
+    // 1. Publish to Pub/Sub channel for real-time subscribers
+    channel := utils.GetBlockIndexedChannel(ac.ChainID)
+    ac.RedisClient.Publish(ctx, channel, payload)
 
-	return nil
+    // 2. Publish to Stream for durable delivery (consumer groups)
+    stream := utils.GetBlockIndexedStream(ac.ChainID)
+    _, streamErr := ac.RedisClient.XAddWithMaxLen(ctx, stream, utils.DefaultStreamMaxLen, map[string]interface{}{
+        "event":    event.Event,
+        "chain_id": event.ChainID,
+        "height":   event.Height,
+        "payload":  string(payload),
+    })
+    if streamErr != nil {
+        ac.Logger.Warn("Failed to publish to stream (non-fatal)",
+            zap.Uint64("chainId", ac.ChainID),
+            zap.Uint64("height", event.Height),
+            zap.String("stream", stream),
+            zap.Error(streamErr))
+    }
+
+    ac.Logger.Debug("Published block.indexed event",
+        zap.Uint64("chainId", ac.ChainID),
+        zap.Uint64("height", event.Height),
+        zap.String("channel", channel),
+        zap.String("stream", stream))
+
+    return nil
 }

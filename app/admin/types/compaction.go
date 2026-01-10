@@ -4,8 +4,8 @@ import "time"
 
 // --- Workflows
 
-// WorkflowCompactCrossChainTablesWorkflowInput contains parameters for the compaction workflow.
-type WorkflowCompactCrossChainTablesWorkflowInput struct {
+// WorkflowCompactGlobalTablesWorkflowInput contains parameters for the compaction workflow.
+type WorkflowCompactGlobalTablesWorkflowInput struct {
 	// No parameters needed currently - compacts all tables
 }
 

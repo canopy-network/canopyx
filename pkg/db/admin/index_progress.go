@@ -71,15 +71,33 @@ func (db *DB) initIndexProgress(ctx context.Context) error {
 
 // RecordIndexed records the height of the last indexed block for the provided chain along with timing metrics.
 // indexingTimeMs is the total workflow execution time in milliseconds (from workflow start to completion).
-// indexingDetail is a JSON string with the breakdown of individual activity timings.
-func (db *DB) RecordIndexed(ctx context.Context, chainID uint64, height uint64, indexingTimeMs float64, indexingDetail string) error {
+// timing contains the individual timing metrics for each indexing activity.
+func (db *DB) RecordIndexed(ctx context.Context, chainID uint64, height uint64, indexingTimeMs float64, timing *adminmodels.IndexProgress) error {
 	ip := &adminmodels.IndexProgress{
 		ChainID:        chainID,
 		Height:         height,
 		IndexedAt:      time.Now().UTC(),
 		IndexingTime:   indexingTimeMs / 1000.0, // Convert ms to seconds for backwards compatibility
 		IndexingTimeMs: indexingTimeMs,          // Total workflow execution time (milliseconds)
-		IndexingDetail: indexingDetail,          // JSON breakdown of individual activity timings
+	}
+
+	// Copy individual timing metrics if provided
+	if timing != nil {
+		ip.TimingFetchBlockMs = timing.TimingFetchBlockMs
+		ip.TimingPrepareIndexMs = timing.TimingPrepareIndexMs
+		ip.TimingIndexAccountsMs = timing.TimingIndexAccountsMs
+		ip.TimingIndexCommitteesMs = timing.TimingIndexCommitteesMs
+		ip.TimingIndexDexBatchMs = timing.TimingIndexDexBatchMs
+		ip.TimingIndexDexPricesMs = timing.TimingIndexDexPricesMs
+		ip.TimingIndexEventsMs = timing.TimingIndexEventsMs
+		ip.TimingIndexOrdersMs = timing.TimingIndexOrdersMs
+		ip.TimingIndexParamsMs = timing.TimingIndexParamsMs
+		ip.TimingIndexPoolsMs = timing.TimingIndexPoolsMs
+		ip.TimingIndexSupplyMs = timing.TimingIndexSupplyMs
+		ip.TimingIndexTransactionsMs = timing.TimingIndexTransactionsMs
+		ip.TimingIndexValidatorsMs = timing.TimingIndexValidatorsMs
+		ip.TimingSaveBlockMs = timing.TimingSaveBlockMs
+		ip.TimingSaveBlockSummaryMs = timing.TimingSaveBlockSummaryMs
 	}
 
 	return db.insertIndexProgress(ctx, ip)
@@ -88,8 +106,17 @@ func (db *DB) RecordIndexed(ctx context.Context, chainID uint64, height uint64, 
 // insertIndexProgress inserts a new index progress record.
 func (db *DB) insertIndexProgress(ctx context.Context, ip *adminmodels.IndexProgress) error {
 	query := fmt.Sprintf(`
-		INSERT INTO "%s"."%s" (chain_id, height, indexed_at, indexing_time, indexing_time_ms, indexing_detail)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO "%s"."%s" (
+			chain_id, height, indexed_at, indexing_time, indexing_time_ms,
+			timing_fetch_block_ms, timing_prepare_index_ms,
+			timing_index_accounts_ms, timing_index_committees_ms,
+			timing_index_dex_batch_ms, timing_index_dex_prices_ms,
+			timing_index_events_ms, timing_index_orders_ms,
+			timing_index_params_ms, timing_index_pools_ms,
+			timing_index_supply_ms, timing_index_transactions_ms,
+			timing_index_validators_ms, timing_save_block_ms,
+			timing_save_block_summary_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, db.Name, adminmodels.IndexProgressTableName)
 
 	return db.Db.Exec(ctx, query,
@@ -98,18 +125,56 @@ func (db *DB) insertIndexProgress(ctx context.Context, ip *adminmodels.IndexProg
 		ip.IndexedAt,
 		ip.IndexingTime,
 		ip.IndexingTimeMs,
-		ip.IndexingDetail,
+		ip.TimingFetchBlockMs,
+		ip.TimingPrepareIndexMs,
+		ip.TimingIndexAccountsMs,
+		ip.TimingIndexCommitteesMs,
+		ip.TimingIndexDexBatchMs,
+		ip.TimingIndexDexPricesMs,
+		ip.TimingIndexEventsMs,
+		ip.TimingIndexOrdersMs,
+		ip.TimingIndexParamsMs,
+		ip.TimingIndexPoolsMs,
+		ip.TimingIndexSupplyMs,
+		ip.TimingIndexTransactionsMs,
+		ip.TimingIndexValidatorsMs,
+		ip.TimingSaveBlockMs,
+		ip.TimingSaveBlockSummaryMs,
 	)
+}
+
+// HasIndexed checks if a specific height has been indexed for a chain.
+// This is the source of truth for indexing completion - index_progress is only written
+// after the entire indexing workflow succeeds.
+// Uses PREWHERE for chain_id (first ORDER BY column) for efficient partition pruning.
+func (db *DB) HasIndexed(ctx context.Context, chainID uint64, height uint64) (bool, error) {
+	query := fmt.Sprintf(`
+		SELECT 1 FROM "%s"."%s"
+		PREWHERE chain_id = ?
+		WHERE height = ?
+		LIMIT 1
+	`, db.Name, adminmodels.IndexProgressTableName)
+
+	var exists uint8
+	err := db.Db.QueryRow(ctx, query, chainID, height).Scan(&exists)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // LastIndexed returns the latest indexed height for a chain.
 // 1) Prefer the summarized ReplacingMergeTree table (index_progress_agg).
 // 2) Fallback to max(height) from the raw index_progress if the summary is empty.
+// Uses PREWHERE for chain_id (first ORDER BY column) for efficient partition pruning.
 func (db *DB) LastIndexed(ctx context.Context, chainID uint64) (uint64, error) {
-	// Try the aggregate first:
+	// Try the aggregate first (agg table is ORDER BY chain_id only):
 	var h uint64
 	query := fmt.Sprintf(
-		`SELECT maxMerge(max_height) FROM "%s"."%s" WHERE chain_id = ?`,
+		`SELECT maxMerge(max_height) FROM "%s"."%s" PREWHERE chain_id = ?`,
 		db.Name,
 		adminmodels.IndexProgressAggTableName,
 	)
@@ -122,7 +187,7 @@ func (db *DB) LastIndexed(ctx context.Context, chainID uint64) (uint64, error) {
 	// Fallback to the base table if agg is empty (e.g., very first rows)
 	var fallback uint64
 	fallbackQuery := fmt.Sprintf(
-		`SELECT max(height) FROM "%s"."%s" WHERE chain_id = ?`,
+		`SELECT max(height) FROM "%s"."%s" PREWHERE chain_id = ?`,
 		db.Name,
 		adminmodels.IndexProgressTableName,
 	)
@@ -134,6 +199,7 @@ func (db *DB) LastIndexed(ctx context.Context, chainID uint64) (uint64, error) {
 
 // FindGaps returns missing [From, To] heights strictly inside observed heights,
 // and does NOT include the trailing gap to 'up to'. The caller should add a tail gap separately.
+// Uses PREWHERE for chain_id (first ORDER BY column) for efficient partition pruning.
 func (db *DB) FindGaps(ctx context.Context, chainID uint64) ([]adminmodels.Gap, error) {
 	query := fmt.Sprintf(`
 		SELECT CAST(assumeNotNull(prev_h) + 1 AS UInt64) AS from_h, CAST(h - 1 AS UInt64) AS to_h
@@ -146,7 +212,7 @@ func (db *DB) FindGaps(ctx context.Context, chainID uint64) ([]adminmodels.Gap, 
 		      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 		    ) AS prev_h
 		  FROM "%s"."%s"
-		  WHERE chain_id = ?
+		  PREWHERE chain_id = ?
 		  ORDER BY height
 		)
 		WHERE prev_h IS NOT NULL AND h > prev_h + 1
@@ -214,6 +280,7 @@ type heightRow struct {
 
 // GetCleanableHeights returns heights that have been indexed and are safe to clean from staging.
 // Returns heights indexed within the last lookbackHours - these have been promoted to production.
+// Uses PREWHERE for chain_id (first ORDER BY column) for efficient partition pruning.
 //
 // Example: With lookbackHours=2, at 4pm returns heights indexed between 2pm and 4pm.
 // These heights are in index_progress = successfully indexed = staging can be cleaned.
@@ -221,8 +288,8 @@ func (db *DB) GetCleanableHeights(ctx context.Context, chainID uint64, lookbackH
 	query := fmt.Sprintf(`
 		SELECT DISTINCT height
 		FROM "%s"."%s"
-		WHERE chain_id = ?
-		  AND indexed_at >= now() - INTERVAL ? HOUR
+		PREWHERE chain_id = ?
+		WHERE indexed_at >= now() - INTERVAL ? HOUR
 		ORDER BY height
 	`, db.Name, adminmodels.IndexProgressTableName)
 

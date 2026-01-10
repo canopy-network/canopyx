@@ -9,6 +9,7 @@ spec:
     # Sized for 2-3 chains doing parallel initial sync (1k blocks each)
     profiles:
       default/do_not_merge_across_partitions_select_final: "1"
+      default/optimize_move_to_prewhere_if_final: "1"
       default/optimize_aggregation_in_order: "1"
       default/max_threads: "8"              # Match CPU limit (8 cores)
       default/max_insert_threads: "4"       # Half of max_threads for INSERTs

@@ -104,7 +104,7 @@ func (ac *Context) scheduleReindexBatchToQueue(ctx context.Context, in types.Act
 				},
 			}
 
-			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, indexerworkflow.IndexBlockWorkflow2Name, types.WorkflowIndexBlockInput{
+			_, err := ac.ChainClient.TClient.ExecuteWorkflow(groupCtx, options, indexerworkflow.IndexBlockWorkflowName, types.WorkflowIndexBlockInput{
 				Height:  h,
 				Reindex: true, // Mark as reindex operation
 			})

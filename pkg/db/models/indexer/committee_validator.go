@@ -46,8 +46,11 @@ var CommitteeValidatorColumns = []ColumnDef{
 // Note: This table is derived from the Validators.Committees array field.
 // It should be populated during IndexValidators activity when committee membership changes.
 type CommitteeValidator struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Relationship
-	CommitteeID      uint64 `ch:"committee_id" json:"committee_id"`           // Committee (chain) ID
+	CommitteeID uint64 `ch:"committee_id" json:"committee_id"` // Committee (chain) ID
 	ValidatorAddress string `ch:"validator_address" json:"validator_address"` // Hex string representation of validator address
 
 	// Validator metadata (denormalized for query efficiency)

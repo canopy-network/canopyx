@@ -9,15 +9,15 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-// CompactCrossChainTablesWorkflow orchestrates the compaction of all cross-chain global tables.
+// CompactGlobalTablesWorkflow orchestrates the compaction of all global tables.
 // This workflow:
-// 1. Executes OPTIMIZE TABLE FINAL on all 11 global tables sequentially
+// 1. Executes OPTIMIZE TABLE FINAL on all global tables sequentially
 // 2. Logs a summary of results
 //
 // Runs hourly via Temporal schedule (configured at startup).
-func (wc *Context) CompactCrossChainTablesWorkflow(ctx workflow.Context) (types.ActivityCompactAllGlobalTablesOutput, error) {
+func (wc *Context) CompactGlobalTablesWorkflow(ctx workflow.Context) (types.ActivityCompactAllGlobalTablesOutput, error) {
 	logger := workflow.GetLogger(ctx)
-	logger.Info("Starting cross-chain table compaction workflow")
+	logger.Info("Starting global table compaction workflow")
 
 	// Activity options for compaction
 	// Allow up to 30 minutes for all tables (should be much faster, but be conservative)
@@ -40,7 +40,7 @@ func (wc *Context) CompactCrossChainTablesWorkflow(ctx workflow.Context) (types.
 		types.ActivityCompactAllGlobalTablesInput{}).Get(ctx, &result)
 
 	if err != nil {
-		logger.Error("Cross-chain table compaction activity failed", "error", err.Error())
+		logger.Error("Global table compaction activity failed", "error", err.Error())
 		return result, err
 	}
 
@@ -62,7 +62,7 @@ func (wc *Context) CompactCrossChainTablesWorkflow(ctx workflow.Context) (types.
 		// Non-critical error, don't fail the workflow
 	}
 
-	logger.Info("Cross-chain table compaction workflow completed",
+	logger.Info("Global table compaction workflow completed",
 		"total_tables", result.TotalTables,
 		"success_count", result.SuccessCount,
 		"failure_count", result.FailureCount,

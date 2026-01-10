@@ -1,14 +1,14 @@
 package activity
 
 import (
-	"context"
-	"time"
+    "context"
+    "time"
 
-	"github.com/canopy-network/canopyx/app/indexer/types"
-	"github.com/canopy-network/canopyx/pkg/db/models/indexer"
-	"github.com/canopy-network/canopyx/pkg/db/transform"
-	"go.temporal.io/sdk/temporal"
-	"go.uber.org/zap"
+    "github.com/canopy-network/canopyx/app/indexer/types"
+    "github.com/canopy-network/canopyx/pkg/db/models/indexer"
+    "github.com/canopy-network/canopyx/pkg/db/transform"
+    "go.temporal.io/sdk/temporal"
+    "go.uber.org/zap"
 )
 
 // IndexProposals captures governance proposal data snapshots at regular intervals.
@@ -22,86 +22,84 @@ import (
 // Proposal snapshots are time-based and inserted directly to the production table (no staging).
 // ReplacingMergeTree deduplicates by (proposal_hash, snapshot_time).
 func (ac *Context) IndexProposals(ctx context.Context) (types.ActivityIndexProposalsOutput, error) {
-	start := time.Now()
+    start := time.Now()
 
-	// Get chain configuration
-	cli, err := ac.rpcClient(ctx)
-	if err != nil {
-		return types.ActivityIndexProposalsOutput{}, err
-	}
+    // Get chain configuration
+    cli, err := ac.rpcClient(ctx)
+    if err != nil {
+        return types.ActivityIndexProposalsOutput{}, err
+    }
 
-	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
-	if chainDbErr != nil {
-		return types.ActivityIndexProposalsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
-	}
+    // Acquire (or ping) the chain DB to validate it exists
+    chainDb, chainDbErr := ac.GetGlobalDb(ctx)
+    if chainDbErr != nil {
+        return types.ActivityIndexProposalsOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
+    }
 
-	// Fetch current proposals state from RPC
-	// NOTE: This endpoint does NOT support height parameter - always returns current state
-	rpcProposals, err := cli.Proposals(ctx)
-	if err != nil {
-		return types.ActivityIndexProposalsOutput{}, err
-	}
+    // Fetch current proposals state from RPC
+    // NOTE: This endpoint does NOT support height parameter - always returns current state
+    rpcProposals, err := cli.Proposals(ctx)
+    if err != nil {
+        return types.ActivityIndexProposalsOutput{}, err
+    }
 
-	// Convert RPC proposals to database models
-	// Each proposal in the map becomes a separate snapshot row
-	snapshotTime := time.Now()
-	snapshots := make([]*indexer.ProposalSnapshot, 0, len(rpcProposals))
-	for proposalHash, proposalData := range rpcProposals {
-		// Extract proposal fields from JSON for efficient querying
-		proposalFields, err := transform.ExtractProposalFields(proposalData.Proposal)
-		if err != nil {
-			ac.Logger.Warn("failed to extract proposal fields",
-				zap.String("proposalHash", proposalHash),
-				zap.Error(err))
-			// Continue with partial data - store the raw JSON but skip exploded fields
-			snapshot := &indexer.ProposalSnapshot{
-				ProposalHash: proposalHash,
-				Proposal:     string(proposalData.Proposal),
-				Approve:      proposalData.Approve,
-				SnapshotTime: snapshotTime,
-				// Exploded fields will be empty/zero values
-				ProposalType: "",
-				Signer:       "",
-				StartHeight:  0,
-				EndHeight:    0,
-			}
-			snapshots = append(snapshots, snapshot)
-			continue
-		}
+    // Convert RPC proposals to database models
+    // Each proposal in the map becomes a separate snapshot row
+    snapshotTime := time.Now()
+    snapshots := make([]*indexer.ProposalSnapshot, 0, len(rpcProposals))
+    for proposalHash, proposalData := range rpcProposals {
+        // Extract proposal fields from JSON for efficient querying
+        proposalFields, err := transform.ExtractProposalFields(proposalData.Proposal)
+        if err != nil {
+            ac.Logger.Warn("failed to extract proposal fields",
+                zap.String("proposalHash", proposalHash),
+                zap.Error(err))
+            // Continue with partial data - store the raw JSON but skip exploded fields
+            snapshot := &indexer.ProposalSnapshot{
+                ProposalHash: proposalHash,
+                Approve:      proposalData.Approve,
+                SnapshotTime: snapshotTime,
+                // Exploded fields will be empty/zero values
+                ProposalType: "",
+                Signer:       "",
+                StartHeight:  0,
+                EndHeight:    0,
+            }
+            snapshots = append(snapshots, snapshot)
+            continue
+        }
 
-		snapshot := &indexer.ProposalSnapshot{
-			ProposalHash:       proposalHash,
-			Proposal:           string(proposalData.Proposal), // Convert json.RawMessage to string
-			Approve:            proposalData.Approve,
-			SnapshotTime:       snapshotTime,
-			ProposalType:       proposalFields.ProposalType,
-			Signer:             proposalFields.Signer,
-			StartHeight:        proposalFields.StartHeight,
-			EndHeight:          proposalFields.EndHeight,
-			ParameterSpace:     proposalFields.ParameterSpace,
-			ParameterKey:       proposalFields.ParameterKey,
-			ParameterValue:     proposalFields.ParameterValue,
-			DaoTransferAddress: proposalFields.DaoTransferAddress,
-			DaoTransferAmount:  proposalFields.DaoTransferAmount,
-		}
-		snapshots = append(snapshots, snapshot)
-	}
+        snapshot := &indexer.ProposalSnapshot{
+            ProposalHash:       proposalHash,
+            Approve:            proposalData.Approve,
+            SnapshotTime:       snapshotTime,
+            ProposalType:       proposalFields.ProposalType,
+            Signer:             proposalFields.Signer,
+            StartHeight:        proposalFields.StartHeight,
+            EndHeight:          proposalFields.EndHeight,
+            ParameterSpace:     proposalFields.ParameterSpace,
+            ParameterKey:       proposalFields.ParameterKey,
+            ParameterValue:     proposalFields.ParameterValue,
+            DaoTransferAddress: proposalFields.DaoTransferAddress,
+            DaoTransferAmount:  proposalFields.DaoTransferAmount,
+        }
+        snapshots = append(snapshots, snapshot)
+    }
 
-	numProposals := uint32(len(snapshots))
-	ac.Logger.Info("IndexProposals captured snapshot",
-		zap.Time("snapshotTime", snapshotTime),
-		zap.Uint32("numProposals", numProposals))
+    numProposals := uint32(len(snapshots))
+    ac.Logger.Info("IndexProposals captured snapshot",
+        zap.Time("snapshotTime", snapshotTime),
+        zap.Uint32("numProposals", numProposals))
 
-	// Insert proposal snapshots directly to production table (no staging for time-based snapshots)
-	// Note: This may be an empty slice if no active proposals, which is valid
-	if err := chainDb.InsertProposalSnapshots(ctx, snapshots); err != nil {
-		return types.ActivityIndexProposalsOutput{}, err
-	}
+    // Insert proposal snapshots directly to production table (no staging for time-based snapshots)
+    // Note: This may be an empty slice if no active proposals, which is valid
+    if err := chainDb.InsertProposalSnapshots(ctx, snapshots); err != nil {
+        return types.ActivityIndexProposalsOutput{}, err
+    }
 
-	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
-	return types.ActivityIndexProposalsOutput{
-		NumProposals: numProposals,
-		DurationMs:   durationMs,
-	}, nil
+    durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+    return types.ActivityIndexProposalsOutput{
+        NumProposals: numProposals,
+        DurationMs:   durationMs,
+    }, nil
 }

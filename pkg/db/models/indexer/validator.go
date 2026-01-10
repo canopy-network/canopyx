@@ -38,6 +38,9 @@ var ValidatorColumns = []ColumnDef{
 // which calculates MIN(height) for each address. Consumers should JOIN with this view
 // if they need to know when a validator was created.
 type Validator struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Identity
 	Address    string `ch:"address" json:"address"`         // Hex string representation of validator address
 	PublicKey  string `ch:"public_key" json:"public_key"`   // Hex string representation of public key

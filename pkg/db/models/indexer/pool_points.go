@@ -44,6 +44,9 @@ var PoolPointsByHolderColumns = []ColumnDef{
 // Note: Pool points holder creation time is tracked via the pool_points_created_height
 // materialized view, which calculates MIN(height) for each (address, pool_id) pair.
 type PoolPointsByHolder struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Identity - composite key
 	Address string `ch:"address" json:"address"` // Hex string representation of holder address
 	PoolID  uint32 `ch:"pool_id" json:"pool_id"` // Calculated pool ID (committee + LiquidityPoolAddend)

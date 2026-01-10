@@ -117,6 +117,9 @@ var BlockSummaryColumns = []ColumnDef{
 // This model tracks all 16 indexed entities with comprehensive field coverage (90+ fields).
 // All fields use individual typed columns (no maps) following the pattern from params.go.
 type BlockSummary struct {
+	// Chain context (for global single-DB architecture)
+	ChainID uint64 `ch:"chain_id" json:"chain_id"`
+
 	// Block metadata
 	Height            uint64    `ch:"height" json:"height"`
 	HeightTime        time.Time `ch:"height_time" json:"height_time"`               // Block timestamp for time-range queries

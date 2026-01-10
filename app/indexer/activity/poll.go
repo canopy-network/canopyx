@@ -30,7 +30,7 @@ func (ac *Context) IndexPoll(ctx context.Context) (types.ActivityIndexPollOutput
 	}
 
 	// Acquire (or ping) the chain DB to validate it exists
-	chainDb, chainDbErr := ac.GetChainDb(ctx, ac.ChainID)
+	chainDb, chainDbErr := ac.GetGlobalDb(ctx)
 	if chainDbErr != nil {
 		return types.ActivityIndexPollOutput{}, temporal.NewApplicationErrorWithCause("unable to acquire chain database", "chain_db_error", chainDbErr)
 	}

@@ -1,11 +1,9 @@
 package db
 
 import (
-	adminpkg "github.com/canopy-network/canopyx/pkg/db/admin"
-	chainpkg "github.com/canopy-network/canopyx/pkg/db/chain"
-	crosschainpkg "github.com/canopy-network/canopyx/pkg/db/crosschain"
+    adminpkg "github.com/canopy-network/canopyx/pkg/db/admin"
+    globalpkg "github.com/canopy-network/canopyx/pkg/db/global"
 )
 
 type AdminStore = adminpkg.Store
-type ChainStore = chainpkg.Store
-type CrossChainStore = crosschainpkg.Store
+type GlobalStore = globalpkg.Store
